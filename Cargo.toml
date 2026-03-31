@@ -1,0 +1,41 @@
+[package]
+name = "oxirush-security"
+version = "0.1.0"
+edition = "2024"
+description = "5G security algorithms — KDF, NIA1/2/3, NEA0/1/2/3, SUCI concealment per TS 33.501"
+license = "Apache-2.0"
+repository = "https://github.com/linouxis9/oxirush"
+authors = ["Valentin D'Emmanuele"]
+rust-version = "1.85"
+keywords = ["5g", "security", "nas", "3gpp", "telecom"]
+categories = ["cryptography", "network-programming"]
+readme = "README.md"
+
+[dependencies]
+# KDF: HMAC-SHA-256
+sha2 = "0.10"
+hmac = "0.12"
+
+# NIA2 (AES-CMAC) + NEA2 (AES-CTR)
+aes = "0.8"
+cmac = "0.7"
+cipher = "0.4"
+
+# SUCI concealment (TS 33.501 Annex C)
+x25519-dalek = { version = "2", features = ["getrandom", "static_secrets"] }
+p256 = { version = "0.13", features = ["ecdh"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+# Error handling
+thiserror = "2"
+
+# Key material zeroization
+zeroize = { version = "1", features = ["derive"] }
+
+# Constant-time comparison for SUCI MAC
+subtle = "2"
+
+# Hex encoding for SUCI scheme output
+hex = "0.4"
+
+[dev-dependencies]
