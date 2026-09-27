@@ -69,11 +69,11 @@ pub fn plmn_from_bytes(bytes: &[u8]) -> Option<(String, String)> {
         return None;
     }
 
-    let mcc = format!("{}{}{}", mcc0, mcc1, mcc2);
+    let mcc = format!("{mcc0}{mcc1}{mcc2}");
     let mnc = if mnc_hi == 0xF {
-        format!("{}{}", mnc0, mnc1)
+        format!("{mnc0}{mnc1}")
     } else {
-        format!("{}{}{}", mnc0, mnc1, mnc_hi)
+        format!("{mnc0}{mnc1}{mnc_hi}")
     };
     Some((mcc, mnc))
 }

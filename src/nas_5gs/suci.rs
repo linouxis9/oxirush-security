@@ -677,7 +677,7 @@ pub fn suci_scheme_output_b(msin_bcd: &[u8], hn_pub_key: &[u8]) -> Result<Vec<u8
     use rand_core::OsRng;
 
     let hn_pub = PublicKey::from_sec1_bytes(hn_pub_key)
-        .map_err(|e| SecurityError::Ecies(format!("invalid P-256 public key: {}", e)))?;
+        .map_err(|e| SecurityError::Ecies(format!("invalid P-256 public key: {e}")))?;
     let eph_secret = EphemeralSecret::random(&mut OsRng);
     let eph_pub = eph_secret.public_key();
 
@@ -740,8 +740,7 @@ pub fn suci_conceal(
         }
         0x02 => suci_scheme_output_b(msin_bcd, hn_pub_key),
         _ => Err(SecurityError::Ecies(format!(
-            "unsupported protection scheme: {}",
-            scheme_id
+            "unsupported protection scheme: {scheme_id}"
         ))),
     }
 }
@@ -813,7 +812,7 @@ pub fn suci_decrypt_b(scheme_output: &[u8], hn_priv_key: &[u8]) -> Result<Vec<u8
             .try_into()
             .map_err(|_| SecurityError::Ecies("P-256 private key must be 32 bytes".into()))?,
     )
-    .map_err(|e| SecurityError::Ecies(format!("invalid P-256 private key: {}", e)))?;
+    .map_err(|e| SecurityError::Ecies(format!("invalid P-256 private key: {e}")))?;
 
     // Detect compressed (0x02/0x03, 33 B) vs uncompressed (0x04, 65 B)
     let eph_pub_len = if scheme_output.first() == Some(&0x04) {
@@ -828,7 +827,7 @@ pub fn suci_decrypt_b(scheme_output: &[u8], hn_priv_key: &[u8]) -> Result<Vec<u8
     }
     let eph_pub_bytes = &scheme_output[0..eph_pub_len];
     let eph_pub = PublicKey::from_sec1_bytes(eph_pub_bytes)
-        .map_err(|e| SecurityError::Ecies(format!("invalid ephemeral P-256 key: {}", e)))?;
+        .map_err(|e| SecurityError::Ecies(format!("invalid ephemeral P-256 key: {e}")))?;
 
     // Always use compressed form as KDF input
     let compressed = eph_pub.to_encoded_point(true);
@@ -951,7 +950,7 @@ pub fn suci_to_supi(suci: &[u8], hn_priv_key: Option<&[u8]>) -> Option<String> {
         return None;
     }
 
-    Some(format!("imsi-{}{}{}", mcc, mnc, msin))
+    Some(format!("imsi-{mcc}{mnc}{msin}"))
 }
 
 /// Convert an IMSI-format binary NAS SUCI to textual
@@ -982,8 +981,7 @@ pub fn suci_to_string(suci: &[u8]) -> Option<String> {
         hex::encode(&suci[8..])
     };
     Some(format!(
-        "suci-0-{}-{}-{}-{}-{}-{}",
-        mcc, mnc, ri, scheme_id, key_id, scheme_output
+        "suci-0-{mcc}-{mnc}-{ri}-{scheme_id}-{key_id}-{scheme_output}"
     ))
 }
 
@@ -1144,8 +1142,7 @@ mod tests {
             assert_eq!(
                 suci_decrypt_b(&scheme_output, &priv_bytes).unwrap(),
                 msin_bcd,
-                "msin={}",
-                msin
+                "msin={msin}"
             );
         }
     }
@@ -1168,8 +1165,7 @@ mod tests {
             assert_eq!(
                 suci_decrypt_a(&scheme_output, &priv_bytes).unwrap(),
                 msin_bcd,
-                "msin={}",
-                msin
+                "msin={msin}"
             );
         }
     }

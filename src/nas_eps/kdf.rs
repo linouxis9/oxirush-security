@@ -251,8 +251,8 @@ mod tests {
 
     #[test]
     fn hash_mme_matches_network_values_in_capture() {
-        // s1ap_errors.pcap packets 33 and 83 carry the ATTACH REQUESTs; the
-        // MME returned these HASHMME values in packets 37 and 87.
+        // Embedded ATTACH REQUEST vectors and the HASHMME values returned by
+        // the corresponding network SECURITY MODE COMMANDs.
         for (request, hash) in [
             (
                 "07410108991007000020160605e0e000000000250243d011d1271d8080211001000010810600000000830600000000000a00000d00001000c0d0c1",

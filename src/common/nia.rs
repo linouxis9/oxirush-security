@@ -188,7 +188,7 @@ pub fn nia1_mac(
         let remaining = remaining_bits.div_ceil(8);
         if remaining > 0 {
             tmp[..remaining].copy_from_slice(&message[start..start + remaining]);
-            if remaining_bits % 8 != 0 {
+            if !remaining_bits.is_multiple_of(8) {
                 tmp[remaining - 1] &= 0xff << (8 - remaining_bits % 8);
             }
         }
@@ -308,7 +308,7 @@ pub fn nia2_mac_bits(
     let block_count = total_bits.div_ceil(128);
     let complete_last_block = total_bits % 128 == 0;
     let mut state = [0u8; 16];
-    for chunk in input.chunks_exact(16).take(block_count - 1) {
+    for chunk in input.as_chunks::<16>().0.iter().take(block_count - 1) {
         for (left, right) in state.iter_mut().zip(chunk) {
             *left ^= right;
         }

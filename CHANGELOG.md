@@ -2,9 +2,11 @@
 
 All notable changes to `oxirush-security` are recorded here.
 
-## Unreleased (0.2.0)
+## 0.2.0 - 2026-09-27
 
 ### Breaking changes relative to 0.1.0
+
+- **MSRV.** The minimum supported Rust version is now 1.88.
 
 - **Module layout.** 5GS functions moved to `oxirush_security::nas_5gs`,
   shared primitives to `oxirush_security::common`, and EPS functions are in

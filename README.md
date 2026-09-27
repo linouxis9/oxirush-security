@@ -6,11 +6,9 @@
 
 5GS and EPS security algorithms in Rust — key derivation, integrity, ciphering, and SUCI concealment per 3GPP TS 33.501 and TS 33.401.
 
-Part of the [OxiRush](https://github.com/linouxis9/oxirush) project — a 5G Core Network testing framework.
-
 ## Features
 
-- **Key derivation chain** (TS 33.501 Annex A) — KAUSF, KSEAF, KAMF/KAMF', KNASint/KNASenc, K_gNB, KN3IWF, NH, KNG-RAN*, KSN, SoR/UPU MACs, TNAP usage keys, KIAB, and the RRC/UP keys
+- **5GS key derivation** (TS 33.501 Annex A) — KAUSF, KSEAF, KAMF/KAMF', KNASint/KNASenc, K_gNB, KN3IWF, NH, KNG-RAN*, KSN, SoR/UPU MACs, TNAP usage keys, KIAB, and the RRC/UP keys
 - **EPS key derivation** (TS 33.401 Annex A) — KASME, KNASint/KNASenc, KeNB, NH, KeNB*, AS keys, NAS token, CK'/IK' mapping, SRVCC, and HASHMME (Annex I.2)
 - **5GS/EPS key mapping** (TS 33.501 Annexes A.14, A.15, A.21) — idle mobility and connected handover in both directions, and KASME_SRVCC
 - **Mobility MACs** — the NAS Container MAC of TS 33.501 §6.9.2.3.3 and the UL_NAS_MAC/XDL_NAS_MAC of TS 33.401 §7.4.4
@@ -31,8 +29,8 @@ Annex A parameter layouts against independently calculated outputs.
 
 Fixed-size CK‖IK, KDF-input, keystream, and NAS-context key temporaries are
 wiped after use. Returned key arrays and some variable-length ECIES working
-buffers remain caller/allocator-owned; see the repository conformance ledger
-for the residual memory-hygiene note.
+buffers remain caller/allocator-owned and must be cleared by the caller when
+their lifetime ends.
 
 EPS and 5GS share the 128-bit EEA/EIA algorithm cores. The `nas_eps` module fixes
 the NAS bearer to zero and accepts the 24-bit EPS NAS COUNT. It also computes
@@ -137,7 +135,7 @@ fn conceal_with_operator_keys(
 | [`nas_eps`](src/nas_eps/mod.rs) | TS 33.401 `kdf`, `security`, and `algo` |
 | [`common`](src/common/mod.rs) | HMAC KDF framing, EEA/EIA cores, algorithm selection, and PLMN utilities |
 
-The crate root re-exports the existing 5GS and common functions for workspace
+The crate root re-exports the existing 5GS and common functions for backward
 compatibility. EPS functions are under `oxirush_security::nas_eps`.
 
 Functions that take protocol values documented as bounded (for example an
@@ -178,12 +176,11 @@ cargo run --example suci_conceal             # SUCI concealment with Profile A
 
 ## Conformance evidence
 
-The repository [5GS conformance ledger](../docs/5gs-conformance-ledger.md),
-[IE coverage matrix](../docs/5gs-coverage-matrix.md), and independent baseline
-reviews under [`docs/audit`](../docs/audit/) pin the audited specification
-revisions, test vectors, completed checks, and residual limitations. Profile-B
-deconcealment deliberately accepts a curve-valid uncompressed ephemeral point
-as receiver tolerance; senders always emit the standardized compressed form.
+The unit tests and `tests/spec_vectors.rs` contain the executable TS 33.401
+Annex C, TS 35.217, TS 35.223, KDF, interworking, SUCI, COUNT, and replay
+vectors used for conformance checks. Profile-B deconcealment deliberately
+accepts a curve-valid uncompressed ephemeral point as receiver tolerance;
+senders always emit the standardized compressed form.
 
 ## Documentation
 
