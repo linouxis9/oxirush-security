@@ -22,14 +22,18 @@ pub mod kdf;
 pub mod security;
 
 pub use crate::common::extract_128;
-pub use algo::{select_ciphering_algo, select_integrity_algo};
+pub use algo::{
+    select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
+    select_integrity_algo_with_preference,
+};
 pub use kdf::{
-    derive_as_key, derive_ck_ik_handover, derive_ck_ik_idle_mobility, derive_ck_ik_srvcc,
-    derive_kasme, derive_kasme_handover, derive_kasme_idle_mobility, derive_kenb, derive_kenb_star,
-    derive_kn, derive_lwip_psk, derive_mapped_kamf_handover, derive_mapped_kamf_idle,
-    derive_nas_key, derive_nas_token, derive_nas_token_full, derive_nh, derive_sgnb_algorithm_key,
-    derive_skenb, derive_skwt,
+    compute_hash_mme, derive_as_key, derive_ck_ik_handover, derive_ck_ik_idle_mobility,
+    derive_ck_ik_srvcc, derive_kasme, derive_kasme_handover, derive_kasme_idle_mobility,
+    derive_kenb, derive_kenb_star, derive_kn, derive_lwip_psk, derive_mapped_kamf_handover,
+    derive_mapped_kamf_idle, derive_nas_key, derive_nas_token, derive_nas_token_full, derive_nh,
+    derive_sgnb_algorithm_key, derive_skenb, derive_skwt,
 };
 pub use security::{
-    nas_cipher, nas_mac, service_request_short_mac, service_request_short_mac_with_header,
+    nas_cipher, nas_mac, re_establishment_nas_mac, service_request_short_mac,
+    service_request_short_mac_with_header,
 };

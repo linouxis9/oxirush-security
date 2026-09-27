@@ -15,14 +15,16 @@
    limitations under the License.
 */
 
-/// 5GS and EPS NAS ciphering algorithms per TS 33.501 and TS 33.401.
-///
-/// NEA0 = null cipher (no-op)
-/// NEA1 = 128-EEA1 (SNOW 3G, TS 35.215/35.216)
-/// NEA2 = 128-EEA2 (AES-128-CTR, TS 33.401 Annex B.1.3)
-/// NEA3 = 128-EEA3 (ZUC, TS 35.221)
-///
-/// All encrypt/decrypt in-place (XOR-based stream ciphers: encrypt = decrypt).
+//! 5GS and EPS NAS ciphering algorithms per TS 33.501 and TS 33.401.
+//!
+//! - NEA0: null ciphering.
+//! - NEA1: 128-EEA1 (SNOW 3G, TS 33.401 Annex B.1.2, TS 35.215 and TS 35.216).
+//! - NEA2: 128-EEA2 (AES-128-CTR, TS 33.401 Annex B.1.3).
+//! - NEA3: 128-EEA3 (ZUC, TS 33.401 Annex B.1.4, TS 35.221).
+//!
+//! All functions encrypt or decrypt in place. The `*_bits` entry points keep
+//! unused low-order bits of a partial final octet unchanged. The convenience
+//! functions without a bit length process every supplied octet.
 use crate::snow3g::Snow3G;
 use crate::zuc::Zuc;
 use aes::Aes128;
@@ -31,6 +33,11 @@ use cipher::{BlockEncrypt, KeyInit};
 /// Unified NAS cipher (encrypt or decrypt in-place).
 ///
 /// `algo_id`: 0x00 = NEA0, 0x01 = NEA1, 0x02 = NEA2, 0x03 = NEA3
+///
+/// # Panics
+///
+/// Panics if `bearer` exceeds 31, `direction` exceeds one, or `algo_id` is
+/// above 3.
 pub fn nas_cipher(
     key: &[u8; 16],
     count: u32,
@@ -39,32 +46,89 @@ pub fn nas_cipher(
     data: &mut [u8],
     algo_id: u8,
 ) {
+    nas_cipher_bits(
+        key,
+        count,
+        bearer,
+        direction,
+        data,
+        (data.len() * 8) as u64,
+        algo_id,
+    );
+}
+
+/// Unified cipher for the first `bit_length` most-significant bits of `data`.
+/// Unused low-order bits of the partial final octet are unchanged.
+///
+/// # Panics
+///
+/// Panics if `bearer` exceeds 31, `direction` exceeds one, `bit_length`
+/// exceeds `data`, or `algo_id` exceeds three.
+pub fn nas_cipher_bits(
+    key: &[u8; 16],
+    count: u32,
+    bearer: u8,
+    direction: u8,
+    data: &mut [u8],
+    bit_length: u64,
+    algo_id: u8,
+) {
+    check_inputs(bearer, direction, data.len(), bit_length);
     match algo_id {
-        0x01 => nea1_cipher(key, count, bearer, direction, data),
-        0x02 => nea2_cipher(key, count, bearer, direction, data),
-        0x03 => nea3_cipher(key, count, bearer, direction, data),
+        0x01 => nea1_cipher_bits(key, count, bearer, direction, data, bit_length),
+        0x02 => nea2_cipher_bits(key, count, bearer, direction, data, bit_length),
+        0x03 => nea3_cipher_bits(key, count, bearer, direction, data, bit_length),
         0 => {} // NEA0 = null cipher, no-op
         _ => panic!("unsupported NAS ciphering algorithm {algo_id}"),
     }
+}
+
+fn check_inputs(bearer: u8, direction: u8, byte_length: usize, bit_length: u64) {
+    assert!(bearer <= 0x1f, "bearer must fit five bits");
+    assert!(direction <= 1, "direction must fit one bit");
+    assert!(
+        bit_length <= (byte_length as u64) * 8,
+        "data shorter than bit length"
+    );
+}
+
+fn cipher_bits(data: &mut [u8], bit_length: u64, apply: impl FnOnce(&mut [u8])) {
+    let bit_length = usize::try_from(bit_length).expect("bit length fits usize");
+    if bit_length == 0 {
+        return;
+    }
+    let octets = bit_length.div_ceil(8);
+    let unused = (8 - bit_length % 8) % 8;
+    let unused_mask = if unused == 0 { 0 } else { (1u8 << unused) - 1 };
+    let retained = data[octets - 1] & unused_mask;
+    apply(&mut data[..octets]);
+    data[octets - 1] = (data[octets - 1] & !unused_mask) | retained;
 }
 
 // ── NEA1: 128-EEA1 (SNOW 3G keystream) ────────────────────────────────────────
 
 /// Encrypt/decrypt using NEA1 / 128-EEA1 (TS 35.215 §4.2)
 ///
-/// IV construction for SNOW 3G (matching free5gc):
+/// IV construction (TS 33.401 Annex B.1.2, UEA2/UIA2 specification §3.4):
+/// ```text
 /// IV[0] = (BEARER << 27) | (DIRECTION << 26)
 /// IV[1] = COUNT
 /// IV[2] = (BEARER << 27) | (DIRECTION << 26)
 /// IV[3] = COUNT
+/// ```
+///
+/// # Panics
+///
+/// Panics if `bearer` exceeds 31 or `direction` exceeds one.
 pub fn nea1_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: &mut [u8]) {
+    check_inputs(bearer, direction, data.len(), (data.len() * 8) as u64);
     if data.is_empty() {
         return;
     }
 
     let bearer_dir = ((bearer as u32 & 0x1F) << 27) | ((direction as u32 & 0x01) << 26);
 
-    // Key: reverse byte order (k[0]=last 4 bytes, matching free5gc)
+    // The key words are loaded last word first (UEA2 §3.4).
     let k = [
         u32::from_be_bytes(
             key[12..16]
@@ -83,7 +147,7 @@ pub fn nea1_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: 
 
     let n_words = data.len().div_ceil(4);
     let mut snow = Snow3G::new(k, iv);
-    let ks = snow.generate(n_words);
+    let ks = zeroize::Zeroizing::new(snow.generate(n_words));
 
     // XOR keystream with data
     for (i, byte) in data.iter_mut().enumerate() {
@@ -94,16 +158,43 @@ pub fn nea1_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: 
     }
 }
 
+/// Encrypt/decrypt the first `bit_length` bits using 128-EEA1.
+///
+/// # Panics
+///
+/// Panics if `bearer` exceeds 31, `direction` exceeds one, or `bit_length`
+/// exceeds the length of `data` in bits.
+pub fn nea1_cipher_bits(
+    key: &[u8; 16],
+    count: u32,
+    bearer: u8,
+    direction: u8,
+    data: &mut [u8],
+    bit_length: u64,
+) {
+    check_inputs(bearer, direction, data.len(), bit_length);
+    cipher_bits(data, bit_length, |value| {
+        nea1_cipher(key, count, bearer, direction, value)
+    });
+}
+
 // ── NEA2: 128-EEA2 (AES-128-CTR) ──────────────────────────────────────────────
 
 /// Encrypt/decrypt using NEA2 / 128-EEA2 (TS 33.401 Annex B.1.3)
 ///
 /// Counter block layout (128 bits):
+/// ```text
 ///   Bytes [0..3]:  COUNT (big-endian)
 ///   Byte  [4]:     (BEARER << 3) | (DIRECTION << 2)
 ///   Bytes [5..7]:  0x000000
 ///   Bytes [8..15]: block counter (big-endian u64, starts at 0)
+/// ```
+///
+/// # Panics
+///
+/// Panics if `bearer` exceeds 31 or `direction` exceeds one.
 pub fn nea2_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: &mut [u8]) {
+    check_inputs(bearer, direction, data.len(), (data.len() * 8) as u64);
     if data.is_empty() {
         return;
     }
@@ -132,18 +223,45 @@ pub fn nea2_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: 
     }
 }
 
+/// Encrypt/decrypt the first `bit_length` bits using 128-EEA2.
+///
+/// # Panics
+///
+/// Panics if `bearer` exceeds 31, `direction` exceeds one, or `bit_length`
+/// exceeds the length of `data` in bits.
+pub fn nea2_cipher_bits(
+    key: &[u8; 16],
+    count: u32,
+    bearer: u8,
+    direction: u8,
+    data: &mut [u8],
+    bit_length: u64,
+) {
+    check_inputs(bearer, direction, data.len(), bit_length);
+    cipher_bits(data, bit_length, |value| {
+        nea2_cipher(key, count, bearer, direction, value)
+    });
+}
+
 // ── NEA3: 128-EEA3 (ZUC keystream) ────────────────────────────────────────────
 
 /// Encrypt/decrypt using NEA3 / 128-EEA3 (TS 35.221)
 ///
 /// IV construction for ZUC:
+/// ```text
 ///   Bytes [0..3]:  COUNT (big-endian)
 ///   Byte  [4]:     (BEARER << 3) | (DIRECTION << 2)
 ///   Bytes [5..7]:  0x000000
 ///   Bytes [8..11]: COUNT (big-endian, same as [0..3])
 ///   Byte  [12]:    (BEARER << 3) | (DIRECTION << 2)
 ///   Bytes [13..15]: 0x000000
+/// ```
+///
+/// # Panics
+///
+/// Panics if `bearer` exceeds 31 or `direction` exceeds one.
 pub fn nea3_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: &mut [u8]) {
+    check_inputs(bearer, direction, data.len(), (data.len() * 8) as u64);
     if data.is_empty() {
         return;
     }
@@ -161,7 +279,7 @@ pub fn nea3_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: 
 
     let n_words = data.len().div_ceil(4);
     let mut zuc = Zuc::new(key, &iv);
-    let ks = zuc.generate(n_words);
+    let ks = zeroize::Zeroizing::new(zuc.generate(n_words));
 
     // XOR keystream with data
     for (i, byte) in data.iter_mut().enumerate() {
@@ -170,6 +288,26 @@ pub fn nea3_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: 
         let ks_byte = (ks[word_idx] >> (24 - byte_idx * 8)) as u8;
         *byte ^= ks_byte;
     }
+}
+
+/// Encrypt/decrypt the first `bit_length` bits using 128-EEA3.
+///
+/// # Panics
+///
+/// Panics if `bearer` exceeds 31, `direction` exceeds one, or `bit_length`
+/// exceeds the length of `data` in bits.
+pub fn nea3_cipher_bits(
+    key: &[u8; 16],
+    count: u32,
+    bearer: u8,
+    direction: u8,
+    data: &mut [u8],
+    bit_length: u64,
+) {
+    check_inputs(bearer, direction, data.len(), bit_length);
+    cipher_bits(data, bit_length, |value| {
+        nea3_cipher(key, count, bearer, direction, value)
+    });
 }
 
 #[cfg(test)]
@@ -225,11 +363,39 @@ mod tests {
         assert_eq!(&data[..], &original[..]);
     }
 
+    #[test]
+    fn raw_cipher_dispatch_and_input_boundaries() {
+        let key = [0x5a; 16];
+        let original = [0xa5, 0x5a];
+
+        // Both inclusive raw-field limits and a non-octet length are accepted.
+        for algo in 0..=3 {
+            let mut data = original;
+            nas_cipher_bits(&key, 7, 31, 1, &mut data, 13, algo);
+            assert_eq!(data[1] & 0x07, original[1] & 0x07);
+            nas_cipher_bits(&key, 7, 31, 1, &mut data, 13, algo);
+            assert_eq!(data, original);
+        }
+
+        let panics = |bearer, direction, bits, algo| {
+            std::panic::catch_unwind(|| {
+                let mut data = original;
+                nas_cipher_bits(&key, 7, bearer, direction, &mut data, bits, algo);
+            })
+            .is_err()
+        };
+        assert!(panics(32, 1, 13, 1));
+        assert!(panics(31, 2, 13, 1));
+        assert!(panics(31, 1, 17, 1));
+        assert!(panics(31, 1, 13, 4));
+
+        let mut empty = [];
+        nas_cipher_bits(&key, 7, 31, 1, &mut empty, 0, 3);
+    }
+
     // ── NEA1 test vectors from 3GPP TS 35.215 / free5gc ────────────────────────
     //
-    // Note: test vectors specify non-byte-aligned bit lengths. Since 5G NAS data
-    // is always byte-aligned, nea1_cipher operates on bytes only. Tests compare
-    // floor(bit_length/8) complete bytes to avoid the sub-byte masking issue.
+    // The bit-length entry point covers the non-byte-aligned official vectors.
 
     fn nea1_test(
         key: [u8; 16],
@@ -240,14 +406,14 @@ mod tests {
         plaintext: &[u8],
         expected: &[u8],
     ) {
-        let byte_len = (bit_length / 8) as usize;
+        let byte_len = (bit_length as usize).div_ceil(8);
         let pt = &plaintext[..byte_len];
         let ex = &expected[..byte_len];
         let mut data = pt.to_vec();
-        nea1_cipher(&key, count, bearer, dir, &mut data);
+        nea1_cipher_bits(&key, count, bearer, dir, &mut data, bit_length.into());
         assert_eq!(&data, ex);
         // Decrypt (same op)
-        nea1_cipher(&key, count, bearer, dir, &mut data);
+        nea1_cipher_bits(&key, count, bearer, dir, &mut data, bit_length.into());
         assert_eq!(&data, pt);
     }
 
@@ -428,14 +594,18 @@ mod tests {
         count: u32,
         bearer: u8,
         dir: u8,
+        bit_length: u32,
         plaintext: &[u8],
         expected: &[u8],
     ) {
+        let byte_len = (bit_length as usize).div_ceil(8);
+        let plaintext = &plaintext[..byte_len];
+        let expected = &expected[..byte_len];
         let mut data = plaintext.to_vec();
-        nea2_cipher(&key, count, bearer, dir, &mut data);
+        nea2_cipher_bits(&key, count, bearer, dir, &mut data, bit_length.into());
         assert_eq!(&data, expected);
         // Decrypt
-        nea2_cipher(&key, count, bearer, dir, &mut data);
+        nea2_cipher_bits(&key, count, bearer, dir, &mut data, bit_length.into());
         assert_eq!(&data, plaintext);
     }
 
@@ -449,15 +619,16 @@ mod tests {
             0x398a59b4,
             0x15,
             1,
+            253,
             &[
                 0x98, 0x1b, 0xa6, 0x82, 0x4c, 0x1b, 0xfb, 0x1a, 0xb4, 0x85, 0x47, 0x20, 0x29, 0xb7,
                 0x1d, 0x80, 0x8c, 0xe3, 0x3e, 0x2c, 0xc3, 0xc0, 0xb5, 0xfc, 0x1f, 0x3d, 0xe8, 0xa6,
-                0xdc, 0x66, 0xb1,
+                0xdc, 0x66, 0xb1, 0xf0,
             ],
             &[
                 0xe9, 0xfe, 0xd8, 0xa6, 0x3d, 0x15, 0x53, 0x04, 0xd7, 0x1d, 0xf2, 0x0b, 0xf3, 0xe8,
                 0x22, 0x14, 0xb2, 0x0e, 0xd7, 0xda, 0xd2, 0xf2, 0x33, 0xdc, 0x3c, 0x22, 0xd7, 0xbd,
-                0xee, 0xed, 0x8e,
+                0xee, 0xed, 0x8e, 0x78,
             ],
         );
     }
@@ -472,6 +643,7 @@ mod tests {
             0xc675a64b,
             0x0c,
             1,
+            798,
             &[
                 0x7e, 0xc6, 0x12, 0x72, 0x74, 0x3b, 0xf1, 0x61, 0x47, 0x26, 0x44, 0x6a, 0x6c, 0x38,
                 0xce, 0xd1, 0x66, 0xf6, 0xca, 0x76, 0xeb, 0x54, 0x30, 0x04, 0x42, 0x86, 0x34, 0x6c,
@@ -480,7 +652,7 @@ mod tests {
                 0xe9, 0xa1, 0xb2, 0x85, 0xe7, 0x62, 0x79, 0x53, 0x59, 0xb7, 0xbd, 0xfd, 0x39, 0xbe,
                 0xf4, 0xb2, 0x48, 0x45, 0x83, 0xd5, 0xaf, 0xe0, 0x82, 0xae, 0xe6, 0x38, 0xbf, 0x5f,
                 0xd5, 0xa6, 0x06, 0x19, 0x39, 0x01, 0xa0, 0x8f, 0x4a, 0xb4, 0x1a, 0xab, 0x9b, 0x13,
-                0x48,
+                0x48, 0x80,
             ],
             &[
                 0x59, 0x61, 0x60, 0x53, 0x53, 0xc6, 0x4b, 0xdc, 0xa1, 0x5b, 0x19, 0x5e, 0x28, 0x85,
@@ -490,7 +662,7 @@ mod tests {
                 0x4c, 0xd9, 0x7b, 0x87, 0x09, 0x76, 0x50, 0x3c, 0x09, 0x43, 0xf2, 0xcb, 0x5a, 0xe8,
                 0xf0, 0x52, 0xc7, 0xb7, 0xd3, 0x92, 0x23, 0x95, 0x87, 0xb8, 0x95, 0x60, 0x86, 0xbc,
                 0xab, 0x18, 0x83, 0x60, 0x42, 0xe2, 0xe6, 0xce, 0x42, 0x43, 0x2a, 0x17, 0x10, 0x5c,
-                0x53,
+                0x53, 0xd0,
             ],
         );
     }
@@ -505,22 +677,23 @@ mod tests {
             0x544d49cd,
             0x04,
             0,
+            310,
             &[
                 0xfd, 0x40, 0xa4, 0x1d, 0x37, 0x0a, 0x1f, 0x65, 0x74, 0x50, 0x95, 0x68, 0x7d, 0x47,
                 0xba, 0x1d, 0x36, 0xd2, 0x34, 0x9e, 0x23, 0xf6, 0x44, 0x39, 0x2c, 0x8e, 0xa9, 0xc4,
-                0x9d, 0x40, 0xc1, 0x32, 0x71, 0xaf, 0xf2, 0x64, 0xd0, 0xf2,
+                0x9d, 0x40, 0xc1, 0x32, 0x71, 0xaf, 0xf2, 0x64, 0xd0, 0xf2, 0x48,
             ],
             &[
                 0x75, 0x75, 0x0d, 0x37, 0xb4, 0xbb, 0xa2, 0xa4, 0xde, 0xdb, 0x34, 0x23, 0x5b, 0xd6,
                 0x8c, 0x66, 0x45, 0xac, 0xda, 0xac, 0xa4, 0x81, 0x38, 0xa3, 0xb0, 0xc4, 0x71, 0xe2,
-                0xa7, 0x04, 0x1a, 0x57, 0x64, 0x23, 0xd2, 0x92, 0x72, 0x87,
+                0xa7, 0x04, 0x1a, 0x57, 0x64, 0x23, 0xd2, 0x92, 0x72, 0x87, 0xf0,
             ],
         );
     }
 
     // ── NEA3 test vectors from 3GPP TS 35.223 / free5gc ────────────────────────
     //
-    // Note: same bit-length convention as NEA1 — tests use floor(bit_length/8) bytes.
+    // The bit-length entry point covers the non-byte-aligned official vectors.
 
     fn nea3_test(
         key: [u8; 16],
@@ -531,14 +704,14 @@ mod tests {
         plaintext: &[u8],
         expected: &[u8],
     ) {
-        let byte_len = (bit_length / 8) as usize;
+        let byte_len = (bit_length as usize).div_ceil(8);
         let pt = &plaintext[..byte_len];
         let ex = &expected[..byte_len];
         let mut data = pt.to_vec();
-        nea3_cipher(&key, count, bearer, dir, &mut data);
+        nea3_cipher_bits(&key, count, bearer, dir, &mut data, bit_length.into());
         assert_eq!(&data, ex);
         // Decrypt
-        nea3_cipher(&key, count, bearer, dir, &mut data);
+        nea3_cipher_bits(&key, count, bearer, dir, &mut data, bit_length.into());
         assert_eq!(&data, pt);
     }
 

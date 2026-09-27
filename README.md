@@ -10,24 +10,34 @@ Part of the [OxiRush](https://github.com/linouxis9/oxirush) project — a 5G Cor
 
 ## Features
 
-- **Key derivation chain** (TS 33.501 Annex A) — KAUSF, KSEAF, KAMF, KNASint/KNASenc, K_gNB, NH (for handover)
-- **EPS key derivation** (TS 33.401 Annex A) — KASME, KNASint/KNASenc, KeNB, NH, KeNB*, and AS keys
-- **5GS/EPS key mapping** (TS 33.501 Annexes A.14–A.15) — idle mobility and connected handover in both directions
+- **Key derivation chain** (TS 33.501 Annex A) — KAUSF, KSEAF, KAMF/KAMF', KNASint/KNASenc, K_gNB, KN3IWF, NH, KNG-RAN*, KSN, SoR/UPU MACs, TNAP usage keys, KIAB, and the RRC/UP keys
+- **EPS key derivation** (TS 33.401 Annex A) — KASME, KNASint/KNASenc, KeNB, NH, KeNB*, AS keys, NAS token, CK'/IK' mapping, SRVCC, and HASHMME (Annex I.2)
+- **5GS/EPS key mapping** (TS 33.501 Annexes A.14, A.15, A.21) — idle mobility and connected handover in both directions, and KASME_SRVCC
+- **Mobility MACs** — the NAS Container MAC of TS 33.501 §6.9.2.3.3 and the UL_NAS_MAC/XDL_NAS_MAC of TS 33.401 §7.4.4
 - **NAS integrity** — NIA1 (SNOW 3G / 128-EIA1), NIA2 (AES-CMAC / 128-EIA2), NIA3 (ZUC / 128-EIA3)
 - **NAS ciphering** — NEA0 (null), NEA1 (SNOW 3G / 128-EEA1), NEA2 (AES-128-CTR / 128-EEA2), NEA3 (ZUC / 128-EEA3)
-- **SUCI concealment** (TS 33.501 Annex C.4) — null scheme, Profile A (X25519 ECIES), Profile B (P-256 ECIES)
+- **SUCI concealment** (TS 33.501 Annex C.4) — IMSI and NAI identities with the null scheme, Profile A (X25519 ECIES), Profile B (P-256 ECIES), plus preserved proprietary outputs
 - **XRES\* / HXRES\* computation** — for AMF-side 5G-AKA verification
 - **5G-GUTI / 5G-S-TMSI** — construction and parsing
 - **PLMN encoding** — TBCD encode/decode for MCC/MNC
-- **Algorithm selection** — NIA2 > NIA1 > NIA3 (never NIA0); NEA2 > NEA1 > NEA3 > NEA0
+- **Algorithm selection** — configurable operator preference order, with NIA2 > NIA1 > NIA3 (never NIA0) and NEA2 > NEA1 > NEA3 > NEA0 as the compatibility defaults
 
-The EEA/EIA cores have byte-aligned 3GPP test-vector coverage, including
-TS 35.217 and TS 35.223 vectors. EPS and interworking KDF tests check the
+The EEA/EIA functions are tested against the TS 33.401 Annex C and
+TS 35.217/35.223 test sets, including non-byte-aligned EEA1, EEA2, EEA3,
+EIA1, EIA2, and EIA3 inputs. The `*_bits` APIs preserve unused low bits in
+the final ciphering octet and ignore them for integrity. Whole-octet NAS
+wrappers delegate to the same cores. EPS and interworking KDF tests check the
 Annex A parameter layouts against independently calculated outputs.
+
+Fixed-size CK‖IK, KDF-input, keystream, and NAS-context key temporaries are
+wiped after use. Returned key arrays and some variable-length ECIES working
+buffers remain caller/allocator-owned; see the repository conformance ledger
+for the residual memory-hygiene note.
 
 EPS and 5GS share the 128-bit EEA/EIA algorithm cores. The `nas_eps` module fixes
 the NAS bearer to zero and accepts the 24-bit EPS NAS COUNT. It also computes
-the 16-bit short MAC for a SERVICE REQUEST.
+the 16-bit short MAC for a SERVICE REQUEST and the 28-bit target Cell-ID
+re-establishment MAC of TS 33.401 §7.4.4.
 
 ## Quick start
 
@@ -42,9 +52,12 @@ oxirush-security = "0.2"
 use oxirush_security::nas_5gs::*;
 
 // Full 5G key derivation chain per TS 33.501 Annex A
-let k_ausf = [0xAA; 32]; // from AUSF via 5G-AKA
+let ck = [0x11; 16];       // from 5G-AKA
+let ik = [0x22; 16];       // from 5G-AKA
+let sqn_xor_ak = [0u8; 6]; // AUTN field
 let sn_name = b"5G:mnc093.mcc208.3gppnetwork.org";
 
+let k_ausf = derive_kausf(&ck, &ik, sn_name, &sqn_xor_ak);
 let k_seaf = derive_kseaf(&k_ausf, sn_name);
 let k_amf  = derive_kamf(&k_seaf, "208930000000001", &[0x00, 0x00]);
 
@@ -125,24 +138,65 @@ fn conceal_with_operator_keys(
 | [`common`](src/common/mod.rs) | HMAC KDF framing, EEA/EIA cores, algorithm selection, and PLMN utilities |
 
 The crate root re-exports the existing 5GS and common functions for workspace
-compatibility. New EPS functions are under `oxirush_security::nas_eps`.
+compatibility. EPS functions are under `oxirush_security::nas_eps`.
+
+Functions that take protocol values documented as bounded (for example an
+algorithm identifier above 3, a NAS COUNT above 2^24 - 1, or a PCI above 503)
+panic on out-of-range input; each lists its conditions under `# Panics`.
+The raw algorithm cores also reject a bearer above 31, a direction above 1,
+or a bit length larger than the supplied buffer. Check values received from a
+peer before passing them.
+
+## Architecture
+
+```text
+src/
+├── common/     KDF framing (TS 33.220), EEA/EIA cores, SNOW 3G, ZUC, PLMN
+├── nas_5gs/    TS 33.501 key hierarchy, NAS security, algorithm selection,
+│               GUTI, and SUCI
+└── nas_eps/    TS 33.401 key hierarchy, NAS security, algorithm selection
+```
 
 ## Examples
 
+Each 5GS example has an EPS counterpart; SUCI concealment is 5GS only.
+
 ```bash
-cargo run --example key_derivation    # Full KDF chain demo
-cargo run --example eps_security      # EPS KASME, NAS keys, MAC, and ciphering
-cargo run --example integrity         # NIA1/NIA2/NIA3 MAC computation
-cargo run --example suci_conceal      # SUCI concealment with Profile A
+cargo run --example key_derivation_nas_5gs   # KAUSF -> KSEAF -> KAMF -> NAS keys -> KgNB -> NH
+cargo run --example key_derivation_nas_eps   # CK || IK -> KASME -> NAS keys -> KeNB -> NH
+cargo run --example integrity_nas_5gs        # NIA1/NIA2/NIA3 MAC computation
+cargo run --example integrity_nas_eps        # EIA1/EIA2/EIA3 MAC and SERVICE REQUEST short MAC
+cargo run --example suci_conceal             # SUCI concealment with Profile A
 ```
 
 ## 3GPP references
 
 - **TS 33.501** — 5G security architecture (key derivation, algorithm IDs, SUCI)
 - **TS 33.401** — EPS security architecture (key derivation, NAS COUNT, EIA/EEA)
-- **TS 33.102** — 3G security (Milenage, SQN management)
 - **TS 35.215/35.216/35.217** — SNOW 3G modes, core, and test data
 - **TS 35.221/35.222/35.223** — ZUC modes, core, and test data
+
+## Conformance evidence
+
+The repository [5GS conformance ledger](../docs/5gs-conformance-ledger.md),
+[IE coverage matrix](../docs/5gs-coverage-matrix.md), and independent baseline
+reviews under [`docs/audit`](../docs/audit/) pin the audited specification
+revisions, test vectors, completed checks, and residual limitations. Profile-B
+deconcealment deliberately accepts a curve-valid uncompressed ephemeral point
+as receiver tolerance; senders always emit the standardized compressed form.
+
+## Documentation
+
+Full API reference: **<https://docs.rs/oxirush-security>**
+
+## Contributing
+
+Contributions welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Sign off your commits (`git commit -s`)
+4. Open a Pull Request
 
 ### Developer Certificate of Origin (DCO)
 

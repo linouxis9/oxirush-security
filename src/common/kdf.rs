@@ -31,8 +31,15 @@ pub fn kdf(key: &[u8], s: &[u8]) -> [u8; 32] {
 }
 
 /// Build the S parameter: FC || (P_i || L_i)*.
+///
+/// # Panics
+///
+/// Panics if a parameter exceeds 65535 octets.
 pub fn build_s(fc: u8, params: &[&[u8]]) -> Vec<u8> {
-    let mut s = vec![fc];
+    // Exact capacity: the vector never reallocates, so a caller that wipes
+    // S leaves no copy of a key parameter in freed memory.
+    let mut s = Vec::with_capacity(1 + params.iter().map(|p| p.len() + 2).sum::<usize>());
+    s.push(fc);
     for p in params {
         assert!(p.len() <= 0xFFFF, "KDF parameter exceeds 65535 bytes");
         s.extend_from_slice(p);
@@ -46,7 +53,8 @@ pub(crate) fn derive_algorithm_key(key: &[u8; 32], fc: u8, algo_type: u8, algo_i
     kdf(key, &build_s(fc, &[&[algo_type], &[algo_id]]))
 }
 
-/// Encode a 24-bit NAS COUNT as the four-octet KDF parameter.
+/// Encode a 24-bit NAS COUNT as the four-octet KDF parameter. Callers
+/// document that a COUNT above 2^24 - 1 panics.
 pub(crate) fn nas_count_input(count: u32) -> [u8; 4] {
     assert!(count <= 0x00ff_ffff, "NAS COUNT exhausted");
     count.to_be_bytes()

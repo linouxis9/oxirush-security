@@ -17,4 +17,7 @@
 
 //! 5GS NAS algorithm selection from UE security capabilities.
 
-pub use crate::common::algo::{select_ciphering_algo, select_integrity_algo};
+pub use crate::common::algo::{
+    select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
+    select_integrity_algo_with_preference,
+};

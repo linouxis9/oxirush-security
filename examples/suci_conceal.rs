@@ -19,7 +19,7 @@
 //!
 //! Shows:
 //! - Null scheme (cleartext MSIN in BCD)
-//! - Profile A (X25519 ECIES) — conceal and deconceal round-trip
+//! - Profile A (X25519 ECIES) — IMSI and textual NAI round-trips
 
 use oxirush_security::nas_5gs::*;
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -63,5 +63,23 @@ fn main() {
     println!("Recovered MSIN BCD:        {}", hex::encode(&recovered));
 
     assert_eq!(msin_bcd, recovered, "MSIN mismatch after deconceal!");
-    println!("\nProfile A round-trip: OK");
+    println!("\nProfile A IMSI round-trip: OK");
+
+    // Network-specific SUPIs use the TS 23.003 textual NAI form.
+    let nai = conceal_network_specific_supi(
+        "sensor-17@example.net",
+        "0",
+        NaiProtectionScheme::ProfileA {
+            home_network_public_key_id: 1,
+            home_network_public_key: home_pub_key.as_bytes(),
+        },
+    )
+    .expect("NAI conceal failed");
+    let encoded_nai = encode_nai_suci(&nai).expect("NAI encoding failed");
+    let parsed_nai = parse_nai_suci(&encoded_nai).expect("NAI parsing failed");
+    let recovered_nai =
+        deconceal_network_specific_suci(&parsed_nai, Some(home_priv_key.as_bytes()))
+            .expect("NAI deconceal failed");
+    assert_eq!(recovered_nai, "sensor-17@example.net");
+    println!("Profile A NAI round-trip:  OK");
 }

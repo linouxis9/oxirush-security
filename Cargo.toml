@@ -17,9 +17,8 @@ sha2 = "0.10"
 hmac = "0.12"
 
 # NIA2 (AES-CMAC) + NEA2 (AES-CTR)
-aes = "0.8"
-cmac = "0.7"
-cipher = "0.4"
+aes = { version = "0.8", features = ["zeroize"] }
+cipher = { version = "0.4", features = ["zeroize"] }
 
 # SUCI concealment (TS 33.501 Annex C)
 x25519-dalek = { version = "2", features = ["getrandom", "static_secrets"] }
@@ -37,5 +36,10 @@ subtle = "2"
 
 # Hex encoding for SUCI scheme output
 hex = "0.4"
+
+# RFC 7542 requires NFC-normalized UTF-8 NAIs and RFC 5891 realms.
+unicode-normalization = "0.1"
+idna = "1"
+base64 = "0.22"
 
 [dev-dependencies]

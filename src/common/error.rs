@@ -29,4 +29,8 @@ pub enum SecurityError {
     Ecies(String),
     #[error("MAC verification failed")]
     MacMismatch,
+    #[error("invalid parameter: {0}")]
+    InvalidParameter(&'static str),
+    #[error("input too long: maximum {maximum} octets, got {got}")]
+    InputTooLong { maximum: usize, got: usize },
 }

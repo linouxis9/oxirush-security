@@ -26,8 +26,15 @@ pub mod plmn;
 pub mod snow3g;
 pub mod zuc;
 
+pub use algo::{
+    select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
+    select_integrity_algo_with_preference,
+};
 pub use error::SecurityError;
 pub use kdf::extract_128;
-pub use nea::{nas_cipher, nea1_cipher, nea2_cipher, nea3_cipher};
-pub use nia::{nas_mac, nia1_mac, nia2_mac, nia3_mac};
+pub use nea::{
+    nas_cipher, nas_cipher_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits,
+    nea3_cipher, nea3_cipher_bits,
+};
+pub use nia::{nas_mac, nas_mac_bits, nia1_mac, nia2_mac, nia2_mac_bits, nia3_mac};
 pub use plmn::{plmn_from_bytes, plmn_to_bytes, tbcd_decode, tbcd_encode};

@@ -28,18 +28,21 @@ pub mod nas_eps;
 
 // Preserve the established 5GS and shared API at the crate root.
 pub use common::{
-    SecurityError, extract_128, nas_cipher, nas_mac, nea1_cipher, nea2_cipher, nea3_cipher,
-    nia1_mac, nia2_mac, nia3_mac, plmn_from_bytes, plmn_to_bytes, tbcd_decode, tbcd_encode,
+    SecurityError, extract_128, nas_cipher, nas_cipher_bits, nas_mac, nas_mac_bits, nea1_cipher,
+    nea1_cipher_bits, nea2_cipher, nea2_cipher_bits, nea3_cipher, nea3_cipher_bits, nia1_mac,
+    nia2_mac, nia2_mac_bits, nia3_mac, plmn_from_bytes, plmn_to_bytes, tbcd_decode, tbcd_encode,
 };
 pub use common::{error, nea, nia, plmn, snow3g, zuc};
-pub use nas_5gs::{algo, guti, kdf, suci};
 pub use nas_5gs::{
-    build_guti_bytes, compute_hres_star, compute_xres_star, derive_kamf, derive_kausf,
-    derive_kausf_standard, derive_kgnb, derive_kseaf, derive_nas_key, derive_nh,
-    mobile_identity_type, msin_to_bcd, parse_guti_tmsi, parse_s_tmsi, select_ciphering_algo,
-    select_integrity_algo, suci_conceal, suci_decrypt_a, suci_decrypt_b, suci_scheme_output_a,
-    suci_scheme_output_b, suci_to_string, suci_to_supi,
+    IabIpAddress, KamfMobilityDirection, NaiProtectionScheme, NaiSuci, SuciSchemeOutput, SupiType,
+    TnapKeyUsage, build_guti_bytes, compute_hres_star, compute_xres_star,
+    conceal_network_specific_supi, deconceal_nai_suci, deconceal_network_specific_suci,
+    derive_kamf, derive_kamf_prime, derive_kamf_prime_handover, derive_kamf_prime_idle,
+    derive_kausf, derive_kgnb, derive_kiab, derive_kseaf, derive_ksn, derive_nas_key, derive_nh,
+    derive_sor_mac_ausf, derive_sor_mac_ue, derive_tnap_usage_key, derive_upu_mac_ausf,
+    derive_upu_mac_ue, encode_nai_suci, mobile_identity_type, msin_to_bcd, parse_guti_tmsi,
+    parse_nai_suci, parse_s_tmsi, select_ciphering_algo, select_ciphering_algo_with_preference,
+    select_integrity_algo, select_integrity_algo_with_preference, suci_conceal, suci_decrypt_a,
+    suci_decrypt_b, suci_scheme_output_a, suci_scheme_output_b, suci_to_string, suci_to_supi,
 };
-
-/// Compatibility alias for the EPS module.
-pub use nas_eps as eps;
+pub use nas_5gs::{algo, guti, kdf, suci};

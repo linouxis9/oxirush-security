@@ -27,3 +27,15 @@ pub fn select_integrity_algo(eia_capability: u8) -> Option<u8> {
 pub fn select_ciphering_algo(eea_capability: u8) -> Option<u8> {
     crate::common::algo::select_ciphering_algo(eea_capability)
 }
+
+/// Select the first EIA algorithm in the operator-configured preference list
+/// that the UE supports. Include EIA0 only for an applicable emergency policy.
+pub fn select_integrity_algo_with_preference(eia_capability: u8, preference: &[u8]) -> Option<u8> {
+    crate::common::algo::select_integrity_algo_with_preference(eia_capability, preference)
+}
+
+/// Select the first EEA algorithm in the operator-configured preference list
+/// that the UE supports.
+pub fn select_ciphering_algo_with_preference(eea_capability: u8, preference: &[u8]) -> Option<u8> {
+    crate::common::algo::select_ciphering_algo_with_preference(eea_capability, preference)
+}

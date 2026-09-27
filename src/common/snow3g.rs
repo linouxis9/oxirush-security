@@ -66,39 +66,69 @@ const SQ: [u8; 256] = [
 
 /// MULx: multiply by x in GF(2^8) with reduction polynomial c
 #[inline]
-fn mulx(v: u8, c: u8) -> u8 {
+const fn mulx(v: u8, c: u8) -> u8 {
     if v & 0x80 != 0 { (v << 1) ^ c } else { v << 1 }
 }
 
 /// MULxPOW: multiply by x^i in GF(2^8) with reduction polynomial c
-fn mulxpow(v: u8, i: u32, c: u8) -> u8 {
-    if i == 0 {
-        return v;
-    }
+const fn mulxpow(v: u8, i: u32, c: u8) -> u8 {
     let mut r = v;
-    for _ in 0..i {
+    let mut step = 0;
+    while step < i {
         r = mulx(r, c);
+        step += 1;
     }
     r
 }
 
 // ── LFSR feedback helpers ──────────────────────────────────────────────────────
 
-/// MULα: multiply a byte by α in the LFSR feedback polynomial
-/// Reduction polynomial for the outer field: 0xa9 (x^8 + x^7 + x^5 + x^3 + 1)
-fn mul_alpha(c: u8) -> u32 {
+/// Tabulate MULα (`divide` false) or DIVα over all 256 inputs at compile
+/// time.
+const fn alpha_table(divide: bool) -> [u32; 256] {
+    let mut table = [0; 256];
+    let mut c = 0;
+    while c < 256 {
+        table[c] = if divide {
+            div_alpha_value(c as u8)
+        } else {
+            mul_alpha_value(c as u8)
+        };
+        c += 1;
+    }
+    table
+}
+
+/// MULα as defined with MULxPOW (reduction polynomial 0xa9 for the outer
+/// field: x^8 + x^7 + x^5 + x^3 + 1).
+const fn mul_alpha_value(c: u8) -> u32 {
     ((mulxpow(c, 23, 0xa9) as u32) << 24)
         | ((mulxpow(c, 245, 0xa9) as u32) << 16)
         | ((mulxpow(c, 48, 0xa9) as u32) << 8)
         | (mulxpow(c, 239, 0xa9) as u32)
 }
 
-/// DIVα: multiply a byte by α^(-1) in the LFSR feedback polynomial
-fn div_alpha(c: u8) -> u32 {
+/// DIVα as defined with MULxPOW.
+const fn div_alpha_value(c: u8) -> u32 {
     ((mulxpow(c, 16, 0xa9) as u32) << 24)
         | ((mulxpow(c, 39, 0xa9) as u32) << 16)
         | ((mulxpow(c, 6, 0xa9) as u32) << 8)
         | (mulxpow(c, 64, 0xa9) as u32)
+}
+
+const MUL_ALPHA: [u32; 256] = alpha_table(false);
+const DIV_ALPHA: [u32; 256] = alpha_table(true);
+
+/// MULα: multiply a byte by α in the LFSR feedback polynomial.
+#[inline]
+fn mul_alpha(c: u8) -> u32 {
+    MUL_ALPHA[c as usize]
+}
+
+/// DIVα: multiply a byte by α^(-1) in the LFSR feedback polynomial.
+#[inline]
+fn div_alpha(c: u8) -> u32 {
+    DIV_ALPHA[c as usize]
 }
 
 // ── 32-bit S-boxes ─────────────────────────────────────────────────────────────

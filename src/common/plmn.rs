@@ -21,6 +21,10 @@
 /// and TS 24.501 §9.11.3.4.
 ///
 /// MCC must be 3 decimal digits, MNC must be 2 or 3 decimal digits.
+///
+/// # Panics
+///
+/// Panics if `mcc` or `mnc` does not have the documented decimal format.
 pub fn plmn_to_bytes(mcc: &str, mnc: &str) -> Vec<u8> {
     assert!(
         mcc.len() == 3 && mcc.chars().all(|c| c.is_ascii_digit()),
@@ -116,6 +120,10 @@ pub fn try_tbcd_decode(bytes: &[u8]) -> Option<String> {
 /// Encode a decimal digit string as TBCD bytes.
 ///
 /// Swaps nibble pairs. Odd-length strings are padded with 0xF in the high nibble of the last byte.
+///
+/// # Panics
+///
+/// Panics if `value` contains a non-ASCII decimal digit.
 pub fn tbcd_encode(value: &str) -> Vec<u8> {
     assert!(
         value.bytes().all(|digit| digit.is_ascii_digit()),

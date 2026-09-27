@@ -15,18 +15,22 @@
    limitations under the License.
 */
 
-//! Demonstrate the 5G key derivation chain per TS 33.501 Annex A:
-//! KAUSF -> KSEAF -> KAMF -> KNASint / KNASenc -> K_gNB
+//! Demonstrate the 5GS key derivation chain per TS 33.501 Annex A:
+//! CK || IK -> KAUSF -> KSEAF -> KAMF -> KNASint / KNASenc -> K_gNB
 
 use oxirush_security::nas_5gs::*;
 
 fn main() {
-    // Example key material (from test vectors)
-    let k_ausf = [0xAA; 32]; // In practice, derived from AUSF via 5G-AKA
+    // Example 5G-AKA outputs and AUTN field.
+    let ck = [0x11; 16];
+    let ik = [0x22; 16];
+    let sqn_xor_ak = [0x33; 6];
     let sn_name = b"5G:mnc093.mcc208.3gppnetwork.org";
     let abba = [0x00, 0x00]; // 5G standalone
 
-    // KAUSF -> KSEAF
+    // CK || IK -> KAUSF -> KSEAF
+    let k_ausf = derive_kausf(&ck, &ik, sn_name, &sqn_xor_ak);
+    println!("KAUSF: {}", hex::encode(k_ausf));
     let k_seaf = derive_kseaf(&k_ausf, sn_name);
     println!("KSEAF: {}", hex::encode(k_seaf));
 
@@ -42,6 +46,10 @@ fn main() {
     // KAMF -> KNASenc (NEA2 = algorithm ID 2, distinguisher 0x01)
     let k_nas_enc = derive_nas_key(&k_amf, 0x01, 2); // ciphering, NEA2
     println!("KNASenc (NEA2): {}", hex::encode(k_nas_enc));
+
+    // KAMF -> KAMF' for idle mobility (UL NAS COUNT = 0)
+    let k_amf_prime = derive_kamf_prime_idle(&k_amf, 0).expect("valid 24-bit COUNT");
+    println!("KAMF': {}", hex::encode(k_amf_prime));
 
     // KAMF -> K_gNB (for initial context setup)
     let k_gnb = derive_kgnb(&k_amf, 0); // uplink NAS COUNT = 0
