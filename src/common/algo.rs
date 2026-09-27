@@ -1,11 +1,28 @@
-//! NAS security algorithm selection per 3GPP TS 33.501.
-//!
-//! UE security capability byte layout (TS 24.501 §9.11.3.54):
-//!   byte[0]: 5G-EA bits — bit7=NEA0, bit6=NEA1, bit5=NEA2, bit4=NEA3
-//!   byte[1]: 5G-IA bits — bit7=NIA0, bit6=NIA1, bit5=NIA2, bit4=NIA3
+/*
+   OxiRush
+   Copyright 2025 - 2026 Valentin D'Emmanuele
 
-/// AMF integrity algorithm preference: NIA2 > NIA1 > NIA3.
-/// NIA0 (null) is excluded per TS 33.501 §5.5 — integrity protection is mandatory.
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+//! Shared NAS algorithm selection for 5GS and EPS.
+//!
+//! The first capability byte has EA bits and the second has IA bits. Both
+//! TS 24.501 and TS 24.301 assign bit 8 to algorithm 0, bit 7 to algorithm 1,
+//! bit 6 to algorithm 2, and bit 5 to algorithm 3.
+
+/// Integrity algorithm preference: algorithm 2 > 1 > 3.
+/// Null integrity is excluded from ordinary protected NAS signalling.
 /// Each entry: (bitmask in capability byte, algorithm ID).
 const NIA_PREFERENCE: &[(u8, u8)] = &[
     (0x20, 0x02), // NIA2 (AES-CMAC)
@@ -13,7 +30,7 @@ const NIA_PREFERENCE: &[(u8, u8)] = &[
     (0x10, 0x03), // NIA3 (ZUC)
 ];
 
-/// AMF ciphering algorithm preference: NEA2 > NEA1 > NEA3 > NEA0.
+/// Ciphering algorithm preference: algorithm 2 > 1 > 3 > 0.
 const NEA_PREFERENCE: &[(u8, u8)] = &[
     (0x20, 0x02), // NEA2 (AES-CTR)
     (0x40, 0x01), // NEA1 (SNOW 3G)
@@ -23,9 +40,9 @@ const NEA_PREFERENCE: &[(u8, u8)] = &[
 
 /// Select the best integrity algorithm supported by the UE.
 ///
-/// `nia_capability` is byte[1] of the UE security capability (5G-IA bits).
+/// `nia_capability` is the IA capability byte.
 /// Returns `Some(algorithm_id)` (0x01–0x03), or `None` if no valid algorithm matches.
-/// NIA0 (null) is never selected — integrity protection is mandatory.
+/// Algorithm 0 (null) is not selected for ordinary protected signalling.
 pub fn select_integrity_algo(nia_capability: u8) -> Option<u8> {
     for &(mask, algo) in NIA_PREFERENCE {
         if nia_capability & mask != 0 {
@@ -37,7 +54,7 @@ pub fn select_integrity_algo(nia_capability: u8) -> Option<u8> {
 
 /// Select the best ciphering algorithm supported by the UE.
 ///
-/// `nea_capability` is byte[0] of the UE security capability (5G-EA bits).
+/// `nea_capability` is the EA capability byte.
 /// Returns `Some(algorithm_id)` (0x00–0x03), or `None` if no bits match.
 pub fn select_ciphering_algo(nea_capability: u8) -> Option<u8> {
     for &(mask, algo) in NEA_PREFERENCE {

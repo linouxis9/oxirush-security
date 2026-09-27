@@ -1,33 +1,45 @@
-pub mod algo;
-/// oxirush-security: 5G NAS security algorithms
-///
-/// Implements 3GPP TS 33.501 security primitives:
-/// - Key derivation (KAUSF, KSEAF, KAMF, KNASint, KNASenc)
-/// - Integrity: NIA1 (SNOW 3G), NIA2 (AES-CMAC), NIA3 (ZUC)
-/// - Ciphering: NEA0 (null), NEA1 (SNOW 3G), NEA2 (AES-CTR), NEA3 (ZUC)
-/// - 5G-GUTI construction/parsing
-pub mod error;
-pub mod guti;
-pub mod kdf;
-pub mod nea;
-pub mod nia;
-pub mod plmn;
-pub mod snow3g;
-pub mod suci;
-pub mod zuc;
+/*
+   OxiRush
+   Copyright 2025 - 2026 Valentin D'Emmanuele
 
-// Re-export commonly used items
-pub use algo::{select_ciphering_algo, select_integrity_algo};
-pub use error::SecurityError;
-pub use guti::{build_guti_bytes, mobile_identity_type, parse_guti_tmsi, parse_s_tmsi};
-pub use kdf::{
-    compute_hres_star, compute_xres_star, derive_kamf, derive_kausf, derive_kgnb, derive_kseaf,
-    derive_nas_key, derive_nh, extract_128,
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+//! Security algorithms and key derivation for 5GS and EPS.
+//!
+//! [`nas_5gs`] implements TS 33.501 key hierarchy, algorithm selection,
+//! GUTI, and SUCI. [`nas_eps`] implements TS 33.401 key hierarchy and EPS NAS
+//! security use. [`common`] holds shared KDF framing, EEA/EIA algorithm cores,
+//! and PLMN utilities.
+
+pub mod common;
+pub mod nas_5gs;
+pub mod nas_eps;
+
+// Preserve the established 5GS and shared API at the crate root.
+pub use common::{
+    SecurityError, extract_128, nas_cipher, nas_mac, nea1_cipher, nea2_cipher, nea3_cipher,
+    nia1_mac, nia2_mac, nia3_mac, plmn_from_bytes, plmn_to_bytes, tbcd_decode, tbcd_encode,
 };
-pub use nea::{nas_cipher, nea1_cipher, nea2_cipher, nea3_cipher};
-pub use nia::{nas_mac, nia1_mac, nia2_mac, nia3_mac};
-pub use plmn::{plmn_from_bytes, plmn_to_bytes, tbcd_decode, tbcd_encode};
-pub use suci::{
-    msin_to_bcd, suci_conceal, suci_decrypt_a, suci_decrypt_b, suci_scheme_output_a,
+pub use common::{error, nea, nia, plmn, snow3g, zuc};
+pub use nas_5gs::{algo, guti, kdf, suci};
+pub use nas_5gs::{
+    build_guti_bytes, compute_hres_star, compute_xres_star, derive_kamf, derive_kausf,
+    derive_kausf_standard, derive_kgnb, derive_kseaf, derive_nas_key, derive_nh,
+    mobile_identity_type, msin_to_bcd, parse_guti_tmsi, parse_s_tmsi, select_ciphering_algo,
+    select_integrity_algo, suci_conceal, suci_decrypt_a, suci_decrypt_b, suci_scheme_output_a,
     suci_scheme_output_b, suci_to_string, suci_to_supi,
 };
+
+/// Compatibility alias for the EPS module.
+pub use nas_eps as eps;

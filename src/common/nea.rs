@@ -1,9 +1,26 @@
-/// NAS ciphering algorithms per 3GPP TS 33.501 Annex B.1-B.3
+/*
+   OxiRush
+   Copyright 2025 - 2026 Valentin D'Emmanuele
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+/// 5GS and EPS NAS ciphering algorithms per TS 33.501 and TS 33.401.
 ///
 /// NEA0 = null cipher (no-op)
 /// NEA1 = 128-EEA1 (SNOW 3G, TS 35.215/35.216)
-/// NEA2 = 128-EEA2 (AES-128-CTR, TS 35.213)
-/// NEA3 = 128-EEA3 (ZUC, TS 35.222)
+/// NEA2 = 128-EEA2 (AES-128-CTR, TS 33.401 Annex B.1.3)
+/// NEA3 = 128-EEA3 (ZUC, TS 35.221)
 ///
 /// All encrypt/decrypt in-place (XOR-based stream ciphers: encrypt = decrypt).
 use crate::snow3g::Snow3G;
@@ -26,7 +43,8 @@ pub fn nas_cipher(
         0x01 => nea1_cipher(key, count, bearer, direction, data),
         0x02 => nea2_cipher(key, count, bearer, direction, data),
         0x03 => nea3_cipher(key, count, bearer, direction, data),
-        _ => {} // NEA0 = null cipher, no-op
+        0 => {} // NEA0 = null cipher, no-op
+        _ => panic!("unsupported NAS ciphering algorithm {algo_id}"),
     }
 }
 
@@ -78,7 +96,7 @@ pub fn nea1_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: 
 
 // ── NEA2: 128-EEA2 (AES-128-CTR) ──────────────────────────────────────────────
 
-/// Encrypt/decrypt using NEA2 / 128-EEA2 (TS 35.213)
+/// Encrypt/decrypt using NEA2 / 128-EEA2 (TS 33.401 Annex B.1.3)
 ///
 /// Counter block layout (128 bits):
 ///   Bytes [0..3]:  COUNT (big-endian)
@@ -116,7 +134,7 @@ pub fn nea2_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: 
 
 // ── NEA3: 128-EEA3 (ZUC keystream) ────────────────────────────────────────────
 
-/// Encrypt/decrypt using NEA3 / 128-EEA3 (TS 35.222)
+/// Encrypt/decrypt using NEA3 / 128-EEA3 (TS 35.221)
 ///
 /// IV construction for ZUC:
 ///   Bytes [0..3]:  COUNT (big-endian)
@@ -403,7 +421,7 @@ mod tests {
         );
     }
 
-    // ── NEA2 test vectors from 3GPP TS 35.213 / free5gc ────────────────────────
+    // ── NEA2 test vectors ───────────────────────────────────────────────────────
 
     fn nea2_test(
         key: [u8; 16],
@@ -500,7 +518,7 @@ mod tests {
         );
     }
 
-    // ── NEA3 test vectors from 3GPP TS 35.222 / free5gc ────────────────────────
+    // ── NEA3 test vectors from 3GPP TS 35.223 / free5gc ────────────────────────
     //
     // Note: same bit-length convention as NEA1 — tests use floor(bit_length/8) bytes.
 

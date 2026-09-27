@@ -1,4 +1,21 @@
-//! SNOW 3G stream cipher (ETSI/3GPP TS 35.201 / TS 35.202)
+/*
+   OxiRush
+   Copyright 2025 - 2026 Valentin D'Emmanuele
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+//! SNOW 3G stream cipher (ETSI/3GPP TS 35.215 / TS 35.216)
 //!
 //! A word-oriented stream cipher producing 32-bit keystream words.
 //! Uses a 16-stage LFSR over GF(2^32) and a 3-register FSM with two S-boxes.
@@ -24,7 +41,7 @@ const SR: [u8; 256] = [
     0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16,
 ];
 
-// ── SQ S-box used by S2 (TS 35.201 Table 3.3) ─────────────────────────────────
+// ── SQ S-box used by S2 (TS 35.216) ───────────────────────────────────────────
 
 const SQ: [u8; 256] = [
     0x25, 0x24, 0x73, 0x67, 0xD7, 0xAE, 0x5C, 0x30, 0xA4, 0xEE, 0x6E, 0xCB, 0x7D, 0xB5, 0x82, 0xDB,
@@ -124,20 +141,21 @@ pub struct Snow3G {
     r1: u32,
     r2: u32,
     r3: u32,
+    started: bool,
 }
 
 impl Snow3G {
     /// Initialize SNOW 3G with key and IV as 4 u32 words each.
     ///
-    /// Follows the free5gc/3GPP convention where k[0] corresponds to the
-    /// *last* 4 bytes of the 128-bit key (LSW) and k[3] to the *first* (MSW).
-    /// The LFSR loading matches TS 35.202 §4.1 / free5gc snow3g.go.
+    /// Key and IV words follow their big-endian order in the SNOW 3G core
+    /// specification. EEA1/EIA1 wrappers apply their own key mapping.
     pub fn new(k: [u32; 4], iv: [u32; 4]) -> Self {
         let mut s = Self {
             lfsr: [0u32; 16],
             r1: 0,
             r2: 0,
             r3: 0,
+            started: false,
         };
 
         // Load LFSR (matching free5gc snow3g.go newSnow3g)
@@ -169,22 +187,22 @@ impl Snow3G {
 
     /// Initialize from 128-bit key and IV byte slices.
     ///
-    /// The key is loaded in reverse word order (matching free5gc convention):
-    /// k[0] = bytes[12..16], k[1] = bytes[8..12], k[2] = bytes[4..8], k[3] = bytes[0..4]
+    /// The key and IV are four consecutive big-endian words, as in the
+    /// SNOW 3G core specification. EEA1/EIA1 mode code handles its own key mapping.
     pub fn from_bytes(key: &[u8; 16], iv: &[u8; 16]) -> Self {
         let k = [
-            u32::from_be_bytes(
-                key[12..16]
-                    .try_into()
-                    .expect("4-byte slice from 16-byte key"),
-            ),
+            u32::from_be_bytes(key[0..4].try_into().expect("4-byte slice from 16-byte key")),
+            u32::from_be_bytes(key[4..8].try_into().expect("4-byte slice from 16-byte key")),
             u32::from_be_bytes(
                 key[8..12]
                     .try_into()
                     .expect("4-byte slice from 16-byte key"),
             ),
-            u32::from_be_bytes(key[4..8].try_into().expect("4-byte slice from 16-byte key")),
-            u32::from_be_bytes(key[0..4].try_into().expect("4-byte slice from 16-byte key")),
+            u32::from_be_bytes(
+                key[12..16]
+                    .try_into()
+                    .expect("4-byte slice from 16-byte key"),
+            ),
         ];
         let v = [
             u32::from_be_bytes(iv[0..4].try_into().expect("4-byte slice from 16-byte IV")),
@@ -197,9 +215,12 @@ impl Snow3G {
 
     /// Generate `n` keystream words.
     pub fn generate(&mut self, n: usize) -> Vec<u32> {
-        // Discard first FSM output
-        let _ = self.clock_fsm();
-        self.clock_lfsr_keystream();
+        if !self.started {
+            // TS 35.216 discards one word after initialization, once per state.
+            let _ = self.clock_fsm();
+            self.clock_lfsr_keystream();
+            self.started = true;
+        }
 
         let mut ks = Vec::with_capacity(n);
         for _ in 0..n {
@@ -253,6 +274,18 @@ impl Snow3G {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_generate_matches_single_call() {
+        let key = [0x23; 16];
+        let iv = [0x42; 16];
+        let mut one = Snow3G::from_bytes(&key, &iv);
+        let mut split = Snow3G::from_bytes(&key, &iv);
+        let expected = one.generate(8);
+        let mut actual = split.generate(3);
+        actual.extend(split.generate(5));
+        assert_eq!(actual, expected);
+    }
 
     #[test]
     fn test_snow3g_deterministic() {

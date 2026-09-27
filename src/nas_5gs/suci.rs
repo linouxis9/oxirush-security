@@ -1,3 +1,20 @@
+/*
+   OxiRush
+   Copyright 2025 - 2026 Valentin D'Emmanuele
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
 use crate::error::SecurityError;
 use aes::Aes128;
 use aes::cipher::{BlockEncrypt, KeyInit};
@@ -49,18 +66,19 @@ fn ansi_x963_kdf(
     kdf_key
 }
 
-/// AES-128-CTR encryption (ICB = initial counter block, incremented as big-endian u128).
+/// AES-128-CTR encryption with a 32-bit big-endian counter in the ICB.
 fn aes128_ctr(key: &[u8; 16], icb: &[u8; 16], data: &[u8]) -> Vec<u8> {
     let aes = Aes128::new(key.into());
     let mut out = Vec::with_capacity(data.len());
-    let mut counter = u128::from_be_bytes(*icb);
+    let mut counter = *icb;
     for chunk in data.chunks(16) {
-        let mut block = aes::Block::clone_from_slice(&counter.to_be_bytes());
+        let mut block = aes::Block::clone_from_slice(&counter);
         aes.encrypt_block(&mut block);
         for (d, k) in chunk.iter().zip(block.iter()) {
             out.push(d ^ k);
         }
-        counter = counter.wrapping_add(1);
+        let low = u32::from_be_bytes(counter[12..16].try_into().expect("four counter octets"));
+        counter[12..16].copy_from_slice(&low.wrapping_add(1).to_be_bytes());
     }
     out
 }
@@ -78,7 +96,7 @@ fn hmac_sha256_8(key: &[u8], data: &[u8]) -> [u8; 8] {
 
 /// MSIN decimal string → packed BCD bytes (low nibble first, right-padded with 0xF if odd length).
 pub fn msin_to_bcd(msin: &str) -> Vec<u8> {
-    debug_assert!(
+    assert!(
         msin.as_bytes().iter().all(|b| b.is_ascii_digit()),
         "MSIN must be ASCII digits"
     );
@@ -114,6 +132,11 @@ pub fn suci_scheme_output_a(
     let eph_secret = EphemeralSecret::random_from_rng(OsRng);
     let eph_pub = PublicKey::from(&eph_secret);
     let shared = eph_secret.diffie_hellman(&hn_pub);
+    if shared.as_bytes().iter().all(|&byte| byte == 0) {
+        return Err(SecurityError::Ecies(
+            "invalid X25519 home network public key".into(),
+        ));
+    }
 
     let eph_pub_bytes = eph_pub.as_bytes();
     let kdf = ansi_x963_kdf(
@@ -245,6 +268,11 @@ pub fn suci_decrypt_a(
             .map_err(|_| SecurityError::Ecies("invalid ephemeral public key".into()))?,
     );
     let shared = priv_key.diffie_hellman(&eph_pub);
+    if shared.as_bytes().iter().all(|&byte| byte == 0) {
+        return Err(SecurityError::Ecies(
+            "invalid X25519 ephemeral public key".into(),
+        ));
+    }
 
     let kdf = ansi_x963_kdf(
         shared.as_bytes(),
@@ -331,6 +359,27 @@ pub fn suci_decrypt_b(scheme_output: &[u8], hn_priv_key: &[u8]) -> Result<Vec<u8
 
 // ── SUCI → SUPI decoding (network-side) ─────────────────────────────────────
 
+fn decode_routing_indicator(bytes: &[u8]) -> Option<String> {
+    if bytes.len() != 2 {
+        return None;
+    }
+    let mut digits = String::new();
+    let mut filler = false;
+    for nibble in [
+        bytes[0] & 0x0f,
+        bytes[0] >> 4,
+        bytes[1] & 0x0f,
+        bytes[1] >> 4,
+    ] {
+        match nibble {
+            0..=9 if !filler => digits.push(char::from(b'0' + nibble)),
+            0x0f => filler = true,
+            _ => return None,
+        }
+    }
+    (!digits.is_empty()).then_some(digits)
+}
+
 /// Decode a SUCI to SUPI, supporting all protection schemes.
 ///
 /// - Null scheme (0x00): MSIN decoded directly from BCD.
@@ -342,7 +391,7 @@ pub fn suci_decrypt_b(scheme_output: &[u8], hn_priv_key: &[u8]) -> Result<Vec<u8
 ///
 /// Returns SUPI string of the form "imsi-<MCC><MNC><MSIN>" on success.
 pub fn suci_to_supi(suci: &[u8], hn_priv_key: Option<&[u8]>) -> Option<String> {
-    if suci.len() < 9 || suci[0] & 0x07 != 0x01 {
+    if suci.len() < 9 || suci[0] & 0x0f != 0x01 || suci[6] & 0xf0 != 0 {
         return None;
     }
     let supi_format = (suci[0] >> 4) & 0x0F;
@@ -350,7 +399,11 @@ pub fn suci_to_supi(suci: &[u8], hn_priv_key: Option<&[u8]>) -> Option<String> {
         return None; // Only IMSI SUPI format supported
     }
     let protection_scheme = suci[6] & 0x0F;
+    if protection_scheme == 0 && suci[7] != 0 {
+        return None;
+    }
     let (mcc, mnc) = crate::plmn::plmn_from_bytes(&suci[1..4])?;
+    decode_routing_indicator(&suci[4..6])?;
     if mcc.len() != 3 || !mcc.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
@@ -359,37 +412,47 @@ pub fn suci_to_supi(suci: &[u8], hn_priv_key: Option<&[u8]>) -> Option<String> {
     }
 
     let msin = match protection_scheme {
-        0x00 => crate::plmn::tbcd_decode(&suci[8..]),
+        0x00 => crate::plmn::try_tbcd_decode(&suci[8..])?,
         0x01 => {
             let priv_key = hn_priv_key?;
             let priv_key: &[u8; 32] = priv_key.try_into().ok()?;
             let msin_bcd = suci_decrypt_a(&suci[8..], priv_key).ok()?;
-            crate::plmn::tbcd_decode(&msin_bcd)
+            crate::plmn::try_tbcd_decode(&msin_bcd)?
         }
         0x02 => {
             let priv_key = hn_priv_key?;
             let msin_bcd = suci_decrypt_b(&suci[8..], priv_key).ok()?;
-            crate::plmn::tbcd_decode(&msin_bcd)
+            crate::plmn::try_tbcd_decode(&msin_bcd)?
         }
         _ => return None,
     };
+    if mcc.len() + mnc.len() + msin.len() > 15 {
+        return None;
+    }
 
     Some(format!("imsi-{}{}{}", mcc, mnc, msin))
 }
 
-/// Convert a binary NAS SUCI to the textual "suci-0-MCC-MNC-RI-SchemeID-KeyID-Output" format.
-///
-/// Supports all scheme IDs: null-scheme MSIN is TBCD-decoded, non-null scheme output is hex-encoded.
+/// Convert an IMSI-format binary NAS SUCI to textual
+/// `suci-0-MCC-MNC-RI-SchemeID-KeyID-Output` form.
+/// Null-scheme MSIN is TBCD-decoded; protected output is hex-encoded.
 pub fn suci_to_string(suci: &[u8]) -> Option<String> {
-    if suci.len() < 9 || suci[0] & 0x07 != 0x01 {
+    if suci.len() < 9 || suci[0] != 0x01 || suci[6] & 0xf0 != 0 {
         return None;
     }
     let (mcc, mnc) = crate::plmn::plmn_from_bytes(&suci[1..4])?;
-    let ri = crate::plmn::tbcd_decode(&suci[4..6]);
+    let ri = decode_routing_indicator(&suci[4..6])?;
     let scheme_id = suci[6] & 0x0F;
     let key_id = suci[7];
+    if scheme_id == 0 && key_id != 0 {
+        return None;
+    }
     let scheme_output = if scheme_id == 0 {
-        crate::plmn::tbcd_decode(&suci[8..])
+        let msin = crate::plmn::try_tbcd_decode(&suci[8..])?;
+        if mcc.len() + mnc.len() + msin.len() > 15 {
+            return None;
+        }
+        msin
     } else {
         hex::encode(&suci[8..])
     };

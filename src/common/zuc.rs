@@ -1,3 +1,20 @@
+/*
+   OxiRush
+   Copyright 2025 - 2026 Valentin D'Emmanuele
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
 //! ZUC stream cipher (3GPP TS 35.221 / TS 35.222)
 //!
 //! A word-oriented stream cipher producing 32-bit keystream words.
@@ -102,6 +119,7 @@ pub struct Zuc {
     s: [u32; 16], // LFSR (31-bit stages)
     r1: u32,
     r2: u32,
+    started: bool,
 }
 
 impl Zuc {
@@ -111,6 +129,7 @@ impl Zuc {
             s: [0u32; 16],
             r1: 0,
             r2: 0,
+            started: false,
         };
 
         // Load LFSR: s[i] = k[i] || d[i] || iv[i] (31 bits: 8+15+8)
@@ -130,10 +149,13 @@ impl Zuc {
 
     /// Generate `n` keystream words.
     pub fn generate(&mut self, n: usize) -> Vec<u32> {
-        // Discard first output
-        let (x0, x1, x2, x3) = self.bit_reorg();
-        let _ = self.f(x0, x1, x2, x3);
-        self.lfsr_keystream();
+        if !self.started {
+            // TS 35.222 discards one word after initialization, once per state.
+            let (x0, x1, x2, x3) = self.bit_reorg();
+            let _ = self.f(x0, x1, x2, x3);
+            self.lfsr_keystream();
+            self.started = true;
+        }
 
         let mut ks = Vec::with_capacity(n);
         for _ in 0..n {
@@ -209,6 +231,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn split_generate_matches_single_call() {
+        let key = [0x23; 16];
+        let iv = [0x42; 16];
+        let mut one = Zuc::new(&key, &iv);
+        let mut split = Zuc::new(&key, &iv);
+        let expected = one.generate(8);
+        let mut actual = split.generate(3);
+        actual.extend(split.generate(5));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn test_zuc_test_vector_1() {
         // ZUC 1.6 (TS 35.221): all-zero key and IV
         // Note: ZUC 1.4 produced 0x27BEAD9D; ZUC 1.6 produces 0x27BEDE74
@@ -217,6 +251,7 @@ mod tests {
         let mut z = Zuc::new(&key, &iv);
         let ks = z.generate(2);
         assert_eq!(ks[0], 0x27BE_DE74);
+        assert_eq!(ks[1], 0x0180_82DA);
     }
 
     #[test]

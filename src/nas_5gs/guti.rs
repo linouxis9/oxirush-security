@@ -1,9 +1,26 @@
+/*
+   OxiRush
+   Copyright 2025 - 2026 Valentin D'Emmanuele
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
 //! 5G-GUTI construction and parsing (TS 24.501 §9.11.3.4)
 
 /// Build the 11-byte 5G-GUTI mobile identity value.
 ///
 /// Layout (TS 24.501 §9.11.3.4, Figure 9.11.3.4.3):
-///   [0]      0xF2 = spare(0xF) | odd/even(0) | type(010 = 5G-GUTI)
+///   [0]      0x02 = spare(0) | odd/even unused | type(010 = 5G-GUTI)
 ///   [1..3]   PLMN (3 bytes)
 ///   [4]      AMF Region ID (8 bits)
 ///   [5..6]   AMF Set ID (10 bits) || AMF Pointer (6 bits)
@@ -15,10 +32,13 @@ pub fn build_guti_bytes(
     amf_pointer: u8,
     tmsi: u32,
 ) -> Vec<u8> {
-    debug_assert!(amf_set_id <= 0x3FF, "AMF Set ID must be 10 bits");
-    debug_assert!(amf_pointer <= 0x3F, "AMF Pointer must be 6 bits");
+    assert!(plmn_bytes.len() >= 3, "PLMN must contain three octets");
+    assert!(amf_set_id <= 0x3FF, "AMF Set ID must be 10 bits");
+    assert!(amf_pointer <= 0x3F, "AMF Pointer must be 6 bits");
     let mut g = Vec::with_capacity(11);
-    g.push(0xF2); // spare=0xF | even | type=0x02 (5G-GUTI)
+    // TS 24.501 §9.11.3.4 Figure 9.11.3.4.3: bits 5-8 spare = 0, bit 4 unused
+    // for GUTI, bits 1-3 = type 010. Spare bits MUST be zero on the wire.
+    g.push(0x02);
     g.extend_from_slice(&plmn_bytes[..3]);
     g.push(amf_region_id);
     g.push((amf_set_id >> 2) as u8);
@@ -29,10 +49,10 @@ pub fn build_guti_bytes(
 
 /// Parse a 5G-GUTI mobile identity (type=0x02) and return the 5G-TMSI.
 pub fn parse_guti_tmsi(identity: &[u8]) -> Option<u32> {
-    if identity.len() < 11 {
+    if identity.len() != 11 {
         return None;
     }
-    if identity[0] & 0x07 != 0x02 {
+    if identity[0] != 0x02 {
         return None;
     }
     let tmsi = u32::from_be_bytes(identity[7..11].try_into().ok()?);
@@ -42,15 +62,15 @@ pub fn parse_guti_tmsi(identity: &[u8]) -> Option<u32> {
 /// Parse a 5G-S-TMSI mobile identity (type=0x04) and return the 5G-TMSI.
 ///
 /// Layout (TS 24.501 §9.11.3.4, Figure 9.11.3.4.4):
-///   [0]      0xF4 = spare(0xF) | odd/even(0) | type(100 = 5G-S-TMSI)
+///   [0]      0x04 = spare(0) | odd/even unused | type(100 = 5G-S-TMSI)
 ///   [1]      AMF Set ID bits [9:2]
 ///   [2]      AMF Set ID bits [1:0] || AMF Pointer bits [5:0]
 ///   [3..6]   5G-TMSI (4 bytes)
 pub fn parse_s_tmsi(identity: &[u8]) -> Option<u32> {
-    if identity.len() < 7 {
+    if identity.len() != 7 {
         return None;
     }
-    if identity[0] & 0x07 != 0x04 {
+    if identity[0] != 0x04 {
         return None;
     }
     let tmsi = u32::from_be_bytes(identity[3..7].try_into().ok()?);

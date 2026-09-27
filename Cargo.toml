@@ -1,13 +1,13 @@
 [package]
 name = "oxirush-security"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
-description = "5G security algorithms — KDF, NIA1/2/3, NEA0/1/2/3, SUCI concealment per TS 33.501"
+description = "5GS and EPS security algorithms, key derivation, NAS ciphering, integrity, and SUCI"
 license = "Apache-2.0"
 repository = "https://github.com/linouxis9/oxirush"
 authors = ["Valentin D'Emmanuele"]
 rust-version = "1.85"
-keywords = ["5g", "security", "nas", "3gpp", "telecom"]
+keywords = ["5g", "4g", "security", "nas", "3gpp"]
 categories = ["cryptography", "network-programming"]
 readme = "README.md"
 

@@ -1,6 +1,24 @@
-//! PLMN and TBCD encoding/decoding utilities per 3GPP TS 24.501.
+/*
+   OxiRush
+   Copyright 2025 - 2026 Valentin D'Emmanuele
 
-/// Encode MCC/MNC as 3 PLMN octets per 3GPP TS 24.501 §9.11.3.4.
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+//! PLMN and TBCD encoding/decoding utilities per 3GPP TS 24.301 and TS 24.501.
+
+/// Encode MCC/MNC as 3 PLMN octets per 3GPP TS 24.301 §9.9.3.12
+/// and TS 24.501 §9.11.3.4.
 ///
 /// MCC must be 3 decimal digits, MNC must be 2 or 3 decimal digits.
 pub fn plmn_to_bytes(mcc: &str, mnc: &str) -> Vec<u8> {
@@ -39,6 +57,14 @@ pub fn plmn_from_bytes(bytes: &[u8]) -> Option<(String, String)> {
     let mnc0 = bytes[2] & 0x0F;
     let mnc1 = (bytes[2] >> 4) & 0x0F;
 
+    if [mcc0, mcc1, mcc2, mnc0, mnc1]
+        .iter()
+        .any(|digit| *digit > 9)
+        || (mnc_hi > 9 && mnc_hi != 0x0f)
+    {
+        return None;
+    }
+
     let mcc = format!("{}{}{}", mcc0, mcc1, mcc2);
     let mnc = if mnc_hi == 0xF {
         format!("{}{}", mnc0, mnc1)
@@ -66,10 +92,35 @@ pub fn tbcd_decode(bytes: &[u8]) -> String {
     s
 }
 
+/// Decode decimal TBCD with only a final high-nibble filler permitted.
+pub fn try_tbcd_decode(bytes: &[u8]) -> Option<String> {
+    let mut digits = String::with_capacity(bytes.len() * 2);
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        let low = byte & 0x0f;
+        let high = byte >> 4;
+        if low > 9 {
+            return None;
+        }
+        digits.push(char::from(b'0' + low));
+        if high == 0x0f && index + 1 == bytes.len() {
+            continue;
+        }
+        if high > 9 {
+            return None;
+        }
+        digits.push(char::from(b'0' + high));
+    }
+    Some(digits)
+}
+
 /// Encode a decimal digit string as TBCD bytes.
 ///
 /// Swaps nibble pairs. Odd-length strings are padded with 0xF in the high nibble of the last byte.
 pub fn tbcd_encode(value: &str) -> Vec<u8> {
+    assert!(
+        value.bytes().all(|digit| digit.is_ascii_digit()),
+        "TBCD input must be ASCII digits"
+    );
     let digits: Vec<u8> = value.bytes().map(|b| b - b'0').collect();
     let mut result = Vec::with_capacity(digits.len().div_ceil(2));
     let mut i = 0;
