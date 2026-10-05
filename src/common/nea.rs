@@ -29,6 +29,7 @@ use crate::snow3g::Snow3G;
 use crate::zuc::Zuc;
 use aes::Aes128;
 use cipher::{BlockEncrypt, KeyInit};
+use zeroize::Zeroize;
 
 /// Unified NAS cipher (encrypt or decrypt in-place).
 ///
@@ -220,6 +221,7 @@ pub fn nea2_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: 
         for i in offset..end {
             data[i] ^= block[i - offset];
         }
+        block.as_mut_slice().zeroize();
     }
 }
 

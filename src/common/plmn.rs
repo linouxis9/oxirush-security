@@ -78,22 +78,19 @@ pub fn plmn_from_bytes(bytes: &[u8]) -> Option<(String, String)> {
     Some((mcc, mnc))
 }
 
-/// Decode TBCD-encoded bytes to a digit string.
+/// Decode a TBCD-STRING (TS 29.002): the low nibble of each octet, then the
+/// high nibble, up to the first 0xF filler.
 ///
-/// Low nibble first, then high nibble. 0xF = end padding (skipped).
+/// 0 to 9 decode as digits and 0xA to 0xE as "*", "#", "a", "b" and "c".
+/// Use [`try_tbcd_decode`] for a decimal value, such as an IMSI, that must
+/// have only a final filler.
 pub fn tbcd_decode(bytes: &[u8]) -> String {
-    let mut s = String::new();
-    for &b in bytes {
-        let lo = b & 0x0F;
-        let hi = (b >> 4) & 0x0F;
-        if lo <= 9 {
-            s.push((b'0' + lo) as char);
-        }
-        if hi <= 9 {
-            s.push((b'0' + hi) as char);
-        }
-    }
-    s
+    bytes
+        .iter()
+        .flat_map(|octet| [octet & 0x0f, octet >> 4])
+        .take_while(|&nibble| nibble != 0x0f)
+        .map(|nibble| char::from(b"0123456789*#abc"[usize::from(nibble)]))
+        .collect()
 }
 
 /// Decode decimal TBCD with only a final high-nibble filler permitted.
@@ -117,19 +114,24 @@ pub fn try_tbcd_decode(bytes: &[u8]) -> Option<String> {
     Some(digits)
 }
 
-/// Encode a decimal digit string as TBCD bytes.
+/// Encode a TBCD-STRING (TS 29.002), the reverse of [`tbcd_decode`].
 ///
 /// Swaps nibble pairs. Odd-length strings are padded with 0xF in the high nibble of the last byte.
 ///
 /// # Panics
 ///
-/// Panics if `value` contains a non-ASCII decimal digit.
+/// Panics if `value` has a character other than a digit, "*", "#", "a",
+/// "b" or "c".
 pub fn tbcd_encode(value: &str) -> Vec<u8> {
-    assert!(
-        value.bytes().all(|digit| digit.is_ascii_digit()),
-        "TBCD input must be ASCII digits"
-    );
-    let digits: Vec<u8> = value.bytes().map(|b| b - b'0').collect();
+    let digits: Vec<u8> = value
+        .bytes()
+        .map(|character| {
+            b"0123456789*#abc"
+                .iter()
+                .position(|known| *known == character)
+                .expect("TBCD input must be digits, *, #, a, b or c") as u8
+        })
+        .collect();
     let mut result = Vec::with_capacity(digits.len().div_ceil(2));
     let mut i = 0;
     while i < digits.len() {
@@ -179,6 +181,24 @@ mod tests {
     #[test]
     fn tbcd_decode_odd() {
         assert_eq!(tbcd_decode(&[0x21, 0xF3]), "123");
+    }
+
+    /// The TBCD-STRING of TS 29.002 codes 1010 to 1110 as "*", "#", "a",
+    /// "b" and "c", and 1111 as the filler that ends the digits.
+    #[test]
+    fn tbcd_decode_keeps_non_decimal_characters_and_stops_at_the_filler() {
+        assert_eq!(tbcd_decode(&[0xa1, 0xcb, 0xed]), "1*#abc");
+        assert_eq!(tbcd_decode(&[0x21, 0xf3, 0x54]), "123");
+        assert_eq!(tbcd_decode(&[0xf1, 0x32]), "1");
+    }
+
+    /// What `tbcd_decode` returns for a peer's octets goes back through
+    /// `tbcd_encode`.
+    #[test]
+    fn tbcd_round_trips_every_character() {
+        let octets = [0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe];
+        assert_eq!(tbcd_decode(&octets), "0123456789*#abc");
+        assert_eq!(tbcd_encode("0123456789*#abc"), octets);
     }
 
     #[test]

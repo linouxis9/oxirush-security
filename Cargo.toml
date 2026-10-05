@@ -1,6 +1,6 @@
 [package]
 name = "oxirush-security"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "5GS and EPS security algorithms, key derivation, NAS ciphering, integrity, and SUCI"
 license = "Apache-2.0"
@@ -12,9 +12,8 @@ categories = ["cryptography", "network-programming"]
 readme = "README.md"
 
 [dependencies]
-# KDF: HMAC-SHA-256
-sha2 = "0.10"
-hmac = "0.12"
+# KDF: HMAC-SHA-256 over the SHA-256 compression function, with wiped state
+sha2 = { version = "0.10", features = ["compress"] }
 
 # NIA2 (AES-CMAC) + NEA2 (AES-CTR)
 aes = { version = "0.8", features = ["zeroize"] }
@@ -22,17 +21,17 @@ cipher = { version = "0.4", features = ["zeroize"] }
 
 # SUCI concealment (TS 33.501 Annex C)
 x25519-dalek = { version = "2", features = ["getrandom", "static_secrets"] }
-p256 = { version = "0.13", features = ["ecdh"] }
-rand_core = { version = "0.6", features = ["getrandom"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdh"] }
+rand_core = { version = "0.6.4", features = ["getrandom"] }
 
 # Error handling
 thiserror = "2"
 
 # Key material zeroization
-zeroize = { version = "1", features = ["derive"] }
+zeroize = { version = "1.5", features = ["derive"] }
 
 # Constant-time comparison for SUCI MAC
-subtle = "2"
+subtle = "2.4.1"
 
 # Hex encoding for SUCI scheme output
 hex = "0.4"
@@ -41,5 +40,3 @@ hex = "0.4"
 unicode-normalization = "0.1"
 idna = "1"
 base64 = "0.22"
-
-[dev-dependencies]

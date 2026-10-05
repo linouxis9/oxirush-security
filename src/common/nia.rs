@@ -204,19 +204,15 @@ pub fn nia1_mac(
     ((eval >> 32) as u32) ^ z[4]
 }
 
-/// Multiplication in GF(2^64) with reduction polynomial x^64 + x^4 + x^3 + x + 1
+/// Multiplication in GF(2^64) with reduction polynomial x^64 + x^4 + x^3 + x + 1.
+/// Both operands are secret, so the bits select through masks, not branches.
 fn mul64(mut a: u64, mut b: u64) -> u64 {
     let mut result: u64 = 0;
     for _ in 0..64 {
-        if b & 1 != 0 {
-            result ^= a;
-        }
+        result ^= a & 0u64.wrapping_sub(b & 1);
         b >>= 1;
         let carry = a >> 63;
-        a <<= 1;
-        if carry != 0 {
-            a ^= 0x1B; // x^4 + x^3 + x + 1
-        }
+        a = (a << 1) ^ (0x1B & 0u64.wrapping_sub(carry)); // x^4 + x^3 + x + 1
     }
     result
 }
@@ -244,15 +240,14 @@ pub fn nia2_mac(key: &[u8; 16], count: u32, bearer: u8, direction: u8, message: 
     )
 }
 
+/// Doubling in GF(2^128) for the CMAC subkeys (RFC 4493 §2.3), with no
+/// branch on the secret top bit.
 fn cmac_double(block: &mut [u8; 16]) {
-    let carry = block[0] & 0x80 != 0;
+    let carry = block[0] >> 7;
     for index in 0..15 {
         block[index] = (block[index] << 1) | (block[index + 1] >> 7);
     }
-    block[15] <<= 1;
-    if carry {
-        block[15] ^= 0x87;
-    }
+    block[15] = (block[15] << 1) ^ (0x87 & 0u8.wrapping_sub(carry));
 }
 
 fn aes_encrypt_block(cipher: &Aes128, block: &mut [u8; 16]) {

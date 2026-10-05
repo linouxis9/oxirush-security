@@ -26,10 +26,9 @@ use crate::error::SecurityError;
 use aes::Aes128;
 use aes::cipher::{BlockEncrypt, KeyInit};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use subtle::ConstantTimeEq;
 use unicode_normalization::UnicodeNormalization;
+use zeroize::{Zeroize, Zeroizing};
 
 // Profile A (X25519)
 const PROFILE_A_ENC_KEY_LEN: usize = 16;
@@ -541,40 +540,46 @@ pub fn deconceal_network_specific_suci(
 }
 
 /// ANSI X9.63 KDF using SHA-256.
-/// Returns `enc_key_len + mac_key_len` bytes of key material (where enc_key_len should include the ICB length if an ICB is needed).
+/// Returns `enc_key_len + mac_key_len` bytes of key material (where enc_key_len should include the ICB length if an ICB is needed),
+/// wiped on drop like the hash state.
 fn ansi_x963_kdf(
     shared_key: &[u8],
     public_key: &[u8],
     enc_key_len: usize,
     mac_key_len: usize,
-) -> Vec<u8> {
-    use sha2::Digest;
+) -> Zeroizing<Vec<u8>> {
+    use crate::common::sha256::Sha256;
     let total = enc_key_len + mac_key_len;
     let hash_len = 32usize;
     let rounds = total.div_ceil(hash_len);
-    let mut kdf_key = Vec::with_capacity(rounds * hash_len);
+    // Exact capacity: the vector never reallocates and leaves no copy behind.
+    let mut kdf_key = Zeroizing::new(Vec::with_capacity(rounds * hash_len));
     for i in 0u32..rounds as u32 {
         let counter = (i + 1).to_be_bytes();
         let mut h = Sha256::new();
         h.update(shared_key);
-        h.update(counter);
+        h.update(&counter);
         h.update(public_key);
-        kdf_key.extend_from_slice(&h.finalize());
+        let mut digest = h.finalize();
+        kdf_key.extend_from_slice(&digest);
+        digest.zeroize();
     }
     kdf_key
 }
 
-/// AES-128-CTR encryption with a 32-bit big-endian counter in the ICB.
+/// AES-128-CTR encryption with a 32-bit big-endian counter in the ICB. The
+/// keystream and counter blocks are wiped.
 fn aes128_ctr(key: &[u8; 16], icb: &[u8; 16], data: &[u8]) -> Vec<u8> {
     let aes = Aes128::new(key.into());
     let mut out = Vec::with_capacity(data.len());
-    let mut counter = *icb;
+    let mut counter = Zeroizing::new(*icb);
     for chunk in data.chunks(16) {
-        let mut block = aes::Block::clone_from_slice(&counter);
+        let mut block = aes::Block::clone_from_slice(counter.as_ref());
         aes.encrypt_block(&mut block);
         for (d, k) in chunk.iter().zip(block.iter()) {
             out.push(d ^ k);
         }
+        block.as_mut_slice().zeroize();
         let low = u32::from_be_bytes(counter[12..16].try_into().expect("four counter octets"));
         counter[12..16].copy_from_slice(&low.wrapping_add(1).to_be_bytes());
     }
@@ -583,11 +588,7 @@ fn aes128_ctr(key: &[u8; 16], icb: &[u8; 16], data: &[u8]) -> Vec<u8> {
 
 /// HMAC-SHA-256 truncated to 8 bytes.
 fn hmac_sha256_8(key: &[u8], data: &[u8]) -> [u8; 8] {
-    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(key)
-        .expect("HMAC-SHA-256 accepts any key size per RFC 2104");
-    mac.update(data);
-    let full = mac.finalize().into_bytes();
-    full[..8]
+    crate::common::sha256::hmac_sha256(key, data)[..8]
         .try_into()
         .expect("SHA-256 output is 32 bytes, 8-byte prefix always valid")
 }
@@ -634,7 +635,7 @@ pub fn suci_scheme_output_a(
     let eph_secret = EphemeralSecret::random_from_rng(OsRng);
     let eph_pub = PublicKey::from(&eph_secret);
     let shared = eph_secret.diffie_hellman(&hn_pub);
-    if shared.as_bytes().iter().all(|&byte| byte == 0) {
+    if !shared.was_contributory() {
         return Err(SecurityError::Ecies(
             "invalid X25519 home network public key".into(),
         ));
@@ -769,7 +770,7 @@ pub fn suci_decrypt_a(
             .map_err(|_| SecurityError::Ecies("invalid ephemeral public key".into()))?,
     );
     let shared = priv_key.diffie_hellman(&eph_pub);
-    if shared.as_bytes().iter().all(|&byte| byte == 0) {
+    if !shared.was_contributory() {
         return Err(SecurityError::Ecies(
             "invalid X25519 ephemeral public key".into(),
         ));
@@ -796,42 +797,36 @@ pub fn suci_decrypt_a(
 
 /// Decrypt a Profile B (P-256 ECIES) scheme output.
 ///
-/// `scheme_output`: `ephemeral_pub (33 compressed or 65 uncompressed) || ciphertext || mac (8)`
+/// `scheme_output`: `ephemeral_pub (33 compressed) || ciphertext || mac (8)`
 /// `hn_priv_key`: 32-byte P-256 home network private key.
 /// Returns the decrypted MSIN in BCD.
 ///
-/// Per TS 33.501 Annex C.4.2, the KDF always uses the compressed ephemeral
-/// public key (33 bytes), even when the transmitted form is uncompressed.
+/// Profile B always applies point compression (TS 33.501 Annex C.3.4.2), so
+/// SharedInfo1 of the KDF is the 33-byte compressed ephemeral public key.
+/// Uncompressed ephemeral keys are rejected (TS 33.514 §4.2.1.3).
 pub fn suci_decrypt_b(scheme_output: &[u8], hn_priv_key: &[u8]) -> Result<Vec<u8>, SecurityError> {
-    use p256::elliptic_curve::sec1::ToEncodedPoint;
     use p256::{PublicKey, SecretKey};
 
-    #[allow(clippy::unnecessary_fallible_conversions)] // &[u8] → &[u8; 32] IS fallible
-    let priv_key = SecretKey::from_bytes(
-        hn_priv_key
-            .try_into()
-            .map_err(|_| SecurityError::Ecies("P-256 private key must be 32 bytes".into()))?,
-    )
-    .map_err(|e| SecurityError::Ecies(format!("invalid P-256 private key: {e}")))?;
+    let priv_bytes: &[u8; 32] = hn_priv_key
+        .try_into()
+        .map_err(|_| SecurityError::Ecies("P-256 private key must be 32 bytes".into()))?;
+    let priv_key = SecretKey::from_bytes(priv_bytes.into())
+        .map_err(|e| SecurityError::Ecies(format!("invalid P-256 private key: {e}")))?;
 
-    // Detect compressed (0x02/0x03, 33 B) vs uncompressed (0x04, 65 B)
-    let eph_pub_len = if scheme_output.first() == Some(&0x04) {
-        65
-    } else {
-        33
-    };
-    if scheme_output.len() < eph_pub_len + PROFILE_B_MAC_LEN + 1 {
+    if !matches!(scheme_output.first(), Some(0x02 | 0x03)) {
+        return Err(SecurityError::Ecies(
+            "Profile B ephemeral public key must be compressed".into(),
+        ));
+    }
+    if scheme_output.len() < PROFILE_B_PUB_KEY_LEN + PROFILE_B_MAC_LEN + 1 {
         return Err(SecurityError::Ecies(
             "Profile B scheme output too short".into(),
         ));
     }
-    let eph_pub_bytes = &scheme_output[0..eph_pub_len];
+    // The compressed point is also SharedInfo1 of the KDF.
+    let eph_pub_bytes = &scheme_output[0..PROFILE_B_PUB_KEY_LEN];
     let eph_pub = PublicKey::from_sec1_bytes(eph_pub_bytes)
         .map_err(|e| SecurityError::Ecies(format!("invalid ephemeral P-256 key: {e}")))?;
-
-    // Always use compressed form as KDF input
-    let compressed = eph_pub.to_encoded_point(true);
-    let kdf_pub_bytes = compressed.as_bytes();
 
     let shared = p256::elliptic_curve::ecdh::diffie_hellman(
         priv_key.to_nonzero_scalar(),
@@ -841,7 +836,7 @@ pub fn suci_decrypt_b(scheme_output: &[u8], hn_priv_key: &[u8]) -> Result<Vec<u8
 
     let kdf = ansi_x963_kdf(
         shared_bytes.as_slice(),
-        kdf_pub_bytes,
+        eph_pub_bytes,
         PROFILE_B_ENC_KEY_LEN + PROFILE_B_ICB_LEN,
         PROFILE_B_MAC_KEY_LEN,
     );
@@ -849,7 +844,7 @@ pub fn suci_decrypt_b(scheme_output: &[u8], hn_priv_key: &[u8]) -> Result<Vec<u8
     let icb: &[u8; 16] = kdf[16..32].try_into().expect("KDF output >= 32");
     let mac_key = &kdf[32..];
 
-    let ciphertext = &scheme_output[eph_pub_len..scheme_output.len() - 8];
+    let ciphertext = &scheme_output[PROFILE_B_PUB_KEY_LEN..scheme_output.len() - 8];
     let mac_received = &scheme_output[scheme_output.len() - 8..];
     let mac_computed = hmac_sha256_8(mac_key, ciphertext);
     if mac_received.ct_eq(&mac_computed).unwrap_u8() != 1 {
@@ -1106,12 +1101,10 @@ mod tests {
         assert_eq!(plaintext, msin_to_bcd("0123456789"));
     }
 
-    // ── Profile B known vector — uncompressed eph key (TestToSupi case 5) ────
-    //
-    // SUCI: suci-0-001-01-0-2-2-<scheme_output>
-    // Expected SUPI: imsi-00101001002086  (MSIN = "001002086")
+    // TS 33.514 §4.2.1.3 requires rejection of an uncompressed ephemeral
+    // point even with a valid ciphertext and MAC.
     #[test]
-    fn test_profile_b_known_vector_uncompressed_eph() {
+    fn test_profile_b_rejects_known_vector_uncompressed_eph() {
         let priv_bytes = hex::decode(PROFILE_B_PRIV).unwrap();
         let scheme_output = hex::decode(
             "049AAB8376597021E855679A9778EA0B67396E68C66DF32C0F41E9ACCA2DA9B9D1\
@@ -1120,8 +1113,7 @@ mod tests {
         )
         .unwrap();
         // 65 eph (uncompressed) + 5 ct + 8 mac = 78 bytes
-        let plaintext = suci_decrypt_b(&scheme_output, &priv_bytes).unwrap();
-        assert_eq!(plaintext, msin_to_bcd("001002086"));
+        assert!(suci_decrypt_b(&scheme_output, &priv_bytes).is_err());
     }
 
     // ── Profile B round-trip — multiple MSINs (mirrors TestSupiToSuciToSupi) ─
@@ -1494,5 +1486,198 @@ mod tests {
             deconceal_network_specific_suci(&suci, Some(&private)).unwrap(),
             "user17@example.com"
         );
+    }
+
+    /// Checks one TS 33.501 Annex C.4 ECIES data set step by step on the UE
+    /// side: key agreement output, KDF split into encryption key, ICB, and
+    /// MAC key, counter-mode ciphertext, and MAC tag.
+    #[allow(clippy::too_many_arguments)]
+    fn check_annex_c4_ecies_steps(
+        shared_key: &[u8],
+        ephemeral_public_key: &[u8],
+        enc_key: &str,
+        icb: Option<&str>,
+        mac_key: &str,
+        plaintext: &str,
+        ciphertext: &str,
+        mac_tag: &str,
+    ) {
+        let kdf = ansi_x963_kdf(shared_key, ephemeral_public_key, 32, 32);
+        assert_eq!(hex::encode(&kdf[..16]), enc_key.to_lowercase());
+        if let Some(icb) = icb {
+            assert_eq!(hex::encode(&kdf[16..32]), icb.to_lowercase());
+        }
+        assert_eq!(hex::encode(&kdf[32..]), mac_key.to_lowercase());
+        let computed = aes128_ctr(
+            kdf[..16].try_into().unwrap(),
+            kdf[16..32].try_into().unwrap(),
+            &hex::decode(plaintext).unwrap(),
+        );
+        assert_eq!(hex::encode(&computed), ciphertext.to_lowercase());
+        assert_eq!(
+            hex::encode(hmac_sha256_8(&kdf[32..], &computed)),
+            mac_tag.to_lowercase()
+        );
+    }
+
+    #[test]
+    fn annex_c4_null_scheme_vectors() {
+        // C.4.2.1: MSIN 001002086 of IMSI 274012001002086.
+        assert_eq!(hex::encode(msin_to_bcd("001002086")), "00012080f6");
+        assert_eq!(
+            hex::encode(suci_conceal(&msin_to_bcd("001002086"), 0, &[]).unwrap()),
+            "00012080f6"
+        );
+        // C.4.2.2: the scheme output is the username of the NAI.
+        let suci = conceal_network_specific_supi(
+            "verylongusername1@3gpp.com",
+            "0",
+            NaiProtectionScheme::Null,
+        )
+        .unwrap();
+        assert!(
+            encode_nai_suci(&suci)
+                .unwrap()
+                .ends_with(".schid0.useridverylongusername1@3gpp.com")
+        );
+    }
+
+    #[test]
+    fn annex_c4_profile_a_intermediate_values() {
+        use x25519_dalek::{PublicKey, StaticSecret};
+
+        let home_network_public_key =
+            PublicKey::from(<[u8; 32]>::try_from(hex::decode(PROFILE_A_PUB).unwrap()).unwrap());
+        for (
+            ephemeral_private_key,
+            ephemeral_public_key,
+            shared_key,
+            enc_key,
+            icb,
+            mac_key,
+            plaintext,
+            ciphertext,
+            mac_tag,
+        ) in [
+            // C.4.3.1, IMSI-based SUPI.
+            (
+                "c80949f13ebe61af4ebdbd293ea4f942696b9e815d7e8f0096bbf6ed7de62256",
+                "b2e92f836055a255837debf850b528997ce0201cb82adfe4be1f587d07d8457d",
+                "028ddf890ec83cdf163947ce45f6ec1a0e3070ea5fe57e2b1f05139f3e82422a",
+                "2ba342cabd2b3b1e5e4e890da11b65f6",
+                Some("e2622cb0cdd08204e721c8ea9b95a7c6"),
+                "d9846966fb7cf5fcf11266c5957dea60b83fff2b7c940690a4bfe57b1eb52bd2",
+                "00012080f6",
+                "cb02352410",
+                "cddd9e730ef3fa87",
+            ),
+            // C.4.3.2, network specific identifier-based SUPI; the
+            // 17-octet plaintext spans two counter blocks.
+            (
+                "BE9EFF3E9F22A4B42A3D236E7A6C500B3F2E7E0C7449988BA800D664BF4FCD97",
+                "977D8B2FDAA7B64AA700D04227D5B440630EA4EC50F9082273A26BB678C92222",
+                "511C1DF473BB88317F923501F8BA944FD3B667D25699DCB552DBCEF60BBDC56D",
+                "FE77B87D87F40428EDD71BCA69D79059",
+                None,
+                "D87B69F4FE8CD6B211264EA5E69F682F151A82252684CDB15A047E6EF0595028",
+                "766572796C6F6E67757365726E616D6531",
+                "8E358A1582ADB15322C10E515141D2039A",
+                "12E1D7783A97F1AC",
+            ),
+        ] {
+            let secret = StaticSecret::from(
+                <[u8; 32]>::try_from(hex::decode(ephemeral_private_key).unwrap()).unwrap(),
+            );
+            let public = PublicKey::from(&secret);
+            assert_eq!(
+                hex::encode(public.as_bytes()),
+                ephemeral_public_key.to_lowercase()
+            );
+            let shared = secret.diffie_hellman(&home_network_public_key);
+            assert_eq!(hex::encode(shared.as_bytes()), shared_key.to_lowercase());
+            check_annex_c4_ecies_steps(
+                shared.as_bytes(),
+                public.as_bytes(),
+                enc_key,
+                icb,
+                mac_key,
+                plaintext,
+                ciphertext,
+                mac_tag,
+            );
+        }
+    }
+
+    #[test]
+    fn annex_c4_profile_b_intermediate_values() {
+        use p256::elliptic_curve::sec1::ToEncodedPoint;
+        use p256::{PublicKey, SecretKey};
+
+        let home_network_public_key =
+            PublicKey::from_sec1_bytes(&hex::decode(PROFILE_B_PUB).unwrap()).unwrap();
+        for (
+            ephemeral_private_key,
+            ephemeral_public_key,
+            shared_key,
+            enc_key,
+            icb,
+            mac_key,
+            plaintext,
+            ciphertext,
+            mac_tag,
+        ) in [
+            // C.4.4.1, IMSI-based SUPI.
+            (
+                "99798858A1DC6A2C68637149A4B1DBFD1FDFF5ADDD62A2142F06699ED7602529",
+                "039AAB8376597021E855679A9778EA0B67396E68C66DF32C0F41E9ACCA2DA9B9D1",
+                "6C7E6518980025B982FBB2FF746E3C2E85A196D252099A7AD23EA7B4C0959CAE",
+                "8A65C3AED80295C12BD55087E965702A",
+                Some("EF285B4061C3BAEE858AB6EC68487DAE"),
+                "A5EBAC0BC48D9CF7AE5CE39CD840AC6C761AEC04078FAB954D634F923E901C64",
+                "00012080F6",
+                "46A33FC271",
+                "6AC7DAE96AA30A4D",
+            ),
+            // C.4.4.2, network specific identifier-based SUPI.
+            (
+                "90A5898BD29FFA3F261E00E980067C70A2B1B992A21F5B4FEF6D4DF69FE804AD",
+                "03759BB22C563D9F4A6B3C1419E543FC2F39D6823F02A9D71162B39399218B244B",
+                "BC3529ED79541CF8C007CE9806330F4A5FF15064D7CF4B16943EF8F007597872",
+                "84F9A78995D39E6968047547ECC12C4F",
+                None,
+                "39D5517E965F8E1252B61345ED45226C5F1A8C69F03D6C91437591F0B8E48FA0",
+                "766572796C6F6E67757365726E616D6531",
+                "BE22D8B9F856A52ED381CD7EAF4CF2D525",
+                "3CDDC61A0A7882EB",
+            ),
+        ] {
+            let secret =
+                SecretKey::from_slice(&hex::decode(ephemeral_private_key).unwrap()).unwrap();
+            // Profile B applies point compression to the ephemeral public
+            // key, and that octet string is SharedInfo1 of the KDF.
+            let public = secret.public_key().to_encoded_point(true);
+            assert_eq!(
+                hex::encode(public.as_bytes()),
+                ephemeral_public_key.to_lowercase()
+            );
+            let shared = p256::elliptic_curve::ecdh::diffie_hellman(
+                secret.to_nonzero_scalar(),
+                home_network_public_key.as_affine(),
+            );
+            assert_eq!(
+                hex::encode(shared.raw_secret_bytes()),
+                shared_key.to_lowercase()
+            );
+            check_annex_c4_ecies_steps(
+                shared.raw_secret_bytes(),
+                public.as_bytes(),
+                enc_key,
+                icb,
+                mac_key,
+                plaintext,
+                ciphertext,
+                mac_tag,
+            );
+        }
     }
 }

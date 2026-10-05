@@ -2,6 +2,70 @@
 
 All notable changes to `oxirush-security` are recorded here.
 
+## Unreleased (0.2.1)
+
+### Changed
+
+- `nas_eps::derive_kenb` panics on a COUNT above 2^24 - 1 other than the
+  all-ones handover sentinel, like `nas_5gs::derive_kgnb`; it accepted any
+  32-bit value, although the EPS NAS COUNT has 24 bits (TS 24.301
+  §4.4.3.1).
+- Profile-B SUCI deconcealment (`suci_decrypt_b`, `suci_to_supi`) rejects an
+  uncompressed ephemeral public key, which 0.2.0 accepted: Profile B always
+  applies point compression (TS 33.501 Annex C.3.4) and TS 33.514 §4.2.1.3
+  has the SIDF reject such a SUCI. A private key that is not 32 octets long
+  is an error instead of a panic.
+- `tbcd_decode` decodes the TS 29.002 TBCD-STRING: 0xA to 0xE are "*", "#",
+  "a", "b" and "c", and the first 0xF filler ends the value. It dropped
+  those nibbles and a 0xF anywhere, so "12*3" decoded as "123" and a filler
+  in the middle joined the digits around it. `tbcd_encode` accepts the same
+  characters.
+
+- SNOW 3G, ZUC, 128-EIA1 and the 128-EIA2 subkey doubling avoid secret-dependent
+  indexing and branches in source: S-box and MULα/DIVα lookups read the whole table through masks, and
+  the GF(2^64) and GF(2^128) multiplications and the ZUC reduction modulo
+  2^31 - 1 have no branch on secret bits. Table lookups indexed by key or
+  keystream bits, and those branches, exposed a timing risk. Compiled-code
+  timing has not been audited across supported targets. 128-EEA1 and 128-EEA3
+  take about 10 times longer (58 µs and 48 µs for a 1500-octet message on
+  a 2020s x86-64 core, release build), 128-EIA1 and 128-EIA3 are slower by
+  less, and 128-EEA2 and 128-EIA2 are unchanged.
+
+### Added
+
+- Test vector for 128-EIA2 set 7 (TS 33.401 Annex C.2.7), the
+  non-byte-aligned set that 0.2.0 did not cover.
+- 128-EEA1 tests on the six UEA2 design conformance sets (TS 35.218), which
+  TS 33.401 Annex C.3 reuses for 128-EEA1.
+- A 5G AKA key chain test from the TS 35.208 test set 1 MILENAGE outputs
+  through KAUSF, XRES*, HXRES*, KSEAF, KAMF, KNASenc, KNASint, KgNB, and NH,
+  checked against free5GC and CryptoMobile. KSEAF, KAMF, the 5GS NAS keys,
+  NH, and XRES* had no test before.
+- SUCI tests on every TS 33.501 Annex C.4 data set, including the null
+  scheme and the ephemeral key, shared key, encryption key, ICB, MAC key,
+  ciphertext, and MAC tag of the Profile A and Profile B sets.
+
+### Fixed
+
+- Profile A checks X25519 contributory behavior with the dependency's
+  constant-time all-zero comparison.
+- Key material stayed in memory after use: the HMAC-SHA-256 state of every
+  KDF (hmac 0.12 and sha2 0.10 do not clear it), the SUCI ECIES KDF output,
+  hash state and AES-CTR keystream, the HRES* hash state, and the 128-EEA2
+  keystream blocks, which the README said were wiped. The KDFs, HRES* and
+  SUCI now run SHA-256 over sha2's compression function with state that is
+  wiped on drop, and the keystream blocks are wiped; `hmac` is no longer a
+  direct dependency.
+- The 0.2.0 notes credited this crate with a NAS context and
+  `protect_re_establishment`, which oxirush-nas provides; the README said
+  NAS-context keys were wiped here. Both now describe this crate.
+- The `re_establishment_nas_mac` documentation says that the 28-bit reading
+  of the target Cell-ID is this crate's interpretation, for which no test
+  data or other implementation exists.
+- `derive_kausf`, `derive_kseaf`, `derive_kamf`, and `compute_xres_star`
+  document that they panic on a KDF parameter longer than 65535 octets,
+  which a two-octet L field cannot encode (TS 33.220 Annex B.2).
+
 ## 0.2.0 - 2026-09-27
 
 ### Breaking changes relative to 0.1.0
@@ -62,8 +126,7 @@ All notable changes to `oxirush-security` are recorded here.
   development of this release; it writes 0xF2 again (TS 24.501 Figure
   9.11.3.4.1), and `parse_s_tmsi` checks only the type-of-identity bits.
 - The EPS re-establishment MAC authenticates exactly the 28 significant
-  target Cell-ID bits, and the NAS context can consume the matching uplink
-  COUNT atomically through `protect_re_establishment`.
+  target Cell-ID bits.
 - Binary SUCI decoding applies the TS 24.501 receiver fallbacks for non-zero
   spare bits and unused SUPI-format code points while canonical construction
   remains strict.

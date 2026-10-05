@@ -43,7 +43,16 @@ pub fn derive_kasme(
 /// Derive KeNB from KASME and uplink NAS COUNT (Annex A.3, FC=0x11).
 /// TS 33.501 §8.3.2 step 2 uses the COUNT `0xffffffff` at 5GS to EPS
 /// handover, and §8.4.2 step 3 does the same for KgNB.
+///
+/// # Panics
+///
+/// Panics if `ul_nas_count` is outside the 24-bit NAS COUNT range (TS 24.301
+/// §4.4.3.1) and is not the all-ones sentinel, as `derive_kgnb` does.
 pub fn derive_kenb(kasme: &[u8; 32], ul_nas_count: u32) -> [u8; 32] {
+    assert!(
+        ul_nas_count <= 0x00ff_ffff || ul_nas_count == u32::MAX,
+        "NAS COUNT exhausted"
+    );
     kdf(kasme, &build_s(0x11, &[&ul_nas_count.to_be_bytes()]))
 }
 
@@ -248,6 +257,14 @@ pub fn compute_hash_mme(plain_request: &[u8]) -> [u8; 8] {
 mod tests {
     use super::*;
     use crate::common::extract_128;
+
+    /// The EPS NAS COUNT has 24 bits (TS 24.301 §4.4.3.1); all ones is the
+    /// handover sentinel of TS 33.501 §8.3.2.
+    #[test]
+    #[should_panic(expected = "NAS COUNT exhausted")]
+    fn kenb_rejects_non_sentinel_count_above_24_bits() {
+        derive_kenb(&[0; 32], 0x0100_0000);
+    }
 
     #[test]
     fn hash_mme_matches_network_values_in_capture() {

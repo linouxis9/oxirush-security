@@ -58,10 +58,12 @@ pub fn nas_cipher(key: &[u8; 16], count: u32, direction: u8, data: &mut [u8], al
 /// first 16 bits are UL_NAS_MAC and the last 16 bits XDL_NAS_MAC. The UE
 /// then increments its uplink NAS COUNT as if it had sent a message.
 ///
-/// TS 33.401 §7.4.4 names the target Cell-ID as the protected message. That
-/// IE is a 28-bit E-UTRAN Cell Identifier (TS 36.413 §9.2.1.38), so the
-/// value is left aligned in four octets and only those 28 bits are input to
-/// the selected 128-EIA algorithm.
+/// TS 33.401 §7.4.4 names the target Cell-ID as the protected message
+/// without giving its encoding. The target eNB passes it to the MME as the
+/// 28-bit E-UTRAN Cell Identifier (TS 36.413 §9.2.1.38), so this function
+/// left aligns the value in four octets and inputs only those 28 bits to
+/// the selected 128-EIA algorithm. That reading is this crate's: no test
+/// data or other implementation exists to check it against.
 ///
 /// # Panics
 ///

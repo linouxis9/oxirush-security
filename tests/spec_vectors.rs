@@ -15,10 +15,11 @@
    limitations under the License.
 */
 
-//! Conformance vectors not covered by the unit tests: 128-EEA2 sets 4 to 6
-//! and 128-EIA1 sets 6 and 7 (TS 33.401 Annex C), 128-EEA3 sets 3 to 5
-//! (TS 35.223 test data), the SNOW 3G set 4 keystream word z2500 (TS 35.217
-//! §4.4), and ZUC set 4 (TS 35.223).
+//! Conformance vectors not covered by the unit tests: 128-EEA2 sets 4 to 6,
+//! 128-EIA2 set 7, and 128-EIA1 sets 6 and 7 (TS 33.401 Annex C), 128-EEA1
+//! on UEA2 design conformance sets 1 to 6 (TS 35.218), 128-EEA3 sets 3 to 5
+//! (TS 35.223 test data), the SNOW 3G set 4 keystream word z2500 (TS 35.217,
+//! UEA2&UIA2 Document 3 §3.6), and ZUC set 4 (TS 35.223).
 //!
 //! The bit-oriented EEA functions process exactly the specified bit length
 //! and preserve unused low-order bits in the partial final octet.
@@ -103,6 +104,66 @@ const ENC: &[Enc] = &[
         len: 4019,
         pt: "8d74e20d54894e06d3cb13cb3933065e8674be62adb1c72b3a646965ab63cb7b7854dfdc27e84929f49c64b872a490b13f957b64827e71f41fbd4269a42c97f824537027f86e9f4ad82d1df451690fdd98b6d03f3a0ebe3a312d6b840ba5a1820b2a2c9709c090d245ed267cf845ae41fa975d3333ac3009fd40eba9eb5b885714b768b697138baf21380eca49f644d48689e4215760b906739f0d2b3f091133ca15d981cbe401baf72d05ace05cccb2d297f4ef6a5f58d91246cfa77215b892ab441d5278452795ccb7f5d79057a1c4f77f80d46db2033cb79bedf8e60551ce10c667f62a97abafabbcd6772018df96a282ea737ce2cb331211f60d5354ce78f9918d9c206ca042c9b62387dd709604a50af16d8d35a8906be484cf2e74a9289940364353249b27b4c9ae29eddfc7da6418791a4e7baa0660fa64511f2d685cc3a5ff70e0d2b74292e3b8a0cd6b04b1c790b8ead2703708540dea2fc09c3da770f65449e84d817a4f551055e19ab85018a0028b71a144d96791e9a3577933504eee0060340c69d274e1bf9d805dcbcc1a6faa976800b6ff2b671dc463652fa8a33ee50974c1c21be01eabb2167430269d72ee511c9dde30797c9a25d86ce74f5b961be5fdfb6807814039e7137636bd1d7fa9e09efd2007505906a5ac45dfdeed7757bbee745749c29633350bee0ea6f409df4580160000",
         ct: "94eaa4aa30a57137ddf09b97b25618a20a13e2f10fa5bf8161a879cc2ae797a6b4cf2d9df31debb9905ccfec97de605d21c61ab8531b7f3c9da5f03931f8a0642de48211f5f52ffea10f392a047669985da454a28f080961a6c2b62daa17f33cd60a4971f48d2d909394a55f48117ace43d708e6b77d3dc46d8bc017d4d1abb77b7428c042b06f2f99d8d07c9879d99600127a31985f1099bbd7d6c1519ede8f5eeb4a610b349ac01ea2350691756bd105c974a53eddb35d1d4100b012e522ab41f4c5f2fde76b59cb8b96d885cfe4080d1328a0d636cc0edc05800b76acca8fef672084d1f52a8bbd8e0993320992c7ffbae17c408441e0ee883fc8a8b05e22f5ff7f8d1b48c74c468c467a028f09fd7ce91109a570a2d5c4d5f4fa18c5dd3e4562afe24ef771901f59af645898acef088abae07e92d52eb2de55045bb1b7c4164ef2d7a6cac15eeb926d7ea2f08b66e1f759f3aee44614725aa3c7482b30844c143ff85b53f1e583c501257dddd096b81268daa303f17234c2333541f0bb8e190648c5807c866d7193228609adb948686f7de294a802cc38f7fe5208f5ea3196d0167b9bdd02f0d2a5221ca508f893af5c4b4bb9f4f520fd84289b3dbe7e61497a7e2a584037ea637b6981127174af57b471df4b2768fd79c1540fb3edf2ea22cb69bec0cf8d933d9c6fdd645e850591cca3d62c0cc000",
+    },
+    Enc {
+        name: "eea1_conformance_1",
+        key: "d3c5d592327fb11c4035c6680af8c6d1",
+        count: 0x398a59b4,
+        bearer: 0x15,
+        dir: 1,
+        len: 253,
+        pt: "981ba6824c1bfb1ab485472029b71d808ce33e2cc3c0b5fc1f3de8a6dc66b1f0",
+        ct: "5d5bfe75eb04f68ce0a12377ea00b37d47c6a0ba06309155086a859c4341b378",
+    },
+    Enc {
+        name: "eea1_conformance_2",
+        key: "2bd6459f82c440e0952c49104805ff48",
+        count: 0xc675a64b,
+        bearer: 0x0c,
+        dir: 1,
+        len: 798,
+        pt: "7ec61272743bf1614726446a6c38ced166f6ca76eb5430044286346cef130f92922b03450d3a9975e5bd2ea0eb55ad8e1b199e3ec4316020e9a1b285e762795359b7bdfd39bef4b2484583d5afe082aee638bf5fd5a606193901a08f4ab41aab9b134880",
+        ct: "3f67850714b8da69efb727ed7a6c0c50714ad736c4f5600006e3525be807c467c677ff864af45fba09c27cde38f87a1f84d59ab255408f2c7b82f9ead41a1fe65eabebfbc1f3a4c56c9a26fcf7b3d66d0220ee4775bc58170a2b12f3431d11b344d6e36c",
+    },
+    Enc {
+        name: "eea1_conformance_3",
+        key: "0a8b6bd8d9b08b08d64e32d1817777fb",
+        count: 0x544d49cd,
+        bearer: 0x04,
+        dir: 0,
+        len: 310,
+        pt: "fd40a41d370a1f65745095687d47ba1d36d2349e23f644392c8ea9c49d40c13271aff264d0f248",
+        ct: "48148e5452a210c05f46bc80dc6f73495b02048c1b958b026102ca97280279a4c18d2ee308921c",
+    },
+    Enc {
+        name: "eea1_conformance_4",
+        key: "aa1f95aea533bcb32eb63bf52d8f831a",
+        count: 0x72d8c671,
+        bearer: 0x10,
+        dir: 1,
+        len: 1022,
+        pt: "fb1b96c5c8badfb2e8e8edfde78e57f2ad81e74103fc430a534dcc37afcec70e1517bb06f27219dae49022ddc47a068de4c9496a951a6b09edbdc864c7adbd740ac50c022f3082bafd22d78197c5d508b977bca13f32e652e74ba728576077ce628c535e87dc6077ba07d29068590c8cb5f1088e082cfa0ec961302d69cf3d44",
+        ct: "ffcfc2fead6c094e96c589d0f6779b6784246c3c4d1cea203db3901f40ad4fd7138bc6d77e8320cb102f497fdd44a269a96ecb28617700e332eb2f736b34f4f2693094e22ff94f9be4723da40c40dfd3931cc1ac9723f6b4a9913e96b6db7abcace415177c1d0115c5f09b5fdea0b3adb8f9da6e9f9a04c543397b9d43f87330",
+    },
+    Enc {
+        name: "eea1_conformance_5",
+        key: "9618ae46891f86578eebe90ef7a1202e",
+        count: 0xc675a64b,
+        bearer: 0x0c,
+        dir: 1,
+        len: 1245,
+        pt: "8daa17b1ae050529c6827f28c0ef6a1242e93f8b314fb18a77f790ae049fedd612267fecaefc450174d76d9f9aa7755a30cd90a9a5874bf48eaf70eea3a62a250a8b6bd8d9b08b08d64e32d1817777fb544d49cd49720e219dbf8bbed33904e1fd40a41d370a1f65745095687d47ba1d36d2349e23f644392c8ea9c49d40c13271aff264d0f24841d6465f0996ff84e65fc517c53efc3363c38492a8",
+        ct: "6cdb18a7ca8218e86e4b4b716a4d04371fbec262fc5ad0b3819b187b97e55b1a4d7c19ee24c8b4d7723cfedf045b8acae4869517d80e50615d9035d5d9c5a40af602280b542597b0cb18619eeb35925759d195e100e8e4aa0c38a3c2abe0f3d8ff04f3c33c295069c23694b5bbeacdd542e28e8a94edb9119f412d054be1fa7272b5ffb2b2570f4f7ceaf383a8a9d93572f04d6e3a6e293726ec62c8",
+    },
+    Enc {
+        name: "eea1_conformance_6",
+        key: "54f4e2e04c83786eec8fb5abe8e36566",
+        count: 0xaca4f50f,
+        bearer: 0x0b,
+        dir: 0,
+        len: 3861,
+        pt: "40981ba6824c1bfb4286b299783daf442c099f7ab0f58d5c8e46b104f08f01b41ab485472029b71d36bd1a3d90dc3a41b46d51672ac4c9663a2be063da4bc8d2808ce33e2cccbfc634e1b259060876a0fbb5a437ebcc8d31c19e4454318745e3fa16bb11adae248879fe52db2543e53cf445d3d828ce0bf5c560593d97278a59762dd0c2c9cd68d4496a792508614014b13b6aa51128c18cd6a90b87978c2ff1cabe7d9f898a411bfdb84f68f6727b1499cdd30df0443ab4a66653330bcba1105e4cec034c73e605b4310eaaadcfd5b0ca27ffd89d144df4792759427c9cc1f8cd8c87202364b8a687954cb05a8d4e2d99e73db160deb180ad0841e96741a5d59fe4189f15420026fe4cd12104932fb38f735340438aaf7eca6fd5cfd3a195ce5abe65272af607ada1be65a6b4c9c0693234092c4d018f1756c6db9dc8a6d80b888138616b681262f954d0e7711748780d92291d86299972db741cfa4f37b8b56cdb18a7ca8218e86e4b4b716a4d04371fbec262fc5ad0b3819b187b97e55b1a4d7c19ee24c8b4d7723cfedf045b8acae4869517d80e50615d9035d5d9c5a40af602280b542597b0cb18619eeb35925759d195e100e8e4aa0c38a3c2abe0f3d8ff04f3c33c295069c23694b5bbeacdd542e28e8a94edb9119f412d054be1fa72b09550",
+        ct: "351e30d4d910c5dd5ad7834c426e6c0cab6486da7b0fda4cd83af1b9647137f1ac43b434223b19be07bd89d1cc306944d3361ea1a2f8cdbd321655976350d00b80dd838120a7755c6dea2ab2b0c99a913f47dae2b8deb9a829e5469ff2e187776f6fd081e3871d119a76e24c917ea62648e02e90367564de72ae7e4f0a4249a9a5b0e465a2d6d9dc87843b1b875cc9a3be93d8da8f56ecaf5981fe93c284318b0dec7a3ba108e2cb1a61e966fa7afa7ac7f67f65bc4a2df070d4e434845f109ab2b68ade3dc316ca6332a62893e0a7ec0b4fc25191bf2ff1b9f9815e4ba8a99c643b521804f7d5850dde3952206ec6ccf340f9b3220b3023bdd063956ea8333920fde99e0675410e49ef3b4d3fb3df5192f99ca83d3b0032de08c220776a5865b0e4b3b0c75defe7762dff018ea7f5be2b2f972b2a8ba5970e43bd6fdd63dae629784ec48d610054ee4e4b5dbbf1fc2fa0b830e94dcbb7014e8ab429ab100fc48f83171d99fc258b7c2ba7c176eaeaad37f860d597a31ce79b594733c7141df79151fca90c08478a5c6c2cc481d51ffece3cd7d2581348827a71f091428ebe38c95a3f5c63e056dfb7cc45a9b7c07d834e7b20b99ed202429c14bb85ffa43b7cb68495cd75ab66d964d4cafe64dd9404dae2dc5110617f194fc3c184f583cd0def6d00",
     },
 ];
 const MAC: &[Mac] = &[
@@ -191,6 +252,13 @@ fn check_enc_bits(v: &Enc, f: fn(&[u8; 16], u32, u8, u8, &mut [u8], u64)) {
 }
 
 #[test]
+fn eea1_uea2_design_conformance_sets_1_to_6() {
+    // TS 33.401 Annex C.3 maps the UEA2 test data one-to-one onto 128-EEA1.
+    for v in ENC.iter().filter(|v| v.name.starts_with("eea1")) {
+        check_enc_bits(v, nea::nea1_cipher_bits);
+    }
+}
+#[test]
 fn eea2_sets_4_to_6() {
     for v in ENC.iter().filter(|v| v.name.starts_with("eea2")) {
         check_enc_bits(v, nea::nea2_cipher_bits);
@@ -211,6 +279,17 @@ fn eia1_sets_6_7() {
         assert_eq!(got, v.mac, "{}", v.name);
         println!("{} OK mac={:08x}", v.name, got);
     }
+}
+#[test]
+fn eia2_set_7() {
+    // TS 33.401 Annex C.2.7 reuses the inputs of 128-EIA1 test set 6.
+    let v = MAC.iter().find(|v| v.name == "eia1_6").unwrap();
+    let key: [u8; 16] = h(v.key).try_into().unwrap();
+    let msg = h(v.msg);
+    assert_eq!(
+        nia::nia2_mac_bits(&key, v.count, v.bearer, v.dir, &msg, v.len as u64),
+        0xf4cc8fa3
+    );
 }
 #[test]
 fn snow3g_set4_z2500() {

@@ -19,6 +19,10 @@
 //!
 //! A word-oriented stream cipher producing 32-bit keystream words.
 //! Uses a 16-stage LFSR over GF(2^31-1), bit reorganization, and a nonlinear function.
+//! S-box lookups visit every entry and the modular reduction has no branch
+//! in the source. Compiled-code timing requires target-specific assessment.
+
+use crate::common::ct::lookup;
 
 // ── S-boxes ────────────────────────────────────────────────────────────────────
 
@@ -72,14 +76,16 @@ const P: u32 = 0x7FFFFFFF; // 2^31 - 1
 
 // ── Modular arithmetic mod 2^31-1 ──────────────────────────────────────────────
 
-/// Reduce mod 2^31-1, result in [1, 2^31-1] (0 maps to P)
+/// Reduce mod 2^31-1, result in [1, 2^31-1] (0 maps to P), without a
+/// branch on the secret value.
 #[inline]
 fn mod31(a: u32) -> u32 {
-    let mut r = (a & P) + (a >> 31);
-    if r >= P {
-        r -= P;
-    }
-    if r == 0 { P } else { r }
+    // At most P + 1; subtract P when it is at least P, then map 0 to P.
+    let r = (a & P) + (a >> 31);
+    let at_least_p = (r.wrapping_sub(P) >> 31) ^ 1;
+    let r = r - (P & 0u32.wrapping_sub(at_least_p));
+    let zero = ((r | r.wrapping_neg()) >> 31) ^ 1;
+    r | (P & 0u32.wrapping_sub(zero))
 }
 
 /// Multiply by 2^n mod (2^31-1)
@@ -105,10 +111,10 @@ fn l2(x: u32) -> u32 {
 fn sbox(x: u32) -> u32 {
     let b = x.to_be_bytes();
     u32::from_be_bytes([
-        S0[b[0] as usize],
-        S1[b[1] as usize],
-        S0[b[2] as usize],
-        S1[b[3] as usize],
+        lookup(&S0, b[0]),
+        lookup(&S1, b[1]),
+        lookup(&S0, b[2]),
+        lookup(&S1, b[3]),
     ])
 }
 
@@ -207,7 +213,7 @@ impl Zuc {
         for i in 0..15 {
             self.s[i] = self.s[i + 1];
         }
-        self.s[15] = if f == 0 { P } else { f };
+        self.s[15] = f;
     }
 
     /// LFSR clock during keystream generation.
@@ -222,13 +228,39 @@ impl Zuc {
         for i in 0..15 {
             self.s[i] = self.s[i + 1];
         }
-        self.s[15] = if f == 0 { P } else { f };
+        self.s[15] = f;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The branchless reduction agrees with the branching one it replaced,
+    /// on the boundaries and on pseudo-random inputs.
+    #[test]
+    fn mod31_matches_the_reference_reduction() {
+        fn reference(a: u32) -> u32 {
+            let mut r = (a & P) + (a >> 31);
+            if r >= P {
+                r -= P;
+            }
+            if r == 0 { P } else { r }
+        }
+        let mut x = 0x9e37_79b9u32;
+        let random = core::iter::repeat_with(move || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        });
+        for a in [0, 1, P - 1, P, P + 1, 2 * P - 1, 2 * P, u32::MAX]
+            .into_iter()
+            .chain(random.take(100_000))
+        {
+            assert_eq!(mod31(a), reference(a), "{a:#x}");
+        }
+    }
 
     #[test]
     fn split_generate_matches_single_call() {

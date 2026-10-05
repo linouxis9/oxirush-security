@@ -23,6 +23,10 @@ use crate::common::kdf::{derive_algorithm_key, nas_count_input};
 use zeroize::Zeroizing;
 
 /// Derive KAUSF from CK || IK (TS 33.501 Annex A.2, FC=0x6A).
+///
+/// # Panics
+///
+/// Panics if `sn_name` exceeds 65535 octets.
 pub fn derive_kausf(
     ck: &[u8; 16],
     ik: &[u8; 16],
@@ -63,6 +67,10 @@ pub(crate) fn derive_kausf_nonstandard(
 }
 
 /// Derive KSEAF from KAUSF (TS 33.501 Annex A.6, FC=0x6C)
+///
+/// # Panics
+///
+/// Panics if `sn_name` exceeds 65535 octets.
 pub fn derive_kseaf(kausf: &[u8; 32], sn_name: &[u8]) -> [u8; 32] {
     let s = build_s(0x6C, &[sn_name]);
     kdf(kausf, &s)
@@ -71,6 +79,10 @@ pub fn derive_kseaf(kausf: &[u8; 32], sn_name: &[u8]) -> [u8; 32] {
 /// Derive KAMF from KSEAF (TS 33.501 Annex A.7, FC=0x6D)
 ///
 /// `supi_digits`: SUPI without its type prefix (IMSI, NAI, GCI, or GLI).
+///
+/// # Panics
+///
+/// Panics if `supi_digits` or `abba` exceeds 65535 octets.
 pub fn derive_kamf(kseaf: &[u8; 32], supi_digits: &str, abba: &[u8]) -> [u8; 32] {
     let s = build_s(0x6D, &[supi_digits.as_bytes(), abba]);
     kdf(kseaf, &s)
@@ -97,9 +109,8 @@ pub fn derive_nas_key(kamf: &[u8; 32], algo_type: u8, algo_id: u8) -> [u8; 32] {
 
 /// Compute `HRES* = SHA-256(RAND || RES*)[16:32]` for local verification of the UE's RES*.
 pub fn compute_hres_star(rand: &[u8; 16], res_star: &[u8; 16]) -> [u8; 16] {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(rand.as_ref());
+    let mut h = crate::common::sha256::Sha256::new();
+    h.update(rand);
     h.update(res_star);
     h.finalize()[16..]
         .try_into()
@@ -399,7 +410,8 @@ pub fn derive_kasme_srvcc(kamf: &[u8; 32], dl_nas_count: u32) -> [u8; 32] {
 ///
 /// # Panics
 ///
-/// Panics if `xres` is not 4 to 16 octets long.
+/// Panics if `xres` is not 4 to 16 octets long or `sn_name` exceeds 65535
+/// octets.
 pub fn compute_xres_star(
     ck: &[u8; 16],
     ik: &[u8; 16],
@@ -562,6 +574,68 @@ mod interworking_tests {
         assert_eq!(
             hex::encode(derive_kausf_nonstandard(&ck, &ik, sn, &sqn_xor_ak, 0x6b)),
             "feeff2764fff058992855a125bd6f1260e38a50f3949cbe5b527ba7f62703200"
+        );
+    }
+
+    #[test]
+    fn five_g_aka_key_chain_matches_independent_implementations() {
+        // CK, IK, RES, RAND, and SQN XOR AK are the MILENAGE outputs of
+        // TS 35.208 test set 1. TS 33.501 Annex A has no test data; the
+        // expected values were computed with free5GC util/ueauth and with
+        // CryptoMobile conv_501_A2 to A10, which agree.
+        let ck: [u8; 16] = hex::decode("b40ba9a3c58b2a05bbf0d987b21bf8cb")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let ik: [u8; 16] = hex::decode("f769bcd751044604127672711c6d3441")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let rand: [u8; 16] = hex::decode("23553cbe9637a89d218ae64dae47bf35")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let res = hex::decode("a54211d5e3ba50bf").unwrap();
+        let sqn_xor_ak = [0x55, 0xf3, 0x28, 0xb4, 0x35, 0x77];
+        let sn = b"5G:mnc093.mcc208.3gppnetwork.org";
+
+        let kausf = derive_kausf(&ck, &ik, sn, &sqn_xor_ak);
+        assert_eq!(
+            hex::encode(kausf),
+            "f2e35260f85194d4f891504d02111e56689ac23dd393bee3abbcc5bfbc013ef9"
+        );
+        let xres_star = compute_xres_star(&ck, &ik, sn, &rand, &res);
+        assert_eq!(hex::encode(&xres_star), "5cc9527f4d21c43bee83a15443acf1c4");
+        assert_eq!(
+            hex::encode(compute_hres_star(&rand, &xres_star.try_into().unwrap())),
+            "6970075e3c8245fdc2073003cf166279"
+        );
+        let kseaf = derive_kseaf(&kausf, sn);
+        assert_eq!(
+            hex::encode(kseaf),
+            "cfddde483bd1318a412e98870f556410905be4fb7500abed93ee16af71bbb3fa"
+        );
+        let kamf = derive_kamf(&kseaf, "208930000000001", &[0x00, 0x00]);
+        assert_eq!(
+            hex::encode(kamf),
+            "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4"
+        );
+        assert_eq!(
+            hex::encode(extract_128(&derive_nas_key(&kamf, 0x01, 2))),
+            "f47ae570afde775373d1b313d2176f54"
+        );
+        assert_eq!(
+            hex::encode(extract_128(&derive_nas_key(&kamf, 0x02, 2))),
+            "28ddb5356880149b9fee22f2367522a4"
+        );
+        let kgnb = derive_kgnb(&kamf, 0);
+        assert_eq!(
+            hex::encode(kgnb),
+            "c18166e13cfde1dea842c708f6e0b3372b6896664df4e865c0c78bd270852005"
+        );
+        assert_eq!(
+            hex::encode(derive_nh(&kamf, &kgnb)),
+            "383c6b76bf2a99aa2ca4c5136d4122a2b942301f0b9e07439786939cd30c4a4b"
         );
     }
 }

@@ -17,17 +17,9 @@
 
 //! Shared 3GPP TS 33.220 Annex B.2 HMAC-SHA-256 KDF framing.
 
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-
-type HmacSha256 = Hmac<Sha256>;
-
-/// Generic KDF: HMAC-SHA-256(key, S).
+/// Generic KDF: HMAC-SHA-256(key, S). The HMAC state is wiped on return.
 pub fn kdf(key: &[u8], s: &[u8]) -> [u8; 32] {
-    let mut mac =
-        HmacSha256::new_from_slice(key).expect("HMAC-SHA-256 accepts any key size per RFC 2104");
-    mac.update(s);
-    mac.finalize().into_bytes().into()
+    super::sha256::hmac_sha256(key, s)
 }
 
 /// Build the S parameter: FC || (P_i || L_i)*.

@@ -21,16 +21,23 @@
 - **Algorithm selection** — configurable operator preference order, with NIA2 > NIA1 > NIA3 (never NIA0) and NEA2 > NEA1 > NEA3 > NEA0 as the compatibility defaults
 
 The EEA/EIA functions are tested against the TS 33.401 Annex C and
-TS 35.217/35.223 test sets, including non-byte-aligned EEA1, EEA2, EEA3,
-EIA1, EIA2, and EIA3 inputs. The `*_bits` APIs preserve unused low bits in
+TS 35.217/35.218/35.223 test sets, including non-byte-aligned EEA1, EEA2,
+EEA3, EIA1, EIA2, and EIA3 inputs. The `*_bits` APIs preserve unused low bits in
 the final ciphering octet and ignore them for integrity. Whole-octet NAS
 wrappers delegate to the same cores. EPS and interworking KDF tests check the
 Annex A parameter layouts against independently calculated outputs.
 
-Fixed-size CK‖IK, KDF-input, keystream, and NAS-context key temporaries are
-wiped after use. Returned key arrays and some variable-length ECIES working
-buffers remain caller/allocator-owned and must be cleared by the caller when
+Explicit buffers and owned state are wiped after use: CK‖IK buffers,
+key-bearing KDF input buffers, SHA-256 and HMAC-SHA-256 state owned by this
+crate, SUCI ECIES KDF buffers, cipher state, and keystream buffers. This
+does not cover every temporary copy or compiler-generated spill. Returned
+keys and deconcealed identities belong to the caller, who clears them when
 their lifetime ends.
+
+AES comes from the `aes` crate. In the source,
+the SNOW 3G and ZUC S-boxes, the MULα/DIVα tables, and the 128-EIA1 and
+AES-CMAC field arithmetic neither index memory nor branch on secret values.
+Compiled-code timing has not been audited across supported targets.
 
 EPS and 5GS share the 128-bit EEA/EIA algorithm cores. The `nas_eps` module fixes
 the NAS bearer to zero and accepts the 24-bit EPS NAS COUNT. It also computes
@@ -171,16 +178,16 @@ cargo run --example suci_conceal             # SUCI concealment with Profile A
 
 - **TS 33.501** — 5G security architecture (key derivation, algorithm IDs, SUCI)
 - **TS 33.401** — EPS security architecture (key derivation, NAS COUNT, EIA/EEA)
-- **TS 35.215/35.216/35.217** — SNOW 3G modes, core, and test data
+- **TS 35.215/35.216/35.217/35.218** — SNOW 3G modes, core, and test data
 - **TS 35.221/35.222/35.223** — ZUC modes, core, and test data
 
 ## Conformance evidence
 
 The unit tests and `tests/spec_vectors.rs` contain the executable TS 33.401
-Annex C, TS 35.217, TS 35.223, KDF, interworking, SUCI, COUNT, and replay
-vectors used for conformance checks. Profile-B deconcealment deliberately
-accepts a curve-valid uncompressed ephemeral point as receiver tolerance;
-senders always emit the standardized compressed form.
+Annex C, TS 35.217, TS 35.218, TS 35.223, KDF, interworking, SUCI, COUNT, and
+replay vectors used for conformance checks. Profile B always applies point
+compression (TS 33.501 Annex C.3.4), and deconcealment rejects uncompressed
+ephemeral points as TS 33.514 §4.2.1.3 requires.
 
 ## Documentation
 

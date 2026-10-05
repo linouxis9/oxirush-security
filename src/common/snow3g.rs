@@ -19,6 +19,10 @@
 //!
 //! A word-oriented stream cipher producing 32-bit keystream words.
 //! Uses a 16-stage LFSR over GF(2^32) and a 3-register FSM with two S-boxes.
+//! Table lookups visit every entry to avoid secret-dependent indexing in
+//! the source. Compiled-code timing requires target-specific assessment.
+
+use crate::common::ct::lookup;
 
 // ── AES S-box (SR) used by S1 ──────────────────────────────────────────────────
 
@@ -64,10 +68,11 @@ const SQ: [u8; 256] = [
 
 // ── GF(2^8) multiplication ─────────────────────────────────────────────────────
 
-/// MULx: multiply by x in GF(2^8) with reduction polynomial c
+/// MULx: multiply by x in GF(2^8) with reduction polynomial c, without a
+/// branch on the secret top bit.
 #[inline]
 const fn mulx(v: u8, c: u8) -> u8 {
-    if v & 0x80 != 0 { (v << 1) ^ c } else { v << 1 }
+    (v << 1) ^ (c & 0u8.wrapping_sub(v >> 7))
 }
 
 /// MULxPOW: multiply by x^i in GF(2^8) with reduction polynomial c
@@ -119,16 +124,18 @@ const fn div_alpha_value(c: u8) -> u32 {
 const MUL_ALPHA: [u32; 256] = alpha_table(false);
 const DIV_ALPHA: [u32; 256] = alpha_table(true);
 
+// The tables are indexed by LFSR state, so they are read in constant time.
+
 /// MULα: multiply a byte by α in the LFSR feedback polynomial.
 #[inline]
 fn mul_alpha(c: u8) -> u32 {
-    MUL_ALPHA[c as usize]
+    lookup(&MUL_ALPHA, c)
 }
 
 /// DIVα: multiply a byte by α^(-1) in the LFSR feedback polynomial.
 #[inline]
 fn div_alpha(c: u8) -> u32 {
-    DIV_ALPHA[c as usize]
+    lookup(&DIV_ALPHA, c)
 }
 
 // ── 32-bit S-boxes ─────────────────────────────────────────────────────────────
@@ -136,10 +143,10 @@ fn div_alpha(c: u8) -> u32 {
 /// S1: AES SubBytes + MixColumns (reduction 0x1B)
 fn s1(w: u32) -> u32 {
     let [b0, b1, b2, b3] = w.to_be_bytes();
-    let r0 = SR[b0 as usize];
-    let r1 = SR[b1 as usize];
-    let r2 = SR[b2 as usize];
-    let r3 = SR[b3 as usize];
+    let r0 = lookup(&SR, b0);
+    let r1 = lookup(&SR, b1);
+    let r2 = lookup(&SR, b2);
+    let r3 = lookup(&SR, b3);
     // SNOW 3G MixColumns matrix: [2,1,1,3; 3,2,1,1; 1,3,2,1; 1,1,3,2]
     let o0 = mulx(r0, 0x1B) ^ r1 ^ r2 ^ (mulx(r3, 0x1B) ^ r3);
     let o1 = (mulx(r0, 0x1B) ^ r0) ^ mulx(r1, 0x1B) ^ r2 ^ r3;
@@ -151,10 +158,10 @@ fn s1(w: u32) -> u32 {
 /// S2: SQ SubBytes + MixColumns (reduction 0x69)
 fn s2(w: u32) -> u32 {
     let [b0, b1, b2, b3] = w.to_be_bytes();
-    let r0 = SQ[b0 as usize];
-    let r1 = SQ[b1 as usize];
-    let r2 = SQ[b2 as usize];
-    let r3 = SQ[b3 as usize];
+    let r0 = lookup(&SQ, b0);
+    let r1 = lookup(&SQ, b1);
+    let r2 = lookup(&SQ, b2);
+    let r3 = lookup(&SQ, b3);
     // Same matrix as S1, different field (reduction 0x69)
     let o0 = mulx(r0, 0x69) ^ r1 ^ r2 ^ (mulx(r3, 0x69) ^ r3);
     let o1 = (mulx(r0, 0x69) ^ r0) ^ mulx(r1, 0x69) ^ r2 ^ r3;
