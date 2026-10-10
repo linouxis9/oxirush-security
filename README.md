@@ -48,7 +48,7 @@ re-establishment MAC of TS 33.401 §7.4.4.
 
 ```toml
 [dependencies]
-oxirush-security = "0.2"
+oxirush-security = "0.3"
 ```
 
 ### 5GS key derivation

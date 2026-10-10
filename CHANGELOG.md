@@ -2,24 +2,37 @@
 
 All notable changes to `oxirush-security` are recorded here.
 
-## Unreleased (0.2.1)
+## Unreleased (0.3.0)
+
+### Breaking changes relative to 0.2.0
+
+- **KeNB derivation.** `nas_eps::derive_kenb` panics on a COUNT above
+  2^24 - 1 other than the all-ones handover sentinel, like
+  `nas_5gs::derive_kgnb`; 0.2.0 accepted any 32-bit value, although the EPS
+  NAS COUNT has 24 bits (TS 24.301 §4.4.3.1). Check a COUNT that is not known
+  to be in range before the call, and pass `0xffff_ffff` only for the 5GS to
+  EPS handover of TS 33.501 §8.3.2.
+- **TBCD decoding.** `tbcd_decode` decodes the TS 29.002 TBCD-STRING: 0xA to
+  0xE are "*", "#", "a", "b" and "c", and the first 0xF filler ends the
+  value. 0.2.0 dropped those nibbles and a 0xF anywhere, so "12*3" decoded as
+  "123" and a filler in the middle joined the digits around it. Where the
+  value must be decimal, such as an IMSI or an MSIN, call
+  `plmn::try_tbcd_decode`, which returns `None` for anything else, or check
+  the string that `tbcd_decode` returns. `tbcd_encode` accepts the same
+  characters.
+- **Profile B ephemeral key.** Profile-B SUCI deconcealment (`suci_decrypt_b`,
+  `suci_to_supi`) rejects an uncompressed ephemeral public key, which 0.2.0
+  accepted: Profile B always applies point compression (TS 33.501 Annex
+  C.3.4) and TS 33.514 §4.2.1.3 has the SIDF reject such a SUCI. Expect
+  `SecurityError::Ecies` from `suci_decrypt_b` and `None` from `suci_to_supi`
+  for it. A caller that has to deconceal the 65-octet form all the same, in
+  a lab for instance, compresses the point before the call: `02` for an even
+  Y or `03` for an odd one, then X, which is the key that 0.2.0 gave the KDF.
+  A private key that is not 32 octets long is
+  `SecurityError::InvalidKeyLength` instead of a panic.
 
 ### Changed
 
-- `nas_eps::derive_kenb` panics on a COUNT above 2^24 - 1 other than the
-  all-ones handover sentinel, like `nas_5gs::derive_kgnb`; it accepted any
-  32-bit value, although the EPS NAS COUNT has 24 bits (TS 24.301
-  §4.4.3.1).
-- Profile-B SUCI deconcealment (`suci_decrypt_b`, `suci_to_supi`) rejects an
-  uncompressed ephemeral public key, which 0.2.0 accepted: Profile B always
-  applies point compression (TS 33.501 Annex C.3.4) and TS 33.514 §4.2.1.3
-  has the SIDF reject such a SUCI. A private key that is not 32 octets long
-  is `SecurityError::InvalidKeyLength` instead of a panic.
-- `tbcd_decode` decodes the TS 29.002 TBCD-STRING: 0xA to 0xE are "*", "#",
-  "a", "b" and "c", and the first 0xF filler ends the value. It dropped
-  those nibbles and a 0xF anywhere, so "12*3" decoded as "123" and a filler
-  in the middle joined the digits around it. `tbcd_encode` accepts the same
-  characters.
 - p256 is built without its default features, and the minimum versions are
   `rand_core` 0.6.4, `zeroize` 1.5, and `subtle` 2.4.1.
 

@@ -1,6 +1,6 @@
 [package]
 name = "oxirush-security"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "5GS and EPS security algorithms, key derivation, NAS ciphering, integrity, and SUCI"
 license = "Apache-2.0"
