@@ -86,10 +86,11 @@ All notable changes to `oxirush-security` are recorded here.
   they multiply it by 8. On a 32-bit target the product overflowed `usize`
   for a buffer of 512 MiB or more: a debug build panicked, and in a release
   build `nas_cipher`, `nas_mac` and `nia2_mac` took the wrapped product for
-  the length to process. The cores behind these three still narrow a bit
-  length to `usize`, so on such a target a buffer of that size remains
-  outside what they handle; `nea1_cipher`, `nea2_cipher` and `nea3_cipher`
-  take it.
+  the length to process. The cores behind these three count the bits in a
+  `usize` and panic on a bit length that does not fit it, so on such a
+  target they refuse a buffer of that size; `nea1_cipher`, `nea2_cipher` and
+  `nea3_cipher` take it. `nia1_mac` and `nia3_mac` converted the bit length
+  with `as`, which dropped its high bits.
 - The AES-128-CTR of SUCI Profile A and Profile B counts over the whole
   16-octet block. Only the low 32 bits were incremented, so a plaintext
   longer than one block (a NAI username) was concealed or deconcealed

@@ -25,6 +25,10 @@
 //! All functions encrypt or decrypt in place. The `*_bits` entry points keep
 //! unused low-order bits of a partial final octet unchanged. The convenience
 //! functions without a bit length process every supplied octet.
+//!
+//! With NEA1, NEA2 or NEA3, [`nas_cipher`] and the `*_bits` entry points
+//! panic on data whose length in bits does not fit `usize`: on a 32-bit
+//! target, 512 MiB or more.
 use crate::snow3g::Snow3G;
 use crate::zuc::Zuc;
 use aes::Aes128;

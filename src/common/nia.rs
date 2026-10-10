@@ -26,6 +26,9 @@
 //! [`nas_mac_bits`], [`nia1_mac`], [`nia2_mac_bits`], and [`nia3_mac`]
 //! accept the bit lengths needed by the non-byte-aligned official vectors
 //! and by bit-string inputs outside ordinary NAS messages.
+//!
+//! Every function panics on a message whose length in bits does not fit
+//! `usize`: on a 32-bit target, one of 512 MiB or more.
 use crate::snow3g::Snow3G;
 use crate::zuc::Zuc;
 use aes::Aes128;
@@ -100,6 +103,11 @@ fn check_inputs(bearer: u8, direction: u8, byte_length: usize, bit_length: u64) 
     assert!(
         bit_length <= (byte_length as u64) * 8,
         "message shorter than bit length"
+    );
+    // The cores count the bits of the message in a `usize`.
+    assert!(
+        usize::try_from(bit_length).is_ok(),
+        "message bit length must fit usize"
     );
 }
 
