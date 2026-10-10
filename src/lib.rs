@@ -36,9 +36,10 @@ struct Readme;
 
 // Preserve the established 5GS and shared API at the crate root.
 pub use common::{
-    SecurityError, extract_128, nas_cipher, nas_cipher_bits, nas_mac, nas_mac_bits, nea1_cipher,
-    nea1_cipher_bits, nea2_cipher, nea2_cipher_bits, nea3_cipher, nea3_cipher_bits, nia1_mac,
-    nia2_mac, nia2_mac_bits, nia3_mac, plmn_from_bytes, plmn_to_bytes, tbcd_decode, tbcd_encode,
+    SecurityError, constant_time_eq, extract_128, nas_cipher, nas_cipher_bits, nas_mac,
+    nas_mac_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits, nea3_cipher,
+    nea3_cipher_bits, nia1_mac, nia2_mac, nia2_mac_bits, nia3_mac, plmn_from_bytes, plmn_to_bytes,
+    tbcd_decode, tbcd_encode,
 };
 pub use common::{error, nea, nia, plmn, snow3g, zuc};
 pub use nas_5gs::{

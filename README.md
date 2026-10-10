@@ -15,7 +15,7 @@
 - **NAS integrity** — NIA1 (SNOW 3G / 128-EIA1), NIA2 (AES-CMAC / 128-EIA2), NIA3 (ZUC / 128-EIA3)
 - **NAS ciphering** — NEA0 (null), NEA1 (SNOW 3G / 128-EEA1), NEA2 (AES-128-CTR / 128-EEA2), NEA3 (ZUC / 128-EEA3)
 - **SUCI concealment** (TS 33.501 Annex C.4) — IMSI and NAI identities with the null scheme, Profile A (X25519 ECIES), Profile B (P-256 ECIES), plus preserved proprietary outputs
-- **XRES\* / HXRES\* computation** — for AMF-side 5G-AKA verification
+- **XRES\* / HXRES\* computation** — for AMF-side 5G-AKA verification, with `constant_time_eq`, a comparison through `subtle`, for RES\* and HRES\*
 - **5G-GUTI / 5G-S-TMSI** — construction and parsing
 - **PLMN encoding** — TBCD encode/decode for MCC/MNC
 - **Algorithm selection** — configurable operator preference order, with NIA2 > NIA1 > NIA3 (never NIA0) and NEA2 > NEA1 > NEA3 > NEA0 as the compatibility defaults

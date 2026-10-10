@@ -32,6 +32,7 @@ pub use algo::{
     select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
     select_integrity_algo_with_preference,
 };
+pub use ct::constant_time_eq;
 pub use error::SecurityError;
 pub use kdf::extract_128;
 pub use nea::{

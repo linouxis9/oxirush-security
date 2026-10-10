@@ -108,6 +108,9 @@ pub fn derive_nas_key(kamf: &[u8; 32], algo_type: u8, algo_id: u8) -> [u8; 32] {
 }
 
 /// Compute `HRES* = SHA-256(RAND || RES*)[16:32]` for local verification of the UE's RES*.
+///
+/// Compare it with HXRES* through
+/// [`constant_time_eq`](crate::common::constant_time_eq), not with `==`.
 pub fn compute_hres_star(rand: &[u8; 16], res_star: &[u8; 16]) -> [u8; 16] {
     let mut h = crate::common::sha256::Sha256::new();
     h.update(rand);
@@ -412,6 +415,9 @@ pub fn derive_kasme_srvcc(kamf: &[u8; 32], dl_nas_count: u32) -> [u8; 32] {
 }
 
 /// Compute XRES* for 5G-AKA (TS 33.501 Annex A.4, FC=0x6B)
+///
+/// Compare the RES* of the UE with it through
+/// [`constant_time_eq`](crate::common::constant_time_eq), not with `==`.
 ///
 /// # Panics
 ///

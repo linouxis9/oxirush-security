@@ -31,7 +31,7 @@ thiserror = "2"
 # Key material zeroization
 zeroize = { version = "1.5", features = ["derive"] }
 
-# Constant-time comparison for SUCI MAC
+# Constant-time comparison for SUCI MAC and constant_time_eq
 subtle = "2.4.1"
 
 # Hex encoding for SUCI scheme output

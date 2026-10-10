@@ -61,6 +61,11 @@ All notable changes to `oxirush-security` are recorded here.
 
 ### Added
 
+- `constant_time_eq` compares two octet strings through `subtle`, in a time
+  that depends on their lengths and not on where they differ: RES* with
+  XRES*, HRES* with HXRES*, or another value derived from a key with the one
+  a peer sent. The documentation of `compute_xres_star` and
+  `compute_hres_star` points to it.
 - The examples of the README are compiled and run with the doctests.
 - Test vector for 128-EIA2 set 7 (TS 33.401 Annex C.2.7), the
   non-byte-aligned set that 0.2.0 did not cover.

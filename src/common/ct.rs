@@ -15,7 +15,23 @@
    limitations under the License.
 */
 
-//! Table lookups whose memory accesses do not depend on the index.
+//! Table lookups whose memory accesses do not depend on the index, and a
+//! comparison whose time does not depend on the contents.
+
+use subtle::ConstantTimeEq;
+
+/// Whether two octet strings are equal, in a time that depends on their
+/// lengths and not on where they differ.
+///
+/// For a value derived from a key that is compared with the one a peer
+/// sent: RES* with XRES*, HRES* with HXRES*, a SoR or UPU MAC with the
+/// expected one. `==` on slices returns at the first octet that differs,
+/// and the time it took tells the peer how much of a guess was right.
+/// Strings of different lengths are unequal, which is found at once: the
+/// lengths are not secret. The comparison is that of the `subtle` crate.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.ct_eq(b).into()
+}
 
 /// Word-sized table entries for [`lookup`].
 pub(crate) trait Entry: Copy {
@@ -69,5 +85,24 @@ mod tests {
         for index in 0..=u8::MAX {
             assert_eq!(lookup(&table, index), table[usize::from(index)]);
         }
+    }
+
+    #[test]
+    fn constant_time_eq_agrees_with_equality() {
+        let res_star = [0x5a; 16];
+        assert!(constant_time_eq(&res_star, &[0x5a; 16]));
+        assert!(constant_time_eq(&[], &[]));
+        // One bit of difference, in every position.
+        for index in 0..res_star.len() {
+            for bit in 0..8 {
+                let mut other = res_star;
+                other[index] ^= 1 << bit;
+                assert!(!constant_time_eq(&res_star, &other));
+            }
+        }
+        // A prefix is another string.
+        assert!(!constant_time_eq(&res_star, &res_star[..15]));
+        assert!(!constant_time_eq(&res_star[..15], &res_star));
+        assert!(!constant_time_eq(&[], &[0]));
     }
 }
