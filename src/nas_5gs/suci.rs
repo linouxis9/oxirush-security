@@ -567,8 +567,9 @@ fn ansi_x963_kdf(
     kdf_key
 }
 
-/// AES-128-CTR encryption with a 32-bit big-endian counter in the ICB. The
-/// keystream and counter blocks are wiped.
+/// AES-128-CTR encryption with the ICB as the first counter block, incremented
+/// as one 128-bit big-endian integer. The keystream and counter blocks are
+/// wiped.
 fn aes128_ctr(key: &[u8; 16], icb: &[u8; 16], data: &[u8]) -> Vec<u8> {
     let aes = Aes128::new(key.into());
     let mut out = Vec::with_capacity(data.len());
@@ -580,8 +581,12 @@ fn aes128_ctr(key: &[u8; 16], icb: &[u8; 16], data: &[u8]) -> Vec<u8> {
             out.push(d ^ k);
         }
         block.as_mut_slice().zeroize();
-        let low = u32::from_be_bytes(counter[12..16].try_into().expect("four counter octets"));
-        counter[12..16].copy_from_slice(&low.wrapping_add(1).to_be_bytes());
+        let mut carry = 1u16;
+        for octet in counter.iter_mut().rev() {
+            let sum = u16::from(*octet) + carry;
+            *octet = sum as u8;
+            carry = sum >> 8;
+        }
     }
     out
 }
@@ -807,9 +812,13 @@ pub fn suci_decrypt_a(
 pub fn suci_decrypt_b(scheme_output: &[u8], hn_priv_key: &[u8]) -> Result<Vec<u8>, SecurityError> {
     use p256::{PublicKey, SecretKey};
 
-    let priv_bytes: &[u8; 32] = hn_priv_key
-        .try_into()
-        .map_err(|_| SecurityError::Ecies("P-256 private key must be 32 bytes".into()))?;
+    let priv_bytes: &[u8; 32] =
+        hn_priv_key
+            .try_into()
+            .map_err(|_| SecurityError::InvalidKeyLength {
+                expected: 32,
+                got: hn_priv_key.len(),
+            })?;
     let priv_key = SecretKey::from_bytes(priv_bytes.into())
         .map_err(|e| SecurityError::Ecies(format!("invalid P-256 private key: {e}")))?;
 
@@ -887,7 +896,7 @@ fn decode_routing_indicator(bytes: &[u8]) -> Option<String> {
 ///
 /// Returns a SUPI string of the form `imsi-<MCC><MNC><MSIN>` on success.
 pub fn suci_to_supi(suci: &[u8], hn_priv_key: Option<&[u8]>) -> Option<String> {
-    if suci.len() < 2 || suci[0] & 0x0f != 0x01 {
+    if suci.len() < 2 || suci[0] & 0x07 != 0x01 {
         return None;
     }
     let nas_supi_format = (suci[0] >> 4) & 0x07;
@@ -952,7 +961,7 @@ pub fn suci_to_supi(suci: &[u8], hn_priv_key: Option<&[u8]>) -> Option<String> {
 /// `suci-0-MCC-MNC-RI-SchemeID-KeyID-Output` form.
 /// Null-scheme MSIN is TBCD-decoded; protected output is hex-encoded.
 pub fn suci_to_string(suci: &[u8]) -> Option<String> {
-    if suci.len() < 9 || suci[0] & 0x0f != 0x01 {
+    if suci.len() < 9 || suci[0] & 0x07 != 0x01 {
         return None;
     }
     let nas_supi_format = (suci[0] >> 4) & 0x07;
@@ -1116,6 +1125,41 @@ mod tests {
         assert!(suci_decrypt_b(&scheme_output, &priv_bytes).is_err());
     }
 
+    #[test]
+    fn profile_b_private_key_of_another_length_is_an_invalid_key_length() {
+        let priv_bytes = hex::decode(PROFILE_B_PRIV).unwrap();
+        for got in [0, 31, 33] {
+            let mut key = priv_bytes.clone();
+            key.resize(got, 0);
+            assert!(matches!(
+                suci_decrypt_b(&[0x02; 47], &key),
+                Err(SecurityError::InvalidKeyLength { expected: 32, got: length }) if length == got
+            ));
+        }
+    }
+
+    // The counter is the whole block: a carry out of its low 32 bits goes
+    // into the octets before them, as in NIST SP 800-38A Appendix B.1.
+    #[test]
+    fn aes_ctr_counter_carries_over_the_whole_block() {
+        let key = [0x2b; 16];
+        let block = |counter: [u8; 16]| {
+            let mut block = aes::Block::clone_from_slice(&counter);
+            Aes128::new(&key.into()).encrypt_block(&mut block);
+            block
+        };
+        let mut icb = [0u8; 16];
+        icb[10..].copy_from_slice(&[0x12, 0xff, 0xff, 0xff, 0xff, 0xff]);
+        let mut next = [0u8; 16];
+        next[10] = 0x13;
+        let keystream = aes128_ctr(&key, &icb, &[0u8; 32]);
+        assert_eq!(keystream[..16], block(icb)[..]);
+        assert_eq!(keystream[16..], block(next)[..]);
+        // All ones wraps to zero.
+        let keystream = aes128_ctr(&key, &[0xff; 16], &[0u8; 32]);
+        assert_eq!(keystream[16..], block([0; 16])[..]);
+    }
+
     // ── Profile B round-trip — multiple MSINs (mirrors TestSupiToSuciToSupi) ─
 
     #[test]
@@ -1218,7 +1262,7 @@ mod tests {
 
     #[test]
     fn binary_suci_receiver_applies_spare_and_supi_format_fallbacks() {
-        // TS 24.501 §9.11.3.4: bit 8 of octet 1 and bits 8..5 of the
+        // TS 24.501 §9.11.3.4: bits 8 and 4 of octet 1 and bits 8..5 of the
         // protection-scheme octet are spare, and SUPI formats 4..=7 are
         // interpreted as IMSI by the receiver.
         let canonical = [0x01, 0x02, 0xf8, 0x39, 0xf0, 0xff, 0x00, 0x00, 0x00];
@@ -1229,6 +1273,7 @@ mod tests {
 
         for received in [
             [0x81, 0x02, 0xf8, 0x39, 0xf0, 0xff, 0x00, 0x00, 0x00],
+            [0x09, 0x02, 0xf8, 0x39, 0xf0, 0xff, 0x00, 0x00, 0x00],
             [0x41, 0x02, 0xf8, 0x39, 0xf0, 0xff, 0x00, 0x00, 0x00],
             [0x01, 0x02, 0xf8, 0x39, 0xf0, 0xff, 0xf0, 0x00, 0x00],
         ] {

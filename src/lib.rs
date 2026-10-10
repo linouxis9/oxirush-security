@@ -26,6 +26,11 @@ pub mod common;
 pub mod nas_5gs;
 pub mod nas_eps;
 
+// The examples of the README are compiled and run with the doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct Readme;
+
 // Preserve the established 5GS and shared API at the crate root.
 pub use common::{
     SecurityError, extract_128, nas_cipher, nas_cipher_bits, nas_mac, nas_mac_bits, nea1_cipher,

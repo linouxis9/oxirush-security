@@ -14,12 +14,14 @@ All notable changes to `oxirush-security` are recorded here.
   uncompressed ephemeral public key, which 0.2.0 accepted: Profile B always
   applies point compression (TS 33.501 Annex C.3.4) and TS 33.514 §4.2.1.3
   has the SIDF reject such a SUCI. A private key that is not 32 octets long
-  is an error instead of a panic.
+  is `SecurityError::InvalidKeyLength` instead of a panic.
 - `tbcd_decode` decodes the TS 29.002 TBCD-STRING: 0xA to 0xE are "*", "#",
   "a", "b" and "c", and the first 0xF filler ends the value. It dropped
   those nibbles and a 0xF anywhere, so "12*3" decoded as "123" and a filler
   in the middle joined the digits around it. `tbcd_encode` accepts the same
   characters.
+- p256 is built without its default features, and the minimum versions are
+  `rand_core` 0.6.4, `zeroize` 1.5, and `subtle` 2.4.1.
 
 - SNOW 3G, ZUC, 128-EIA1 and the 128-EIA2 subkey doubling avoid secret-dependent
   indexing and branches in source: S-box and MULα/DIVα lookups read the whole table through masks, and
@@ -29,10 +31,12 @@ All notable changes to `oxirush-security` are recorded here.
   timing has not been audited across supported targets. 128-EEA1 and 128-EEA3
   take about 10 times longer (58 µs and 48 µs for a 1500-octet message on
   a 2020s x86-64 core, release build), 128-EIA1 and 128-EIA3 are slower by
-  less, and 128-EEA2 and 128-EIA2 are unchanged.
+  less on such a message and take 4 to 7 times longer on a 64-octet one, and
+  128-EEA2 and 128-EIA2 are unchanged.
 
 ### Added
 
+- The examples of the README are compiled and run with the doctests.
 - Test vector for 128-EIA2 set 7 (TS 33.401 Annex C.2.7), the
   non-byte-aligned set that 0.2.0 did not cover.
 - 128-EEA1 tests on the six UEA2 design conformance sets (TS 35.218), which
@@ -47,6 +51,16 @@ All notable changes to `oxirush-security` are recorded here.
 
 ### Fixed
 
+- The AES-128-CTR of SUCI Profile A and Profile B counts over the whole
+  16-octet block. Only the low 32 bits were incremented, so a plaintext
+  longer than one block (a NAI username) was concealed or deconcealed
+  differently from other implementations when those bits of the ICB were
+  about to wrap.
+- `suci_to_supi` and `suci_to_string` ignore spare bit 4 of the first octet
+  of a binary SUCI, as they do spare bit 8 (TS 24.501 §9.11.3.4); a SUCI with
+  that bit set was not decoded.
+- The word copies of the key that 128-EEA1, 128-EIA1 and `Snow3G` make are
+  wiped.
 - Profile A checks X25519 contributory behavior with the dependency's
   constant-time all-zero comparison.
 - Key material stayed in memory after use: the HMAC-SHA-256 state of every

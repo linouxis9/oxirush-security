@@ -24,8 +24,8 @@ The EEA/EIA functions are tested against the TS 33.401 Annex C and
 TS 35.217/35.218/35.223 test sets, including non-byte-aligned EEA1, EEA2,
 EEA3, EIA1, EIA2, and EIA3 inputs. The `*_bits` APIs preserve unused low bits in
 the final ciphering octet and ignore them for integrity. Whole-octet NAS
-wrappers delegate to the same cores. EPS and interworking KDF tests check the
-Annex A parameter layouts against independently calculated outputs.
+wrappers delegate to the same cores. [Test evidence](#test-evidence) says
+which reference values each part of the crate is tested against.
 
 Explicit buffers and owned state are wiped after use: CK‖IK buffers,
 key-bearing KDF input buffers, SHA-256 and HMAC-SHA-256 state owned by this
@@ -181,13 +181,31 @@ cargo run --example suci_conceal             # SUCI concealment with Profile A
 - **TS 35.215/35.216/35.217/35.218** — SNOW 3G modes, core, and test data
 - **TS 35.221/35.222/35.223** — ZUC modes, core, and test data
 
-## Conformance evidence
+## Test evidence
 
-The unit tests and `tests/spec_vectors.rs` contain the executable TS 33.401
-Annex C, TS 35.217, TS 35.218, TS 35.223, KDF, interworking, SUCI, COUNT, and
-replay vectors used for conformance checks. Profile B always applies point
-compression (TS 33.501 Annex C.3.4), and deconcealment rejects uncompressed
-ephemeral points as TS 33.514 §4.2.1.3 requires.
+The unit tests and `tests/spec_vectors.rs` rest on three kinds of reference
+values, which do not carry the same weight:
+
+- **3GPP test data** — 128-EEA1/2/3 and 128-EIA1/2/3 on the TS 33.401
+  Annex C, TS 35.217, TS 35.218, and TS 35.223 sets, the SNOW 3G and ZUC
+  keystreams, and SUCI on every TS 33.501 Annex C.4 data set.
+- **Values of other implementations** — the 5G AKA chain from the TS 35.208
+  test set 1 MILENAGE outputs through KAUSF, XRES\*, HXRES\*, KSEAF, KAMF, the
+  NAS keys, KgNB, and NH, which free5GC and CryptoMobile both give, and
+  HASHMME on ATTACH REQUESTs and the values a network returned for them.
+- **Values calculated in the tests** — the other 5GS KDFs, the EPS and
+  interworking KDFs, and the NAS container, short, and re-establishment MACs
+  are compared with HMAC-SHA-256 or the MAC over the parameter layout as the
+  test writes it. These tests keep a layout from changing unnoticed; they are
+  not independent vectors.
+
+Profile B always applies point compression (TS 33.501 Annex C.3.4), and
+deconcealment rejects uncompressed ephemeral points as TS 33.514 §4.2.1.3
+requires.
+
+The crate has not had a security audit, and its timing has been read in the
+source, not measured. It stores no keys, and it keeps neither the NAS COUNT
+nor replay state: those belong to the caller.
 
 ## Documentation
 

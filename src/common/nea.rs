@@ -130,7 +130,7 @@ pub fn nea1_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: 
     let bearer_dir = ((bearer as u32 & 0x1F) << 27) | ((direction as u32 & 0x01) << 26);
 
     // The key words are loaded last word first (UEA2 §3.4).
-    let k = [
+    let k = zeroize::Zeroizing::new([
         u32::from_be_bytes(
             key[12..16]
                 .try_into()
@@ -143,11 +143,11 @@ pub fn nea1_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: 
         ),
         u32::from_be_bytes(key[4..8].try_into().expect("4-byte slice from 16-byte key")),
         u32::from_be_bytes(key[0..4].try_into().expect("4-byte slice from 16-byte key")),
-    ];
+    ]);
     let iv = [bearer_dir, count, bearer_dir, count];
 
     let n_words = data.len().div_ceil(4);
-    let mut snow = Snow3G::new(k, iv);
+    let mut snow = Snow3G::new(*k, iv);
     let ks = zeroize::Zeroizing::new(snow.generate(n_words));
 
     // XOR keystream with data

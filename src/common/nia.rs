@@ -141,7 +141,7 @@ pub fn nia1_mac(
     let dir32 = direction as u32 & 0x01;
 
     // The key words are loaded last word first (UIA2 §4.4).
-    let k = [
+    let k = zeroize::Zeroizing::new([
         u32::from_be_bytes(
             key[12..16]
                 .try_into()
@@ -154,11 +154,11 @@ pub fn nia1_mac(
         ),
         u32::from_be_bytes(key[4..8].try_into().expect("4-byte slice from 16-byte key")),
         u32::from_be_bytes(key[0..4].try_into().expect("4-byte slice from 16-byte key")),
-    ];
+    ]);
     let iv = [fresh ^ (dir32 << 15), count ^ (dir32 << 31), fresh, count];
 
     // Only 5 keystream words needed: z[0..1]=P, z[2..3]=Q, z[4]=final mask
-    let mut snow = Snow3G::new(k, iv);
+    let mut snow = Snow3G::new(*k, iv);
     let z = zeroize::Zeroizing::new(snow.generate(5));
 
     // Polynomial evaluation MAC (UIA2 §4.4)

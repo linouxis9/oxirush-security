@@ -186,7 +186,7 @@ impl Snow3G {
     ///
     /// Key and IV words follow their big-endian order in the SNOW 3G core
     /// specification. EEA1/EIA1 wrappers apply their own key mapping.
-    pub fn new(k: [u32; 4], iv: [u32; 4]) -> Self {
+    pub fn new(mut k: [u32; 4], iv: [u32; 4]) -> Self {
         let mut s = Self {
             lfsr: [0u32; 16],
             r1: 0,
@@ -219,6 +219,7 @@ impl Snow3G {
             s.clock_lfsr_init(f);
         }
 
+        zeroize::Zeroize::zeroize(&mut k);
         s
     }
 
@@ -227,7 +228,7 @@ impl Snow3G {
     /// The key and IV are four consecutive big-endian words, as in the
     /// SNOW 3G core specification. EEA1/EIA1 mode code handles its own key mapping.
     pub fn from_bytes(key: &[u8; 16], iv: &[u8; 16]) -> Self {
-        let k = [
+        let k = zeroize::Zeroizing::new([
             u32::from_be_bytes(key[0..4].try_into().expect("4-byte slice from 16-byte key")),
             u32::from_be_bytes(key[4..8].try_into().expect("4-byte slice from 16-byte key")),
             u32::from_be_bytes(
@@ -240,14 +241,14 @@ impl Snow3G {
                     .try_into()
                     .expect("4-byte slice from 16-byte key"),
             ),
-        ];
+        ]);
         let v = [
             u32::from_be_bytes(iv[0..4].try_into().expect("4-byte slice from 16-byte IV")),
             u32::from_be_bytes(iv[4..8].try_into().expect("4-byte slice from 16-byte IV")),
             u32::from_be_bytes(iv[8..12].try_into().expect("4-byte slice from 16-byte IV")),
             u32::from_be_bytes(iv[12..16].try_into().expect("4-byte slice from 16-byte IV")),
         ];
-        Self::new(k, v)
+        Self::new(*k, v)
     }
 
     /// Generate `n` keystream words.
