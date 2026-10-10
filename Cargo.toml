@@ -10,6 +10,7 @@ rust-version = "1.88"
 keywords = ["5g", "lte", "eps", "nas", "security"]
 categories = ["cryptography", "network-programming"]
 readme = "README.md"
+exclude = [".github/", ".gitignore"]
 
 [dependencies]
 # KDF: HMAC-SHA-256 over the SHA-256 compression function, with wiped state

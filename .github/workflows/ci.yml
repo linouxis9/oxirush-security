@@ -20,6 +20,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test
+      - run: cargo test --release
 
   msrv:
     name: MSRV (1.88)
@@ -29,6 +30,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo test
+      - run: cargo test --release
 
   clippy:
     name: Clippy
@@ -61,3 +63,12 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --check
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --dry-run
