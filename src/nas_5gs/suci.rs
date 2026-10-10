@@ -51,9 +51,13 @@ const PROFILE_B_PUB_KEY_LEN: usize = 33; // compressed
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum SupiType {
+    /// IMSI.
     Imsi = 0,
+    /// Network specific identifier.
     NetworkSpecific = 1,
+    /// Global Line Identifier (GLI).
     Gli = 2,
+    /// Global Cable Identifier (GCI).
     Gci = 3,
 }
 
@@ -79,28 +83,47 @@ pub enum SuciSchemeOutput {
     /// Profile-B bytes: compressed ephemeral public key, ciphertext, and MAC tag.
     ProfileB(Vec<u8>),
     /// Operator-defined hexadecimal output for a scheme identifier in `0xC..=0xF`.
-    Proprietary { scheme_id: u8, output: String },
+    Proprietary {
+        /// Protection scheme identifier, `0xC` to `0xF`.
+        scheme_id: u8,
+        /// Scheme output, in the hexadecimal digits of the `out` field.
+        output: String,
+    },
 }
 
 /// Parsed TS 23.003 clause 28.7.3 SUCI in NAI form.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NaiSuci {
+    /// SUPI type, the `type` field.
     pub supi_type: SupiType,
+    /// Routing indicator, the one to four decimal digits of the `rid` field.
     pub routing_indicator: String,
+    /// Home network public key identifier, the `hnkey` field: `None` with
+    /// the null scheme, which has no such field, and 1 to 255 otherwise.
     pub home_network_public_key_id: Option<u8>,
+    /// Protection scheme and its output.
     pub scheme_output: SuciSchemeOutput,
+    /// Realm, the part after the last `@`.
     pub realm: String,
 }
 
 /// Protection choice for constructing a network-specific-identifier SUCI.
 pub enum NaiProtectionScheme<'a> {
+    /// Null scheme: the username stays in clear.
     Null,
+    /// Profile A, ECIES over X25519.
     ProfileA {
+        /// Home network public key identifier, 1 to 255.
         home_network_public_key_id: u8,
+        /// X25519 home network public key.
         home_network_public_key: &'a [u8; 32],
     },
+    /// Profile B, ECIES over P-256.
     ProfileB {
+        /// Home network public key identifier, 1 to 255.
         home_network_public_key_id: u8,
+        /// P-256 home network public key in SEC1 encoding, compressed or
+        /// uncompressed.
         home_network_public_key: &'a [u8],
     },
 }
@@ -894,7 +917,11 @@ fn decode_routing_indicator(bytes: &[u8]) -> Option<String> {
 /// `hn_priv_key`: home network private key bytes (32 bytes for both profiles).
 /// Pass `None` if only null-scheme SUCI is expected.
 ///
-/// Returns a SUPI string of the form `imsi-<MCC><MNC><MSIN>` on success.
+/// Returns `imsi-<MCC><MNC><MSIN>` for a SUCI in the IMSI format. For a SUCI
+/// in a NAI format (network specific identifier, GCI or GLI) it returns the
+/// `username@realm` SUPI as it is, without the `nai-`, `gci-` or `gli-`
+/// prefix of the SBI representation (TS 29.571). Returns `None` for a SUCI
+/// that is malformed or cannot be deconcealed.
 pub fn suci_to_supi(suci: &[u8], hn_priv_key: Option<&[u8]>) -> Option<String> {
     if suci.len() < 2 || suci[0] & 0x07 != 0x01 {
         return None;

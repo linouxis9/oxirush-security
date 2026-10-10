@@ -22,6 +22,9 @@
 //! security use. [`common`] holds shared KDF framing, EEA/EIA algorithm cores,
 //! and PLMN utilities.
 
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
 pub mod common;
 pub mod nas_5gs;
 pub mod nas_eps;

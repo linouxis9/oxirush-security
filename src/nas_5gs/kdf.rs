@@ -363,8 +363,11 @@ pub fn derive_upu_mac_ue(kausf: &[u8; 32], counter: u16) -> Result<[u8; 16], Sec
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum TnapKeyUsage {
+    /// KTIPSec.
     Ipsec = 0x01,
+    /// KTNAP.
     Tnap = 0x02,
+    /// KFT.
     FastTransition = 0x03,
 }
 
@@ -376,7 +379,9 @@ pub fn derive_tnap_usage_key(base_key: &[u8; 32], usage: TnapKeyUsage) -> [u8; 3
 /// Typed IAB IP address used by TS 33.501 Annex A.23.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IabIpAddress {
+    /// IPv4 address.
     V4([u8; 4]),
+    /// IPv6 address.
     V6([u8; 16]),
 }
 

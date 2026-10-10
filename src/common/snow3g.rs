@@ -172,6 +172,8 @@ fn s2(w: u32) -> u32 {
 
 // ── SNOW 3G state ──────────────────────────────────────────────────────────────
 
+/// SNOW 3G keystream generator: the LFSR and the FSM registers, initialized
+/// with a key and an IV. The state is wiped on drop.
 #[derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct Snow3G {
     lfsr: [u32; 16],

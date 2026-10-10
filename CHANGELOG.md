@@ -35,6 +35,9 @@ All notable changes to `oxirush-security` are recorded here.
 
 - p256 is built without its default features, and the minimum versions are
   `rand_core` 0.6.4, `zeroize` 1.5, and `subtle` 2.4.1.
+- The crate forbids `unsafe` code, of which it had none, and warns on a
+  public item without documentation. The 35 items that had none, among them
+  `Snow3G`, `Zuc` and the `SecurityError` variants, are documented.
 
 - SNOW 3G, ZUC, 128-EIA1 and the 128-EIA2 subkey doubling avoid secret-dependent
   indexing and branches in source: S-box and MULα/DIVα lookups read the whole table through masks, and
@@ -92,6 +95,9 @@ All notable changes to `oxirush-security` are recorded here.
 - `derive_kausf`, `derive_kseaf`, `derive_kamf`, and `compute_xres_star`
   document that they panic on a KDF parameter longer than 65535 octets,
   which a two-octet L field cannot encode (TS 33.220 Annex B.2).
+- The `suci_to_supi` documentation says that a SUCI in a NAI format gives
+  the `username@realm` SUPI without a prefix; it promised
+  `imsi-<MCC><MNC><MSIN>` for every SUCI.
 
 ## 0.2.0 - 2026-09-27
 
