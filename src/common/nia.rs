@@ -51,7 +51,7 @@ pub fn nas_mac(
     message: &[u8],
     algo_id: u8,
 ) -> u32 {
-    let bit_length = (message.len() * 8) as u64;
+    let bit_length = (message.len() as u64) * 8;
     nas_mac_bits(key, count, bearer, direction, message, bit_length, algo_id)
 }
 
@@ -236,7 +236,7 @@ pub fn nia2_mac(key: &[u8; 16], count: u32, bearer: u8, direction: u8, message: 
         bearer,
         direction,
         message,
-        (message.len() * 8) as u64,
+        (message.len() as u64) * 8,
     )
 }
 

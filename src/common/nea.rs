@@ -53,7 +53,7 @@ pub fn nas_cipher(
         bearer,
         direction,
         data,
-        (data.len() * 8) as u64,
+        (data.len() as u64) * 8,
         algo_id,
     );
 }
@@ -122,7 +122,7 @@ fn cipher_bits(data: &mut [u8], bit_length: u64, apply: impl FnOnce(&mut [u8])) 
 ///
 /// Panics if `bearer` exceeds 31 or `direction` exceeds one.
 pub fn nea1_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: &mut [u8]) {
-    check_inputs(bearer, direction, data.len(), (data.len() * 8) as u64);
+    check_inputs(bearer, direction, data.len(), (data.len() as u64) * 8);
     if data.is_empty() {
         return;
     }
@@ -195,7 +195,7 @@ pub fn nea1_cipher_bits(
 ///
 /// Panics if `bearer` exceeds 31 or `direction` exceeds one.
 pub fn nea2_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: &mut [u8]) {
-    check_inputs(bearer, direction, data.len(), (data.len() * 8) as u64);
+    check_inputs(bearer, direction, data.len(), (data.len() as u64) * 8);
     if data.is_empty() {
         return;
     }
@@ -263,7 +263,7 @@ pub fn nea2_cipher_bits(
 ///
 /// Panics if `bearer` exceeds 31 or `direction` exceeds one.
 pub fn nea3_cipher(key: &[u8; 16], count: u32, bearer: u8, direction: u8, data: &mut [u8]) {
-    check_inputs(bearer, direction, data.len(), (data.len() * 8) as u64);
+    check_inputs(bearer, direction, data.len(), (data.len() as u64) * 8);
     if data.is_empty() {
         return;
     }
