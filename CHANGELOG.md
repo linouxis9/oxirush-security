@@ -30,6 +30,15 @@ All notable changes to `oxirush-security` are recorded here.
   Y or `03` for an odd one, then X, which is the key that 0.2.0 gave the KDF.
   A private key that is not 32 octets long is
   `SecurityError::InvalidKeyLength` instead of a panic.
+- **SUCI concealment inputs.** `suci_scheme_output_a`, `suci_scheme_output_b`
+  and `suci_conceal` with Profile A or Profile B return
+  `SecurityError::Ecies` for an empty scheme input. 0.2.0 concealed it into a
+  scheme output without ciphertext, which `suci_decrypt_a` and
+  `suci_decrypt_b` refuse with that error. `suci_scheme_output_b` returns it
+  too for a home network public key that is neither a 33-octet compressed nor
+  a 65-octet uncompressed point, the two forms its documentation names; 0.2.0
+  also took the x-only SEC1 encoding of tag 0x05, which p256 decodes. Pass at
+  least one octet to conceal, and the key in one of the two forms.
 
 ### Changed
 

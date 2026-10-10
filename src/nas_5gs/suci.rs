@@ -652,6 +652,9 @@ pub fn msin_to_bcd(msin: &str) -> Vec<u8> {
 ///
 /// `hn_pub_key`: 32-byte X25519 home network public key.
 /// Returns: `ephemeral_pub (32) || ciphertext (len(msin_bcd)) || mac (8)`
+///
+/// An empty `msin_bcd` is an error, as a scheme output without ciphertext is
+/// one for [`suci_decrypt_a`].
 pub fn suci_scheme_output_a(
     msin_bcd: &[u8],
     hn_pub_key: &[u8; 32],
@@ -659,6 +662,11 @@ pub fn suci_scheme_output_a(
     use rand_core::OsRng;
     use x25519_dalek::{EphemeralSecret, PublicKey};
 
+    if msin_bcd.is_empty() {
+        return Err(SecurityError::Ecies(
+            "Profile A scheme input is empty".into(),
+        ));
+    }
     let hn_pub = PublicKey::from(*hn_pub_key);
     let eph_secret = EphemeralSecret::random_from_rng(OsRng);
     let eph_pub = PublicKey::from(&eph_secret);
@@ -699,12 +707,30 @@ pub fn suci_scheme_output_a(
 ///
 /// `hn_pub_key`: P-256 public key in SEC1 encoding (33-byte compressed or 65-byte uncompressed).
 /// Returns: `compressed_eph_pub (33) || ciphertext (len(msin_bcd)) || mac (8)`
+///
+/// An empty `msin_bcd` is an error, as a scheme output without ciphertext is
+/// one for [`suci_decrypt_b`], and so is a key in another SEC1 encoding.
 pub fn suci_scheme_output_b(msin_bcd: &[u8], hn_pub_key: &[u8]) -> Result<Vec<u8>, SecurityError> {
     use p256::PublicKey;
     use p256::ecdh::EphemeralSecret;
     use p256::elliptic_curve::sec1::ToEncodedPoint;
     use rand_core::OsRng;
 
+    if msin_bcd.is_empty() {
+        return Err(SecurityError::Ecies(
+            "Profile B scheme input is empty".into(),
+        ));
+    }
+    // SEC1 has other encodings, which p256 would decode: the x-only one of
+    // tag 0x05 among them.
+    if !matches!(
+        (hn_pub_key.first(), hn_pub_key.len()),
+        (Some(0x02 | 0x03), 33) | (Some(0x04), 65)
+    ) {
+        return Err(SecurityError::Ecies(
+            "Profile B home network public key must be compressed or uncompressed".into(),
+        ));
+    }
     let hn_pub = PublicKey::from_sec1_bytes(hn_pub_key)
         .map_err(|e| SecurityError::Ecies(format!("invalid P-256 public key: {e}")))?;
     let eph_secret = EphemeralSecret::random(&mut OsRng);
@@ -750,6 +776,8 @@ pub fn suci_scheme_output_b(msin_bcd: &[u8], hn_pub_key: &[u8]) -> Result<Vec<u8
 /// - `scheme_id=2`: Profile B (P-256) — `hn_pub_key` in SEC1 encoding.
 ///
 /// Returns the scheme output bytes (for non-null: `ephemeral_pub || ciphertext || mac`).
+/// Profile A and Profile B return an error for an empty `msin_bcd`; the null
+/// scheme returns it as it is.
 pub fn suci_conceal(
     msin_bcd: &[u8],
     scheme_id: u8,

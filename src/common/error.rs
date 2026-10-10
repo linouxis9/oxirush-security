@@ -34,9 +34,9 @@ pub enum SecurityError {
         got: usize,
     },
     /// A SUCI ECIES operation that cannot be carried out: a key that the
-    /// curve does not accept, a scheme output that is too short, or a
-    /// protection scheme other than the null scheme, Profile A and Profile
-    /// B. The text says which.
+    /// profile does not accept, an empty scheme input, a scheme output that
+    /// is too short, or a protection scheme other than the null scheme,
+    /// Profile A and Profile B. The text says which.
     #[error("ECIES error: {0}")]
     Ecies(String),
     /// The MAC tag of a SUCI scheme output is not the one computed over its
