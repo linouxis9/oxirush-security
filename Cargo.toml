@@ -10,7 +10,7 @@ rust-version = "1.88"
 keywords = ["5g", "lte", "eps", "nas", "security"]
 categories = ["cryptography", "network-programming"]
 readme = "README.md"
-exclude = [".github/", ".gitignore"]
+exclude = [".github/", ".gitignore", "fuzz/"]
 
 [features]
 default = ["suci", "nai"]

@@ -212,6 +212,11 @@ and what a type cannot say is a `Result`. Every call below changes.
 
   0.2.0 had no feature and 76 crates. Without `nai`, `suci_to_supi` returns
   `None` for a SUCI in a NAI format.
+- Four `cargo fuzz` targets under `fuzz/`, which CI runs for a minute each:
+  `suci` (a SUCI of a NAS message, a scheme output and a NAI from a peer),
+  `suci_round_trip` (what is concealed is deconcealed), `identity` (5G-GUTI,
+  5G-S-TMSI, PLMN and TBCD, each encoded back to its octets) and
+  `algorithms` (every algorithm at any length in bits).
 - `constant_time_eq` compares two octet strings through `subtle`, in a time
   that depends on their lengths and not on where they differ: RES* with
   XRES*, HRES* with HXRES*, or another value derived from a key with the one

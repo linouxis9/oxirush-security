@@ -21,6 +21,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test
       - run: cargo test --release
+      # Each set of features: neither, `suci` alone, and both (the default)
+      - run: cargo test --no-default-features
+      - run: cargo test --no-default-features --features suci
 
   msrv:
     name: MSRV (1.88)
@@ -31,6 +34,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test
       - run: cargo test --release
+      - run: cargo test --no-default-features
+
+  minimal-versions:
+    name: Minimal dependency versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo update -Z direct-minimal-versions
+      - run: cargo test
 
   clippy:
     name: Clippy
@@ -42,15 +55,21 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --no-default-features -- -D warnings
+      - run: cargo clippy --all-targets --no-default-features --features suci -- -D warnings
 
   doc:
     name: Doc
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --no-deps
+      # As docs.rs builds it
+      - run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: "--cfg docsrs -D warnings"
+      - run: cargo doc --no-deps --no-default-features
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -63,6 +82,28 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --check
+      - run: cargo fmt --check --manifest-path fuzz/Cargo.toml
+
+  fuzz:
+    name: Fuzz ${{ matrix.target }} (1 minute)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [suci, suci_round_trip, identity, algorithms]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked
+      # The first directory takes what the run finds; the second has the seeds.
+      - run: mkdir -p fuzz/corpus/${{ matrix.target }}
+      - run: >
+          cargo fuzz run ${{ matrix.target }}
+          fuzz/corpus/${{ matrix.target }} fuzz/seeds/${{ matrix.target }}
+          -- -max_total_time=60 -max_len=512
 
   package:
     name: Package

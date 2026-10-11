@@ -1,0 +1,44 @@
+[package]
+name = "oxirush-security-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+oxirush-security = { path = ".." }
+
+# Not part of any parent workspace.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "suci"
+path = "fuzz_targets/suci.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "suci_round_trip"
+path = "fuzz_targets/suci_round_trip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "identity"
+path = "fuzz_targets/identity.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "algorithms"
+path = "fuzz_targets/algorithms.rs"
+test = false
+doc = false
+bench = false
