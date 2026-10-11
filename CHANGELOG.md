@@ -193,8 +193,8 @@ and what a type cannot say is a `Result`. Every call below changes.
   2^31 - 1 have no branch on secret bits. Table lookups indexed by key or
   keystream bits, and those branches, exposed a timing risk. Compiled-code
   timing has not been audited across supported targets. It costs time, which
-  `cargo bench --bench algorithms` measures; these are the fastest batches of
-  three runs on one core of an AMD Ryzen 7 5700G with Rust 1.98.1, and 0.2.0
+  the benchmark of `benches/` measured in its first form; these are the
+  fastest batches of three runs on one core of an AMD Ryzen 7 5700G with Rust 1.98.1, and 0.2.0
   in the same loop. On a 1500-octet message 128-EEA1 takes 53.6 µs and
   128-EEA3 37.9 µs, where 0.2.0 took 4.8 µs and 5.2 µs; 128-EIA1 takes
   14.3 µs and 128-EIA3 63.0 µs, where 0.2.0 took 8.9 µs and 15.2 µs. On a
@@ -222,9 +222,10 @@ and what a type cannot say is a `Result`. Every call below changes.
   `suci_round_trip` (what is concealed is deconcealed), `identity` (5G-GUTI,
   5G-S-TMSI, PLMN and TBCD, each encoded back to its octets) and
   `algorithms` (every algorithm at any length in bits).
-- `benches/algorithms.rs`, a benchmark of the algorithms, the key
-  derivations and SUCI, and a `SECURITY.md` that says how to report a
-  vulnerability.
+- `benches/`, a package of its own that times the algorithms, the key
+  derivations and SUCI with criterion and profiles them with pprof. The
+  published crate does not have it, and the crate has no dependency for it.
+- A `SECURITY.md` that says how to report a vulnerability.
 - `constant_time_eq` compares two octet strings through `subtle`, in a time
   that depends on their lengths and not on where they differ: RES* with
   XRES*, HRES* with HXRES*, or another value derived from a key with the one

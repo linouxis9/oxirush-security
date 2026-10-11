@@ -10,7 +10,7 @@ rust-version = "1.88"
 keywords = ["5g", "lte", "eps", "nas", "security"]
 categories = ["cryptography", "network-programming"]
 readme = "README.md"
-exclude = [".github/", ".gitignore", "fuzz/"]
+exclude = [".github/", ".gitignore", "benches/", "fuzz/"]
 
 [features]
 default = ["suci", "nai"]
@@ -48,11 +48,6 @@ hex = { version = "0.4", optional = true }
 
 [dev-dependencies]
 hex = "0.4"
-
-# How long the algorithms and the key derivations take
-[[bench]]
-name = "algorithms"
-harness = false
 
 [[example]]
 name = "suci_conceal"

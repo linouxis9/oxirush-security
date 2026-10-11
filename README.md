@@ -453,10 +453,27 @@ takes any message at any length in bits.
 
 ## Speed
 
-`cargo bench --bench algorithms` times the algorithms and the key
-derivations. These are the fastest batches of three runs on one core of an
-AMD Ryzen 7 5700G with Rust 1.98.1, per call. The last two columns are
-0.2.0 in the same loop.
+`benches/` is a package of its own, which the published crate does not
+have. It times the algorithms, the key derivations and SUCI with
+[criterion](https://crates.io/crates/criterion), and profiles them with
+[pprof](https://crates.io/crates/pprof):
+
+```bash
+cd benches
+cargo bench --bench algorithms                # every benchmark
+cargo bench --bench algorithms -- 128-EEA2    # those whose name has it
+
+# Ten seconds of one benchmark under the profiler, then where the time went
+cargo bench --bench algorithms -- --profile-time 10 cipher/128-EEA1/1500
+go tool pprof -top target/criterion/cipher/128-EEA1/1500/profile/profile.pb
+```
+
+The profile is one that Go's `pprof` reads. With `PROFILE=flamegraph` in
+the environment it is `flamegraph.svg`, in the same directory.
+
+The figures below are from the first form of the benchmark, a loop: the
+fastest batches of three runs on one core of an AMD Ryzen 7 5700G with
+Rust 1.98.1, per call. The last two columns are 0.2.0 in the same loop.
 
 | | 64 octets | 1500 octets | 0.2.0, 64 | 0.2.0, 1500 |
 |---|---|---|---|---|

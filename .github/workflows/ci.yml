@@ -83,6 +83,7 @@ jobs:
           components: rustfmt
       - run: cargo fmt --check
       - run: cargo fmt --check --manifest-path fuzz/Cargo.toml
+      - run: cargo fmt --check --manifest-path benches/Cargo.toml
 
   fuzz:
     name: Fuzz ${{ matrix.target }} (1 minute)
@@ -106,15 +107,20 @@ jobs:
           -- -max_total_time=60 -max_len=512
 
   bench:
-    name: Benchmark runs
+    name: Benchmarks run
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      # Each case once, without timing: the figures of a shared runner say
-      # nothing
-      - run: cargo test --benches
+        with:
+          workspaces: benches
+      # Each benchmark once, without timing: the figures of a shared runner
+      # say nothing
+      - run: cargo test --manifest-path benches/Cargo.toml --benches
+      - run: cargo clippy --manifest-path benches/Cargo.toml --all-targets -- -D warnings
 
   package:
     name: Package
