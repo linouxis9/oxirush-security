@@ -201,22 +201,40 @@ pub fn nea2_cipher(
 
     let cipher = Aes128Enc::new(key.into());
 
-    // The upper eight octets of the counter block are fixed
-    let mut counter_block = [0u8; 16];
-    counter_block[0..4].copy_from_slice(&count.to_be_bytes());
-    counter_block[4] = (bearer.get() << 3) | (u8::from(direction) << 2);
+    // The upper eight octets of a counter block are fixed
+    let mut fixed = [0u8; 8];
+    fixed[0..4].copy_from_slice(&count.to_be_bytes());
+    fixed[4] = (bearer.get() << 3) | (u8::from(direction) << 2);
 
-    for (index, chunk) in (0u64..).zip(data.chunks_mut(16)) {
-        counter_block[8..16].copy_from_slice(&index.to_be_bytes());
-
-        let mut block = aes::Block::from(counter_block);
-        cipher.encrypt_block(&mut block);
-        for (octet, key_octet) in chunk.iter_mut().zip(block.iter()) {
-            *octet ^= key_octet;
+    // The counter blocks of a group are encrypted in one call, which the AES
+    // instructions of a processor run side by side
+    let mut keystream = [aes::Block::default(); CTR_GROUP];
+    let mut counter = 0u64;
+    for group in data.chunks_mut(16 * CTR_GROUP) {
+        let blocks = &mut keystream[..group.len().div_ceil(16)];
+        for block in blocks.iter_mut() {
+            block[..8].copy_from_slice(&fixed);
+            block[8..].copy_from_slice(&counter.to_be_bytes());
+            counter += 1;
         }
+        cipher.encrypt_blocks(blocks);
+        for (octets, block) in group.chunks_mut(16).zip(blocks.iter()) {
+            for (octet, key_octet) in octets.iter_mut().zip(block) {
+                *octet ^= key_octet;
+            }
+        }
+    }
+
+    // A group overwrites the blocks of the one before it: the array holds
+    // keystream in as many blocks as the longest group had
+    let written = CTR_GROUP.min(data.len().div_ceil(16));
+    for block in &mut keystream[..written] {
         block.as_mut_slice().zeroize();
     }
 }
+
+/// The number of counter blocks that [`nea2_cipher`] encrypts in one call.
+const CTR_GROUP: usize = 8;
 
 /// Cipher or decipher the first `bit_length` bits with 128-NEA2 /
 /// 128-EEA2.

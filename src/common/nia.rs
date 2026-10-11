@@ -32,7 +32,7 @@
 //!
 //! For a NAS message use [`nas_5gs::nas_mac`](crate::nas_5gs::nas_mac) or
 //! [`nas_eps::nas_mac`](crate::nas_eps::nas_mac), which take a NAS COUNT.
-use crate::common::ct::{clmul64, clmul128, mask8};
+use crate::common::ct::{clmul64, clmul128, mask64};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, Direction, IntegrityAlgorithm, octets_of};
 use crate::snow3g::Snow3G;
@@ -271,26 +271,15 @@ pub fn nia2_mac_bits(
 
 /// Doubling in GF(2^128) for the CMAC subkeys (RFC 4493 §2.3), with no
 /// branch on the secret top bit.
-fn cmac_double(block: &mut [u8; 16]) {
-    let carry = block[0] >> 7;
-    for index in 0..15 {
-        block[index] = (block[index] << 1) | (block[index + 1] >> 7);
-    }
-    block[15] = (block[15] << 1) ^ (0x87 & mask8(carry));
-}
-
-fn aes_encrypt_block(cipher: &Aes128Enc, block: &mut [u8; 16]) {
-    let mut value = aes::Block::from(*block);
-    cipher.encrypt_block(&mut value);
-    block.copy_from_slice(&value);
+fn cmac_double(value: u128) -> u128 {
+    let carry = mask64((value >> 127) as u64);
+    (value << 1) ^ u128::from(0x87 & carry)
 }
 
 /// `state = AES(state XOR block)`, one step of the CBC-MAC.
 fn cmac_absorb(cipher: &Aes128Enc, state: &mut [u8; 16], block: &[u8; 16]) {
-    for (left, right) in state.iter_mut().zip(block) {
-        *left ^= right;
-    }
-    aes_encrypt_block(cipher, state);
+    *state = (u128::from_ne_bytes(*state) ^ u128::from_ne_bytes(*block)).to_ne_bytes();
+    cipher.encrypt_block(state.into());
 }
 
 fn eia2(
@@ -301,12 +290,12 @@ fn eia2(
     message: BitString<'_>,
 ) -> u32 {
     let cipher = Aes128Enc::new(key.into());
+
+    // The subkeys K1 and K2, from the encryption of a block of zeros
     let mut l = [0u8; 16];
-    aes_encrypt_block(&cipher, &mut l);
-    let mut k1 = l;
-    cmac_double(&mut k1);
-    let mut k2 = k1;
-    cmac_double(&mut k2);
+    cipher.encrypt_block((&mut l).into());
+    let k1 = Zeroizing::new(cmac_double(u128::from_be_bytes(l)));
+    let k2 = Zeroizing::new(cmac_double(*k1));
 
     // The first block begins with COUNT || BEARER || DIRECTION || 0^26, and
     // takes the first eight octets of the message
@@ -344,15 +333,11 @@ fn eia2(
     } else {
         &k1
     };
-    for (octet, key_octet) in block.iter_mut().zip(subkey) {
-        *octet ^= key_octet;
-    }
+    block = (u128::from_be_bytes(block) ^ **subkey).to_be_bytes();
     cmac_absorb(&cipher, &mut state, &block);
     let mac = u32::from_be_bytes([state[0], state[1], state[2], state[3]]);
 
     l.zeroize();
-    k1.zeroize();
-    k2.zeroize();
     block.zeroize();
     state.zeroize();
     mac
@@ -477,6 +462,20 @@ mod tests {
 
     fn direction(bit: u8) -> Direction {
         Direction::try_from(bit).unwrap()
+    }
+
+    /// The subkeys of RFC 4493 §4, "Subkey Generation": K1 and K2 from
+    /// AES-128(key, 0), where neither doubling has a carry, and the two
+    /// doublings that have one.
+    #[test]
+    fn cmac_double_gives_the_subkeys_of_rfc_4493() {
+        let l = 0x7df7_6b0c_1ab8_99b3_3e42_f047_b91b_546f;
+        let k1 = cmac_double(l);
+        assert_eq!(k1, 0xfbee_d618_3571_3366_7c85_e08f_7236_a8de);
+        assert_eq!(cmac_double(k1), 0xf7dd_ac30_6ae2_66cc_f90b_c11e_e46d_513b);
+
+        assert_eq!(cmac_double(1 << 127), 0x87);
+        assert_eq!(cmac_double(u128::MAX), u128::MAX ^ 0x86);
     }
 
     // ── NIA1 test vectors from free5gc (3GPP TS 35.215/35.216) ────────────────

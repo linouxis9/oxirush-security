@@ -54,12 +54,6 @@ pub(crate) fn mask64(bit: u64) -> u64 {
     core::hint::black_box(bit & 1).wrapping_neg()
 }
 
-/// [`mask64`] for an octet.
-#[inline(always)]
-pub(crate) fn mask8(bit: u8) -> u8 {
-    core::hint::black_box(bit & 1).wrapping_neg()
-}
-
 /// A table of 256 octets, kept as 32 words of eight for [`Table::get4`].
 pub(crate) struct Table([u64; 32]);
 
@@ -224,7 +218,6 @@ mod tests {
             (mask64(0), mask64(1), mask64(2), mask64(3)),
             (0, u64::MAX, 0, u64::MAX)
         );
-        assert_eq!((mask8(0), mask8(1), mask8(0x81)), (0, 0xff, 0xff));
     }
 
     #[test]

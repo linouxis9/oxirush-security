@@ -207,6 +207,8 @@ and what a type cannot say is a `Result`. Every call below changes.
   The compiled code was read for x86-64 with Rust 1.98.1, and no timing
   was measured: the README says what was checked.
 - This costs time in 128-EEA1 and 128-EEA3, which `benches/` measures.
+- 128-EEA2 encrypts eight counter blocks in one call to the cipher, and
+  128-EIA2 keeps its subkeys and its state in words.
 
 ### Added
 
