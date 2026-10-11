@@ -40,7 +40,7 @@ use crate::common::input::{Bearer, CipheringAlgorithm, Direction, octets_of};
 use crate::snow3g::Snow3G;
 use crate::zuc::Zuc;
 use aes::Aes128;
-use cipher::{BlockEncrypt, KeyInit};
+use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use zeroize::{Zeroize, Zeroizing};
 
 /// Cipher or decipher octets in place with `algorithm`.

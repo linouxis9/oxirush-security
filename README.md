@@ -65,7 +65,10 @@ hex = "0.4"
 ```
 
 The crate has no Cargo features. The minimum supported Rust version is 1.88.
-The examples of this page also use the `hex` crate.
+On 1.88 itself Cargo has to choose the dependencies by Rust version, as
+resolver 3 does, the default of edition 2024: `aes` 0.9.3 needs Rust 1.89
+and 0.9.2 takes its place. The examples of this page also use the `hex`
+crate.
 
 ## What it implements
 
@@ -362,7 +365,7 @@ the others of `common`) take what the algorithm takes.
 
 | Subject | What the crate does |
 |---------|---------------------|
-| Wiped after use | Explicit buffers and owned state: CK‖IK buffers, key-bearing KDF input buffers, SHA-256 and HMAC-SHA-256 state owned by this crate, SUCI ECIES KDF buffers, cipher state, and keystream buffers. |
+| Wiped after use | Explicit buffers and owned state: CK‖IK buffers, key-bearing KDF input buffers, the SHA-256 state and the key block and inner hash of HMAC-SHA-256, SUCI ECIES KDF buffers, cipher state including the AES key schedule, and keystream buffers. The hasher and the AES cipher are those of the `sha2` and `aes` crates, built with their `zeroize` features: the crate does not compile without them. |
 | Not wiped | Temporary copies and compiler-generated spills, which the wiping above does not all cover. Returned keys and deconcealed identities belong to the caller, who clears them when their lifetime ends. |
 | Secret-dependent indexing and branches | In the source, the SNOW 3G and ZUC S-boxes, the MULα/DIVα tables, and the 128-EIA1 and AES-CMAC field arithmetic neither index memory nor branch on secret values. AES comes from the `aes` crate. |
 | Comparison | `constant_time_eq` compares RES\* with XRES\*, or HRES\* with HXRES\*, through `subtle`: its time depends on the lengths and not on where the values differ. |

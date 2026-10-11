@@ -90,10 +90,7 @@ pub fn derive_knas_int(kamf: &[u8; 32], algorithm: IntegrityAlgorithm) -> [u8; 1
 /// Compare it with HXRES* through
 /// [`constant_time_eq`](crate::common::constant_time_eq), not with `==`.
 pub fn compute_hres_star(rand: &[u8; 16], res_star: &[u8; 16]) -> [u8; 16] {
-    let mut h = crate::common::sha256::Sha256::new();
-    h.update(rand);
-    h.update(res_star);
-    extract_128(&h.finalize())
+    extract_128(&crate::common::sha256::sha256(&[rand, res_star]))
 }
 
 /// Derive KgNB from KAMF and the uplink NAS COUNT of 3GPP access

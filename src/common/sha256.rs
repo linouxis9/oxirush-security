@@ -15,94 +15,46 @@
    limitations under the License.
 */
 
-//! SHA-256 and HMAC-SHA-256 that wipe their state.
+//! SHA-256 and HMAC-SHA-256 that leave no key material behind.
 //!
-//! The sha2 0.10 and hmac 0.12 types leave their chaining value, which is
-//! as sensitive as the key it absorbed, in memory they do not clear. These
-//! run sha2's compression function over state that is wiped on drop.
+//! SHA-256 is that of the `sha2` crate. With its `zeroize` feature the
+//! hasher wipes its chaining value, which is as sensitive as the key it
+//! absorbed, and its block buffer when it is dropped.
+//!
+//! HMAC is the framing of RFC 2104 over that hasher, written here: the
+//! `hmac` crate wipes its two hash states in the same way, but its
+//! `new_from_slice` leaves the block of the key and its `finalize` the
+//! inner hash in their stack frames. Here both are wiped.
 
-use sha2::digest::generic_array::GenericArray;
-use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
+use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
-/// Initial hash value (FIPS 180-4 §5.3.3).
-const INITIAL_STATE: [u32; 8] = [
-    0x6a09_e667,
-    0xbb67_ae85,
-    0x3c6e_f372,
-    0xa54f_f53a,
-    0x510e_527f,
-    0x9b05_688c,
-    0x1f83_d9ab,
-    0x5be0_cd19,
-];
+// The hasher and the AES key schedule wipe themselves on drop only with the
+// `zeroize` features of their crates: this fails to compile without them.
+const _: fn() = || {
+    fn wiped_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+    wiped_on_drop::<Sha256>();
+    wiped_on_drop::<aes::Aes128>();
+};
 
-/// SHA-256 (FIPS 180-4).
-#[derive(Zeroize, ZeroizeOnDrop)]
-pub(crate) struct Sha256 {
-    state: [u32; 8],
-    block: [u8; 64],
-    filled: usize,
-    length: u64,
-}
-
-impl Sha256 {
-    pub(crate) fn new() -> Self {
-        Self {
-            state: INITIAL_STATE,
-            block: [0; 64],
-            filled: 0,
-            length: 0,
-        }
+/// SHA-256 (FIPS 180-4) of the concatenation of `parts`, in a buffer that
+/// is wiped on drop.
+pub(crate) fn sha256(parts: &[&[u8]]) -> Zeroizing<[u8; 32]> {
+    let mut hash = Sha256::new();
+    for part in parts {
+        hash.update(part);
     }
-
-    pub(crate) fn update(&mut self, mut data: &[u8]) {
-        self.length = self.length.wrapping_add(data.len() as u64);
-        while !data.is_empty() {
-            let take = (64 - self.filled).min(data.len());
-            self.block[self.filled..self.filled + take].copy_from_slice(&data[..take]);
-            self.filled += take;
-            data = &data[take..];
-            if self.filled == 64 {
-                sha2::compress256(
-                    &mut self.state,
-                    core::slice::from_ref(GenericArray::from_slice(&self.block)),
-                );
-                self.filled = 0;
-            }
-        }
-    }
-
-    pub(crate) fn finalize(mut self) -> [u8; 32] {
-        // The padding: a one bit, zeros up to 56 octets modulo 64, and the
-        // message length in bits (FIPS 180-4 §5.1.1).
-        let bits = self.length.wrapping_mul(8).to_be_bytes();
-        self.update(&[0x80]);
-        while self.filled != 56 {
-            self.update(&[0]);
-        }
-        self.update(&bits);
-        let mut digest = [0; 32];
-        for (octets, word) in digest
-            .as_chunks_mut::<4>()
-            .0
-            .iter_mut()
-            .zip(self.state.iter())
-        {
-            *octets = word.to_be_bytes();
-        }
-        digest
-    }
+    let mut digest = Zeroizing::new([0u8; 32]);
+    hash.finalize_into((&mut *digest).into());
+    digest
 }
 
 /// HMAC-SHA-256 (RFC 2104).
 pub(crate) fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+    // The key, hashed when it is longer than a block, then padded with zeros
     let mut pad = Zeroizing::new([0u8; 64]);
     if key.len() > pad.len() {
-        let mut hash = Sha256::new();
-        hash.update(key);
-        let mut hashed_key = hash.finalize();
-        pad[..32].copy_from_slice(&hashed_key);
-        hashed_key.zeroize();
+        pad[..32].copy_from_slice(sha256(&[key]).as_ref());
     } else {
         pad[..key.len()].copy_from_slice(key);
     }
@@ -110,37 +62,41 @@ pub(crate) fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     for octet in pad.iter_mut() {
         *octet ^= 0x36;
     }
-    let mut inner = Sha256::new();
-    inner.update(pad.as_ref());
-    inner.update(data);
-    let inner_digest = Zeroizing::new(inner.finalize());
+    let inner = sha256(&[pad.as_ref(), data]);
 
     for octet in pad.iter_mut() {
         *octet ^= 0x36 ^ 0x5c;
     }
-    let mut outer = Sha256::new();
-    outer.update(pad.as_ref());
-    outer.update(inner_digest.as_ref());
-    outer.finalize()
+    *sha256(&[pad.as_ref(), inner.as_ref()])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sha2::Digest;
 
-    /// Every length around the padding boundaries, split at every point,
-    /// against the sha2 digest.
+    /// FIPS 180-4 examples: "abc", the empty message, and the 448-bit
+    /// message that fills a block with its padding; then a message split
+    /// into parts at every point.
     #[test]
-    fn sha256_matches_sha2() {
-        let message: Vec<u8> = (0..200u8).map(|octet| octet.wrapping_mul(29)).collect();
-        for length in 0..message.len() {
-            let expected: [u8; 32] = sha2::Sha256::digest(&message[..length]).into();
-            for split in [0, length / 3, length] {
-                let mut hash = Sha256::new();
-                hash.update(&message[..split]);
-                hash.update(&message[split..length]);
-                assert_eq!(hash.finalize(), expected, "length {length} split {split}");
+    fn sha256_matches_the_fips_180_4_examples() {
+        for (message, expected) in [
+            (
+                &b"abc"[..],
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            ),
+            (
+                b"",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ),
+            (
+                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+                "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+            ),
+        ] {
+            assert_eq!(hex::encode(*sha256(&[message])), expected);
+            for split in 0..=message.len() {
+                let (first, second) = message.split_at(split);
+                assert_eq!(hex::encode(*sha256(&[first, second])), expected);
             }
         }
     }
@@ -178,5 +134,19 @@ mod tests {
         for (key, data, expected) in cases {
             assert_eq!(hex::encode(hmac_sha256(&key, data)), expected);
         }
+    }
+
+    /// A key of exactly one block is used as it is, and one octet more is
+    /// hashed first (RFC 2104 §2).
+    #[test]
+    fn hmac_sha256_hashes_only_a_key_longer_than_a_block() {
+        let block = [0x5a; 64];
+        let longer = [0x5a; 65];
+        let hashed = sha256(&[&longer]);
+        assert_eq!(
+            hmac_sha256(&longer, b"data"),
+            hmac_sha256(hashed.as_ref(), b"data")
+        );
+        assert_ne!(hmac_sha256(&block, b"data"), hmac_sha256(&longer, b"data"));
     }
 }

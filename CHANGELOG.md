@@ -170,8 +170,16 @@ and what a type cannot say is a `Result`. Every call below changes.
 
 ### Changed
 
-- p256 is built without its default features, and the minimum versions are
-  `rand_core` 0.6.4, `zeroize` 1.5, and `subtle` 2.4.1.
+- The dependencies are those of the current RustCrypto generation: sha2
+  0.11, aes 0.9, p256 0.14 and x25519-dalek 3, where 0.2.0 had sha2 0.10,
+  aes 0.8, p256 0.13 and x25519-dalek 2. getrandom 0.4 gives the ephemeral
+  keys of SUCI; `hmac`, `cipher` and `rand_core` are no longer direct
+  dependencies. p256 is built without its default features, and the minimum
+  versions are `aes` 0.9.2, `zeroize` 1.9 and `subtle` 2.6. The minimum
+  supported Rust version stays 1.88: aes 0.9.3 needs Rust 1.89, and on 1.88
+  Cargo's resolver takes 0.9.2 in its place.
+- A failure of the system's random number generator while a SUCI is
+  concealed is `SecurityError::Ecies`, where 0.2.0 panicked.
 - The crate forbids `unsafe` code, of which it had none, and warns on a
   public item without documentation. The 35 items that had none, among them
   `Snow3G`, `Zuc` and the `SecurityError` variants, are documented.
@@ -231,9 +239,11 @@ and what a type cannot say is a `Result`. Every call below changes.
   KDF (hmac 0.12 and sha2 0.10 do not clear it), the SUCI ECIES KDF output,
   hash state and AES-CTR keystream, the HRES* hash state, and the 128-EEA2
   keystream blocks, which the README said were wiped. The KDFs, HRES* and
-  SUCI now run SHA-256 over sha2's compression function with state that is
-  wiped on drop, and the keystream blocks are wiped; `hmac` is no longer a
-  direct dependency.
+  SUCI now use the SHA-256 of sha2 0.11 with its `zeroize` feature, which
+  wipes the chaining value and the block buffer when the hasher is dropped,
+  and the keystream blocks are wiped. HMAC is written in this crate over
+  that hasher and wipes the block of the key and the inner hash, which
+  hmac 0.13 leaves on the stack.
 - The 0.2.0 notes credited this crate with a NAS context and
   `protect_re_establishment`, which oxirush-nas provides; the README said
   NAS-context keys were wiped here. Both now describe this crate.

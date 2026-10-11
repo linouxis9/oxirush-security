@@ -37,7 +37,7 @@ use crate::common::input::{Bearer, Direction, IntegrityAlgorithm, octets_of};
 use crate::snow3g::Snow3G;
 use crate::zuc::Zuc;
 use aes::Aes128;
-use aes::cipher::{BlockEncrypt, KeyInit};
+use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use zeroize::{Zeroize, Zeroizing};
 
 /// Compute the 32-bit MAC of a message of whole octets with `algorithm`.

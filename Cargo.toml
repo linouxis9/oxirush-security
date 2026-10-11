@@ -13,26 +13,25 @@ readme = "README.md"
 exclude = [".github/", ".gitignore"]
 
 [dependencies]
-# KDF: HMAC-SHA-256 over the SHA-256 compression function, with wiped state
-sha2 = { version = "0.10", features = ["compress"] }
+# KDF and SUCI: SHA-256 whose state is wiped on drop
+sha2 = { version = "0.11", features = ["zeroize"] }
 
-# NIA2 (AES-CMAC) + NEA2 (AES-CTR)
-aes = { version = "0.8", features = ["zeroize"] }
-cipher = { version = "0.4", features = ["zeroize"] }
+# NIA2 (AES-CMAC) + NEA2 (AES-CTR), with key schedules wiped on drop
+aes = { version = "0.9.2", features = ["zeroize"] }
 
 # SUCI concealment (TS 33.501 Annex C)
-x25519-dalek = { version = "2", features = ["getrandom", "static_secrets"] }
-p256 = { version = "0.13", default-features = false, features = ["ecdh"] }
-rand_core = { version = "0.6.4", features = ["getrandom"] }
+x25519-dalek = { version = "3", features = ["static_secrets"] }
+p256 = { version = "0.14", default-features = false, features = ["ecdh", "getrandom"] }
+getrandom = "0.4"
 
 # Error handling
 thiserror = "2"
 
 # Key material zeroization
-zeroize = { version = "1.5", features = ["derive"] }
+zeroize = { version = "1.9", features = ["derive"] }
 
 # Constant-time comparison for SUCI MAC and constant_time_eq
-subtle = "2.4.1"
+subtle = "2.6"
 
 # Hex encoding for SUCI scheme output
 hex = "0.4"

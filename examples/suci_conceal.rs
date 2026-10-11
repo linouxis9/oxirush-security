@@ -42,7 +42,9 @@ fn main() {
     println!("\n--- Profile A (X25519 ECIES) ---");
 
     // Generate a home network key pair (normally provisioned by the operator)
-    let home_priv_key = StaticSecret::random_from_rng(rand_core::OsRng);
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed).expect("the system random number generator");
+    let home_priv_key = StaticSecret::from(seed);
     let home_pub_key = PublicKey::from(&home_priv_key);
     println!(
         "Home network public key:  {}",

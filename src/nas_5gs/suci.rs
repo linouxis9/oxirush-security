@@ -24,7 +24,7 @@
 
 use crate::error::SecurityError;
 use aes::Aes128;
-use aes::cipher::{BlockEncrypt, KeyInit};
+use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use subtle::ConstantTimeEq;
 use unicode_normalization::UnicodeNormalization;
@@ -133,6 +133,10 @@ pub enum NaiProtectionScheme<'a> {
 
 fn invalid_nai() -> SecurityError {
     SecurityError::InvalidParameter("malformed SUCI NAI")
+}
+
+fn random_source_failed() -> SecurityError {
+    SecurityError::Ecies("the system random number generator failed".into())
 }
 
 fn valid_routing_indicator(value: &str) -> bool {
@@ -574,7 +578,7 @@ fn ansi_x963_kdf(
     enc_key_len: usize,
     mac_key_len: usize,
 ) -> Zeroizing<Vec<u8>> {
-    use crate::common::sha256::Sha256;
+    use crate::common::sha256::sha256;
     let total = enc_key_len + mac_key_len;
     let hash_len = 32usize;
     let rounds = total.div_ceil(hash_len);
@@ -582,13 +586,8 @@ fn ansi_x963_kdf(
     let mut kdf_key = Zeroizing::new(Vec::with_capacity(rounds * hash_len));
     for i in 0u32..rounds as u32 {
         let counter = (i + 1).to_be_bytes();
-        let mut h = Sha256::new();
-        h.update(shared_key);
-        h.update(&counter);
-        h.update(public_key);
-        let mut digest = h.finalize();
-        kdf_key.extend_from_slice(&digest);
-        digest.zeroize();
+        let digest = sha256(&[shared_key, &counter, public_key]);
+        kdf_key.extend_from_slice(digest.as_ref());
     }
     kdf_key
 }
@@ -601,7 +600,7 @@ fn aes128_ctr(key: &[u8; 16], icb: &[u8; 16], data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len());
     let mut counter = Zeroizing::new(*icb);
     for chunk in data.chunks(16) {
-        let mut block = aes::Block::clone_from_slice(counter.as_ref());
+        let mut block = aes::Block::from(*counter);
         aes.encrypt_block(&mut block);
         for (d, k) in chunk.iter().zip(block.iter()) {
             out.push(d ^ k);
@@ -650,8 +649,7 @@ pub fn suci_scheme_output_a(
     msin_bcd: &[u8],
     hn_pub_key: &[u8; 32],
 ) -> Result<Vec<u8>, SecurityError> {
-    use rand_core::OsRng;
-    use x25519_dalek::{EphemeralSecret, PublicKey};
+    use x25519_dalek::{PublicKey, StaticSecret};
 
     if msin_bcd.is_empty() {
         return Err(SecurityError::Ecies(
@@ -659,7 +657,12 @@ pub fn suci_scheme_output_a(
         ));
     }
     let hn_pub = PublicKey::from(*hn_pub_key);
-    let eph_secret = EphemeralSecret::random_from_rng(OsRng);
+    // A fresh secret for this one concealment. It is drawn here, and not
+    // by `EphemeralSecret::random`, so that a failure of the system's
+    // random number generator is an error and not a panic.
+    let mut seed = Zeroizing::new([0u8; 32]);
+    getrandom::fill(seed.as_mut()).map_err(|_| random_source_failed())?;
+    let eph_secret = StaticSecret::from(*seed);
     let eph_pub = PublicKey::from(&eph_secret);
     let shared = eph_secret.diffie_hellman(&hn_pub);
     if !shared.was_contributory() {
@@ -704,8 +707,8 @@ pub fn suci_scheme_output_a(
 pub fn suci_scheme_output_b(msin_bcd: &[u8], hn_pub_key: &[u8]) -> Result<Vec<u8>, SecurityError> {
     use p256::PublicKey;
     use p256::ecdh::EphemeralSecret;
-    use p256::elliptic_curve::sec1::ToEncodedPoint;
-    use rand_core::OsRng;
+    use p256::elliptic_curve::Generate;
+    use p256::elliptic_curve::sec1::ToSec1Point;
 
     if msin_bcd.is_empty() {
         return Err(SecurityError::Ecies(
@@ -724,11 +727,11 @@ pub fn suci_scheme_output_b(msin_bcd: &[u8], hn_pub_key: &[u8]) -> Result<Vec<u8
     }
     let hn_pub = PublicKey::from_sec1_bytes(hn_pub_key)
         .map_err(|e| SecurityError::Ecies(format!("invalid P-256 public key: {e}")))?;
-    let eph_secret = EphemeralSecret::random(&mut OsRng);
+    let eph_secret = EphemeralSecret::try_generate().map_err(|_| random_source_failed())?;
     let eph_pub = eph_secret.public_key();
 
     // Compressed ephemeral public key (33 bytes)
-    let eph_pub_enc = eph_pub.to_encoded_point(true);
+    let eph_pub_enc = eph_pub.to_sec1_point(true);
     let eph_pub_bytes = eph_pub_enc.as_bytes();
 
     let shared = eph_secret.diffie_hellman(&hn_pub);
@@ -1196,7 +1199,7 @@ mod tests {
     fn aes_ctr_counter_carries_over_the_whole_block() {
         let key = [0x2b; 16];
         let block = |counter: [u8; 16]| {
-            let mut block = aes::Block::clone_from_slice(&counter);
+            let mut block = aes::Block::from(counter);
             Aes128::new(&key.into()).encrypt_block(&mut block);
             block
         };
@@ -1707,7 +1710,7 @@ mod tests {
 
     #[test]
     fn annex_c4_profile_b_intermediate_values() {
-        use p256::elliptic_curve::sec1::ToEncodedPoint;
+        use p256::elliptic_curve::sec1::ToSec1Point;
         use p256::{PublicKey, SecretKey};
 
         let home_network_public_key =
@@ -1752,7 +1755,7 @@ mod tests {
                 SecretKey::from_slice(&hex::decode(ephemeral_private_key).unwrap()).unwrap();
             // Profile B applies point compression to the ephemeral public
             // key, and that octet string is SharedInfo1 of the KDF.
-            let public = secret.public_key().to_encoded_point(true);
+            let public = secret.public_key().to_sec1_point(true);
             assert_eq!(
                 hex::encode(public.as_bytes()),
                 ephemeral_public_key.to_lowercase()
