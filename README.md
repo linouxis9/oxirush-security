@@ -536,6 +536,6 @@ licence of the project. Sign off every commit with `git commit -s` to say so.
 
 ## License
 
-Copyright 2025 - 2026 Valentin D'Emmanuele
+Copyright 2025-2026 Valentin D'Emmanuele
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
