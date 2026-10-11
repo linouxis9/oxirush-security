@@ -37,19 +37,28 @@ nas_cipher(&k_nas_enc, count, access, uplink, &mut message, 2);
 assert_eq!(message, [0x7e, 0x00, 0x43]);
 ```
 
+The block needs the `hex` crate beside this one. Like every Rust block of
+this page it runs as a documentation test: it asserts what it computes and
+prints nothing.
+
 [Installation](#installation) ·
 [What it implements](#what-it-implements) ·
 [Examples by task](#examples-by-task) ·
 [Inputs that panic](#inputs-that-panic) ·
 [Key material and timing](#key-material-and-timing) ·
 [Test evidence](#test-evidence) ·
-[What it does not do](#what-it-does-not-do)
+[What it does not do](#what-it-does-not-do) ·
+[Modules](#modules-and-example-programs) ·
+[Specifications](#specifications)
 
 ## Installation
 
 ```toml
 [dependencies]
 oxirush-security = "0.3"
+
+# For the examples of this page:
+hex = "0.4"
 ```
 
 The crate has no Cargo features. The minimum supported Rust version is 1.88.
@@ -74,7 +83,7 @@ The last column names the kind of reference value that the tests have, which
 | SUCI | IMSI and NAI identities with the null scheme, Profile A (X25519 ECIES) and Profile B (P-256 ECIES), and proprietary outputs kept as they are | TS 33.501 Annex C | 3GPP |
 | 5G-GUTI, 5G-S-TMSI | `build_guti_bytes`, `parse_guti_tmsi`, `parse_s_tmsi` | TS 24.501 §9.11.3.4 | calculated |
 | PLMN and TBCD | `plmn_to_bytes`, `plmn_from_bytes`, `tbcd_encode`, `tbcd_decode` | TS 24.501 §9.11.3.4, TS 29.002 | calculated |
-| Algorithm selection | `select_integrity_algo`, `select_ciphering_algo` with NIA2 > NIA1 > NIA3 (never NIA0) and NEA2 > NEA1 > NEA3 > NEA0, the compatibility defaults; their `*_with_preference` forms with an operator's order | TS 33.401 §7.2.4.3.1, TS 33.501 §6.7.1 | calculated |
+| Algorithm selection | `select_integrity_algo`, `select_ciphering_algo` with NIA2 > NIA1 > NIA3 (never NIA0) and NEA2 > NEA1 > NEA3 > NEA0, the default order; their `*_with_preference` forms with an operator's order | TS 33.401 §7.2.4.3.1, TS 33.501 §6.7.1 | calculated |
 
 EPS and 5GS share the 128-bit EEA/EIA algorithm cores, and the whole-octet
 NAS wrappers delegate to them. The `*_bits` functions take a length in bits:
@@ -98,7 +107,7 @@ let res = hex::decode("a54211d5e3ba50bf").unwrap();
 let sqn_xor_ak = [0x55, 0xf3, 0x28, 0xb4, 0x35, 0x77];
 let sn_name = b"5G:mnc093.mcc208.3gppnetwork.org";
 
-// Home network: KAUSF and XRES*. Serving network: HXRES*, KSEAF and KAMF
+// UDM: KAUSF and XRES*. AUSF: HXRES* and KSEAF. SEAF: KAMF
 let k_ausf = derive_kausf(&ck, &ik, sn_name, &sqn_xor_ak);
 let xres_star = compute_xres_star(&ck, &ik, sn_name, &rand, &res);
 let hxres_star = compute_hres_star(&rand, xres_star.as_slice().try_into().unwrap());
@@ -270,18 +279,25 @@ parsing return a `SecurityError` or `None` instead.
 | Input | Accepted |
 |-------|----------|
 | Algorithm identifier of a MAC or a cipher | 0 to 3 |
-| NAS COUNT | up to 2^24 - 1; `derive_kgnb` and `nas_eps::derive_kenb` also take the all-ones value of a handover |
+| NAS COUNT | up to 2^24 - 1 in `nas_5gs` and `nas_eps`, and any 32-bit value in the raw cores; `derive_kgnb` and `nas_eps::derive_kenb` also take the all-ones value of a handover |
 | BEARER | 1 or 2 in `nas_5gs`, and up to 31 in the raw cores |
 | DIRECTION | 0 or 1 |
 | Length in bits | no more than the buffer has |
 | PCI | up to 503 for an eNB or an ng-eNB, and 1007 for a gNB |
+| MCC, MNC and MSIN | decimal digits: three for an MCC, two or three for an MNC |
+| TBCD string | decimal digits, `*`, `#`, `a`, `b` and `c` |
+| AMF set ID and AMF pointer | 10 bits and 6 bits |
+
+The raw cores are the functions of `common`. The crate root re-exports them:
+`oxirush_security::nas_mac` and `oxirush_security::nas_cipher` do not check
+the ranges of 5GS, which the functions of `nas_5gs` with the same names do.
 
 ## Key material and timing
 
 | Subject | What the crate does |
 |---------|---------------------|
 | Wiped after use | Explicit buffers and owned state: CK‖IK buffers, key-bearing KDF input buffers, SHA-256 and HMAC-SHA-256 state owned by this crate, SUCI ECIES KDF buffers, cipher state, and keystream buffers. |
-| Not wiped | This does not cover every temporary copy or compiler-generated spill. Returned keys and deconcealed identities belong to the caller, who clears them when their lifetime ends. |
+| Not wiped | Temporary copies and compiler-generated spills, which the wiping above does not all cover. Returned keys and deconcealed identities belong to the caller, who clears them when their lifetime ends. |
 | Secret-dependent indexing and branches | In the source, the SNOW 3G and ZUC S-boxes, the MULα/DIVα tables, and the 128-EIA1 and AES-CMAC field arithmetic neither index memory nor branch on secret values. AES comes from the `aes` crate. |
 | Comparison | `constant_time_eq` compares RES\* with XRES\*, or HRES\* with HXRES\*, through `subtle`: its time depends on the lengths and not on where the values differ. |
 | Not measured | Compiled-code timing has not been audited across supported targets. |
@@ -307,7 +323,7 @@ values, which do not carry the same weight.
 | NAS messages | It protects octets. It does not encode a NAS message or its security header. |
 | Re-establishment MAC | The 28-bit reading of the target Cell-ID is this crate's: no test data or other implementation exists to check it against. |
 
-## Modules and examples
+## Modules and example programs
 
 | Module | Contents |
 |--------|----------|
