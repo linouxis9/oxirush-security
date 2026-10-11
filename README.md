@@ -430,9 +430,10 @@ the others of `common`) take what the algorithm takes.
 |---------|---------------------|
 | Wiped after use | Explicit buffers and owned state: CK‖IK buffers, key-bearing KDF input buffers, the SHA-256 state and the key block and inner hash of HMAC-SHA-256, SUCI ECIES KDF buffers, cipher state including the AES key schedule, and keystream buffers. The hasher and the AES cipher are those of the `sha2` and `aes` crates, built with their `zeroize` features: the crate does not compile without them. |
 | Not wiped | Temporary copies and compiler-generated spills, which the wiping above does not all cover. Returned keys and deconcealed identities belong to the caller, who clears them when their lifetime ends. |
-| Secret-dependent indexing and branches | In the source, the SNOW 3G and ZUC S-boxes, the MULα/DIVα tables, and the 128-EIA1 and AES-CMAC field arithmetic neither index memory nor branch on secret values. AES comes from the `aes` crate. |
+| Secret-dependent indexing and branches | In the source, SNOW 3G, ZUC, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor branch on a secret value. S1 of SNOW 3G and the S-box S1 of ZUC are computed from one round of AES, which the `aes` crate runs on the AES instructions of the processor or, without them, as a bitsliced routine. The S-box SQ of SNOW 3G is read whole and narrowed down through masks. S0 of ZUC is three four-bit S-boxes, each a word that is shifted. MULα, DIVα and the field multiplications of the two MACs are carry-less products, made with shifts and integer multiplications. A mask that a secret bit gives goes through `core::hint::black_box`. |
+| Checked in the compiled code | Without `black_box` the compiler turned the masked selection of SQ into conditional jumps on bits of the state. In the release build for x86-64 with Rust 1.98.1, the functions of SNOW 3G, ZUC, 128-EIA1 and 128-EIA3 were read in the disassembly: their conditional jumps test a length, a loop counter or whether the generator has started, and none a secret. Shifts by a secret amount and multiplications of secret words remain. They take a time that does not depend on their operands on the x86-64 and AArch64 processors of today, and may not on a small processor whose multiplier stops early. |
 | Comparison | `constant_time_eq` compares RES\* with XRES\*, or HRES\* with HXRES\*, through `subtle`: its time depends on the lengths and not on where the values differ. |
-| Not measured | Compiled-code timing has not been audited across supported targets. |
+| Not measured | No timing was measured, and no other target or compiler was read. |
 
 ## Test evidence
 
@@ -494,7 +495,7 @@ deconcealment 44 µs and 149 µs.
 
 | Subject | Limit |
 |---------|-------|
-| Audit | The crate has not had a security audit, and its timing has been read in the source, not measured. |
+| Audit | The crate has not had a security audit. Its timing has been read in the source and in one compiled build, not measured. |
 | State | It stores no keys, and it keeps neither the NAS COUNT nor replay state: those belong to the caller. |
 | AKA | It has no MILENAGE or TUAK: CK, IK, RES and SQN xor AK come from the caller. |
 | NAS messages | It protects octets. It does not encode a NAS message or its security header. |

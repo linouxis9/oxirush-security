@@ -19,35 +19,19 @@
 //!
 //! A word-oriented stream cipher producing 32-bit keystream words.
 //! Uses a 16-stage LFSR over GF(2^32) and a 3-register FSM with two S-boxes.
-//! Table lookups visit every entry to avoid secret-dependent indexing in
-//! the source. Compiled-code timing requires target-specific assessment.
+//!
+//! No memory access and no branch depends on the key or on the state. S1
+//! is one round of AES on a column, which the `aes` crate computes with the
+//! AES instructions of the processor or, without them, with a bitsliced
+//! routine. The S-box SQ of S2 is read whole and narrowed down through
+//! masks. MULα and DIVα multiply by constants of GF(2^8), bit by bit of the
+//! constants. Compiled-code timing requires target-specific assessment.
 
-use crate::common::ct::lookup;
-
-// ── AES S-box (SR) used by S1 ──────────────────────────────────────────────────
-
-const SR: [u8; 256] = [
-    0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
-    0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
-    0xB7, 0xFD, 0x93, 0x26, 0x36, 0x3F, 0xF7, 0xCC, 0x34, 0xA5, 0xE5, 0xF1, 0x71, 0xD8, 0x31, 0x15,
-    0x04, 0xC7, 0x23, 0xC3, 0x18, 0x96, 0x05, 0x9A, 0x07, 0x12, 0x80, 0xE2, 0xEB, 0x27, 0xB2, 0x75,
-    0x09, 0x83, 0x2C, 0x1A, 0x1B, 0x6E, 0x5A, 0xA0, 0x52, 0x3B, 0xD6, 0xB3, 0x29, 0xE3, 0x2F, 0x84,
-    0x53, 0xD1, 0x00, 0xED, 0x20, 0xFC, 0xB1, 0x5B, 0x6A, 0xCB, 0xBE, 0x39, 0x4A, 0x4C, 0x58, 0xCF,
-    0xD0, 0xEF, 0xAA, 0xFB, 0x43, 0x4D, 0x33, 0x85, 0x45, 0xF9, 0x02, 0x7F, 0x50, 0x3C, 0x9F, 0xA8,
-    0x51, 0xA3, 0x40, 0x8F, 0x92, 0x9D, 0x38, 0xF5, 0xBC, 0xB6, 0xDA, 0x21, 0x10, 0xFF, 0xF3, 0xD2,
-    0xCD, 0x0C, 0x13, 0xEC, 0x5F, 0x97, 0x44, 0x17, 0xC4, 0xA7, 0x7E, 0x3D, 0x64, 0x5D, 0x19, 0x73,
-    0x60, 0x81, 0x4F, 0xDC, 0x22, 0x2A, 0x90, 0x88, 0x46, 0xEE, 0xB8, 0x14, 0xDE, 0x5E, 0x0B, 0xDB,
-    0xE0, 0x32, 0x3A, 0x0A, 0x49, 0x06, 0x24, 0x5C, 0xC2, 0xD3, 0xAC, 0x62, 0x91, 0x95, 0xE4, 0x79,
-    0xE7, 0xC8, 0x37, 0x6D, 0x8D, 0xD5, 0x4E, 0xA9, 0x6C, 0x56, 0xF4, 0xEA, 0x65, 0x7A, 0xAE, 0x08,
-    0xBA, 0x78, 0x25, 0x2E, 0x1C, 0xA6, 0xB4, 0xC6, 0xE8, 0xDD, 0x74, 0x1F, 0x4B, 0xBD, 0x8B, 0x8A,
-    0x70, 0x3E, 0xB5, 0x66, 0x48, 0x03, 0xF6, 0x0E, 0x61, 0x35, 0x57, 0xB9, 0x86, 0xC1, 0x1D, 0x9E,
-    0xE1, 0xF8, 0x98, 0x11, 0x69, 0xD9, 0x8E, 0x94, 0x9B, 0x1E, 0x87, 0xE9, 0xCE, 0x55, 0x28, 0xDF,
-    0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16,
-];
+use crate::common::ct::{Table, block_to_columns, columns_to_block};
 
 // ── SQ S-box used by S2 (TS 35.216) ───────────────────────────────────────────
 
-const SQ: [u8; 256] = [
+const SQ_OCTETS: [u8; 256] = [
     0x25, 0x24, 0x73, 0x67, 0xD7, 0xAE, 0x5C, 0x30, 0xA4, 0xEE, 0x6E, 0xCB, 0x7D, 0xB5, 0x82, 0xDB,
     0xE4, 0x8E, 0x48, 0x49, 0x4F, 0x5D, 0x6A, 0x78, 0x70, 0x88, 0xE8, 0x5F, 0x5E, 0x84, 0x65, 0xE2,
     0xD8, 0xE9, 0xCC, 0xED, 0x40, 0x2F, 0x11, 0x28, 0x57, 0xD2, 0xAC, 0xE3, 0x4A, 0x15, 0x1B, 0xB9,
@@ -86,23 +70,10 @@ const fn mulxpow(v: u8, i: u32, c: u8) -> u8 {
     r
 }
 
-// ── LFSR feedback helpers ──────────────────────────────────────────────────────
+/// SQ, laid out for a read that does not depend on the index.
+static SQ: Table = Table::new(&SQ_OCTETS);
 
-/// Tabulate MULα (`divide` false) or DIVα over all 256 inputs at compile
-/// time.
-const fn alpha_table(divide: bool) -> [u32; 256] {
-    let mut table = [0; 256];
-    let mut c = 0;
-    while c < 256 {
-        table[c] = if divide {
-            div_alpha_value(c as u8)
-        } else {
-            mul_alpha_value(c as u8)
-        };
-        c += 1;
-    }
-    table
-}
+// ── LFSR feedback helpers ──────────────────────────────────────────────────────
 
 /// MULα as defined with MULxPOW (reduction polynomial 0xa9 for the outer
 /// field: x^8 + x^7 + x^5 + x^3 + 1).
@@ -121,53 +92,78 @@ const fn div_alpha_value(c: u8) -> u32 {
         | (mulxpow(c, 64, 0xa9) as u32)
 }
 
-const MUL_ALPHA: [u32; 256] = alpha_table(false);
-const DIV_ALPHA: [u32; 256] = alpha_table(true);
+/// For each bit of the eight constants that MULα and DIVα multiply by, the
+/// octets of the two words whose constant has the bit: MULα in the low
+/// word, DIVα in the high one.
+///
+/// MULα(c) is c times four constants of GF(2^8), one in each octet, and so
+/// is DIVα(c). The constants are the octets of MULα(1) and DIVα(1).
+const ALPHA_BITS: [u64; 8] = {
+    let constants = (mul_alpha_value(1) as u64) | ((div_alpha_value(1) as u64) << 32);
+    let mut bits = [0; 8];
+    let mut bit = 0;
+    while bit < 8 {
+        bits[bit] = ((constants >> bit) & 0x0101_0101_0101_0101) * 0xff;
+        bit += 1;
+    }
+    bits
+};
 
-// The tables are indexed by LFSR state, so they are read in constant time.
-
-/// MULα: multiply a byte by α in the LFSR feedback polynomial.
+/// MULα of one octet and DIVα of another (TS 35.216): each multiplies its
+/// octet by α, or by its inverse, in the feedback polynomial of the LFSR.
+///
+/// The eight products go together, each in an octet of a word: the octets
+/// start as the multiplicand, are multiplied by x at each step, and are
+/// added where the constant has the bit of the step. Nothing is selected by
+/// a bit of the multiplicands.
 #[inline]
-fn mul_alpha(c: u8) -> u32 {
-    lookup(&MUL_ALPHA, c)
-}
-
-/// DIVα: multiply a byte by α^(-1) in the LFSR feedback polynomial.
-#[inline]
-fn div_alpha(c: u8) -> u32 {
-    lookup(&DIV_ALPHA, c)
+fn mul_div_alpha(mul: u8, div: u8) -> (u32, u32) {
+    let mut octets = (u64::from(mul) * 0x0101_0101) | ((u64::from(div) * 0x0101_0101) << 32);
+    let mut products = 0;
+    for bit in ALPHA_BITS {
+        products ^= octets & bit;
+        // Times x: the low seven bits of each octet move up, and x^8 is
+        // x^7 + x^5 + x^3 + 1, which the top bit multiplies
+        octets = ((octets & 0x7f7f_7f7f_7f7f_7f7f) << 1)
+            ^ (((octets >> 7) & 0x0101_0101_0101_0101) * 0xa9);
+    }
+    (products as u32, (products >> 32) as u32)
 }
 
 // ── 32-bit S-boxes ─────────────────────────────────────────────────────────────
 
-/// S1: AES SubBytes + MixColumns (reduction 0x1B)
-fn s1(w: u32) -> u32 {
-    let [b0, b1, b2, b3] = w.to_be_bytes();
-    let r0 = lookup(&SR, b0);
-    let r1 = lookup(&SR, b1);
-    let r2 = lookup(&SR, b2);
-    let r3 = lookup(&SR, b3);
-    // SNOW 3G MixColumns matrix: [2,1,1,3; 3,2,1,1; 1,3,2,1; 1,1,3,2]
-    let o0 = mulx(r0, 0x1B) ^ r1 ^ r2 ^ (mulx(r3, 0x1B) ^ r3);
-    let o1 = (mulx(r0, 0x1B) ^ r0) ^ mulx(r1, 0x1B) ^ r2 ^ r3;
-    let o2 = r0 ^ (mulx(r1, 0x1B) ^ r1) ^ mulx(r2, 0x1B) ^ r3;
-    let o3 = r0 ^ r1 ^ (mulx(r2, 0x1B) ^ r2) ^ mulx(r3, 0x1B);
-    u32::from_be_bytes([o0, o1, o2, o3])
+/// S1: the Rijndael S-box SR on each octet, then MixColumn over the field
+/// of AES (TS 35.216).
+///
+/// That is the round of AES on one column, without a key. With
+/// `w = w0 || w1 || w2 || w3`, SNOW 3G's matrix is that of AES on the
+/// column `(w3, w2, w1, w0)`, with the result in that order too. ShiftRows
+/// gathers in the first column the octets 0, 5, 10 and 15 of the state of
+/// AES: octet `i` of column `i`, which is octet `i` of `w` counted from the
+/// low one. `block` is that state.
+#[inline]
+fn s1(w: u32, block: &mut [u8; 16]) -> u32 {
+    *block = columns_to_block(core::array::from_fn(|column| w & (0xff << (8 * column))));
+    let state: &mut aes::Block = block.into();
+    aes::hazmat::cipher_round(state, &aes::Block::default());
+    block_to_columns(block)[0]
 }
 
-/// S2: SQ SubBytes + MixColumns (reduction 0x69)
+/// S2: the S-box SQ on each octet, then MixColumn over GF(2^8) with
+/// x^8 + x^6 + x^5 + x^3 + 1 (TS 35.216).
+///
+/// The four octets stay in one word. With r the word after SQ and 2r each
+/// of its octets multiplied by x, octet i of the result is
+/// 2 r[i] + 3 r[i - 1] + r[i + 1] + r[i + 2], the indices modulo four from
+/// the most significant octet: SNOW 3G's matrix [2,1,1,3; 3,2,1,1; 1,3,2,1;
+/// 1,1,3,2].
+#[inline]
 fn s2(w: u32) -> u32 {
-    let [b0, b1, b2, b3] = w.to_be_bytes();
-    let r0 = lookup(&SQ, b0);
-    let r1 = lookup(&SQ, b1);
-    let r2 = lookup(&SQ, b2);
-    let r3 = lookup(&SQ, b3);
-    // Same matrix as S1, different field (reduction 0x69)
-    let o0 = mulx(r0, 0x69) ^ r1 ^ r2 ^ (mulx(r3, 0x69) ^ r3);
-    let o1 = (mulx(r0, 0x69) ^ r0) ^ mulx(r1, 0x69) ^ r2 ^ r3;
-    let o2 = r0 ^ (mulx(r1, 0x69) ^ r1) ^ mulx(r2, 0x69) ^ r3;
-    let o3 = r0 ^ r1 ^ (mulx(r2, 0x69) ^ r2) ^ mulx(r3, 0x69);
-    u32::from_be_bytes([o0, o1, o2, o3])
+    let r = u32::from_be_bytes(SQ.get4(w.to_be_bytes()));
+    // Each octet times x: the low seven bits move up, and x^8 is
+    // x^6 + x^5 + x^3 + 1, which the top bit of the octet multiplies
+    let doubled = ((r & 0x7f7f_7f7f) << 1) ^ (((r >> 7) & 0x0101_0101) * 0x69);
+    doubled ^ (doubled ^ r).rotate_right(8) ^ r.rotate_left(8) ^ r.rotate_left(16)
 }
 
 // ── SNOW 3G state ──────────────────────────────────────────────────────────────
@@ -175,20 +171,29 @@ fn s2(w: u32) -> u32 {
 /// SNOW 3G keystream generator: the LFSR and the FSM registers, initialized
 /// with a key and an IV. The state is wiped on drop.
 pub struct Snow3G {
+    /// The sixteen stages, in a ring: stage `i` is at `head + i` modulo 16.
     lfsr: [u32; 16],
+    /// Where stage 0 is. A clock writes the new stage 15 over it and moves
+    /// it by one, in place of moving fifteen stages.
+    head: usize,
     r1: u32,
     r2: u32,
     r3: u32,
     started: bool,
+    /// The AES state that S1 works in. It is part of the generator so that
+    /// it is wiped with it, and not at every clock.
+    block: [u8; 16],
 }
 
 impl zeroize::Zeroize for Snow3G {
     fn zeroize(&mut self) {
         self.lfsr.zeroize();
+        self.head.zeroize();
         self.r1.zeroize();
         self.r2.zeroize();
         self.r3.zeroize();
         self.started.zeroize();
+        self.block.zeroize();
     }
 }
 
@@ -208,10 +213,12 @@ impl Snow3G {
     pub fn new(mut k: [u32; 4], iv: [u32; 4]) -> Self {
         let mut s = Self {
             lfsr: [0u32; 16],
+            head: 0,
             r1: 0,
             r2: 0,
             r3: 0,
             started: false,
+            block: [0; 16],
         };
 
         // Load LFSR (matching free5gc snow3g.go newSnow3g)
@@ -278,7 +285,7 @@ impl Snow3G {
             self.clock_lfsr_keystream();
             self.started = true;
         }
-        let word = self.clock_fsm() ^ self.lfsr[0];
+        let word = self.clock_fsm() ^ self.stage(0);
         self.clock_lfsr_keystream();
         word
     }
@@ -290,49 +297,149 @@ impl Snow3G {
         }
     }
 
+    /// Stage `index` of the LFSR, s0 to s15.
+    #[inline]
+    fn stage(&self, index: usize) -> u32 {
+        self.lfsr[(self.head + index) & 15]
+    }
+
+    /// Shift the LFSR by one stage: `v` is the new s15.
+    #[inline]
+    fn shift(&mut self, v: u32) {
+        self.lfsr[self.head] = v;
+        self.head = (self.head + 1) & 15;
+    }
+
+    /// The feedback of the LFSR without the FSM word:
+    /// α s0 + s2 + α^-1 s11.
+    #[inline]
+    fn feedback(&self) -> u32 {
+        let (s0, s11) = (self.stage(0), self.stage(11));
+        let (mul_alpha, div_alpha) = mul_div_alpha((s0 >> 24) as u8, s11 as u8);
+        (s0 << 8) ^ mul_alpha ^ self.stage(2) ^ (s11 >> 8) ^ div_alpha
+    }
+
     /// Clock the FSM, return F.
+    #[inline]
     fn clock_fsm(&mut self) -> u32 {
-        let f = (self.lfsr[15].wrapping_add(self.r1)) ^ self.r2;
-        let r = self.r2.wrapping_add(self.r3 ^ self.lfsr[5]);
+        let f = (self.stage(15).wrapping_add(self.r1)) ^ self.r2;
+        let r = self.r2.wrapping_add(self.r3 ^ self.stage(5));
         self.r3 = s2(self.r2);
-        self.r2 = s1(self.r1);
+        self.r2 = s1(self.r1, &mut self.block);
         self.r1 = r;
         f
     }
 
     /// LFSR clock during initialization (feedback includes FSM output F).
+    #[inline]
     fn clock_lfsr_init(&mut self, f: u32) {
-        let v = (self.lfsr[0] << 8)
-            ^ mul_alpha((self.lfsr[0] >> 24) as u8)
-            ^ self.lfsr[2]
-            ^ (self.lfsr[11] >> 8)
-            ^ div_alpha(self.lfsr[11] as u8)
-            ^ f;
-
-        for i in 0..15 {
-            self.lfsr[i] = self.lfsr[i + 1];
-        }
-        self.lfsr[15] = v;
+        let v = self.feedback() ^ f;
+        self.shift(v);
     }
 
     /// LFSR clock during keystream generation (no FSM feedback).
+    #[inline]
     fn clock_lfsr_keystream(&mut self) {
-        let v = (self.lfsr[0] << 8)
-            ^ mul_alpha((self.lfsr[0] >> 24) as u8)
-            ^ self.lfsr[2]
-            ^ (self.lfsr[11] >> 8)
-            ^ div_alpha(self.lfsr[11] as u8);
-
-        for i in 0..15 {
-            self.lfsr[i] = self.lfsr[i + 1];
-        }
-        self.lfsr[15] = v;
+        let v = self.feedback();
+        self.shift(v);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── AES S-box (SR) used by S1 ──────────────────────────────────────────────────
+
+    const SR: [u8; 256] = [
+        0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB,
+        0x76, 0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4,
+        0x72, 0xC0, 0xB7, 0xFD, 0x93, 0x26, 0x36, 0x3F, 0xF7, 0xCC, 0x34, 0xA5, 0xE5, 0xF1, 0x71,
+        0xD8, 0x31, 0x15, 0x04, 0xC7, 0x23, 0xC3, 0x18, 0x96, 0x05, 0x9A, 0x07, 0x12, 0x80, 0xE2,
+        0xEB, 0x27, 0xB2, 0x75, 0x09, 0x83, 0x2C, 0x1A, 0x1B, 0x6E, 0x5A, 0xA0, 0x52, 0x3B, 0xD6,
+        0xB3, 0x29, 0xE3, 0x2F, 0x84, 0x53, 0xD1, 0x00, 0xED, 0x20, 0xFC, 0xB1, 0x5B, 0x6A, 0xCB,
+        0xBE, 0x39, 0x4A, 0x4C, 0x58, 0xCF, 0xD0, 0xEF, 0xAA, 0xFB, 0x43, 0x4D, 0x33, 0x85, 0x45,
+        0xF9, 0x02, 0x7F, 0x50, 0x3C, 0x9F, 0xA8, 0x51, 0xA3, 0x40, 0x8F, 0x92, 0x9D, 0x38, 0xF5,
+        0xBC, 0xB6, 0xDA, 0x21, 0x10, 0xFF, 0xF3, 0xD2, 0xCD, 0x0C, 0x13, 0xEC, 0x5F, 0x97, 0x44,
+        0x17, 0xC4, 0xA7, 0x7E, 0x3D, 0x64, 0x5D, 0x19, 0x73, 0x60, 0x81, 0x4F, 0xDC, 0x22, 0x2A,
+        0x90, 0x88, 0x46, 0xEE, 0xB8, 0x14, 0xDE, 0x5E, 0x0B, 0xDB, 0xE0, 0x32, 0x3A, 0x0A, 0x49,
+        0x06, 0x24, 0x5C, 0xC2, 0xD3, 0xAC, 0x62, 0x91, 0x95, 0xE4, 0x79, 0xE7, 0xC8, 0x37, 0x6D,
+        0x8D, 0xD5, 0x4E, 0xA9, 0x6C, 0x56, 0xF4, 0xEA, 0x65, 0x7A, 0xAE, 0x08, 0xBA, 0x78, 0x25,
+        0x2E, 0x1C, 0xA6, 0xB4, 0xC6, 0xE8, 0xDD, 0x74, 0x1F, 0x4B, 0xBD, 0x8B, 0x8A, 0x70, 0x3E,
+        0xB5, 0x66, 0x48, 0x03, 0xF6, 0x0E, 0x61, 0x35, 0x57, 0xB9, 0x86, 0xC1, 0x1D, 0x9E, 0xE1,
+        0xF8, 0x98, 0x11, 0x69, 0xD9, 0x8E, 0x94, 0x9B, 0x1E, 0x87, 0xE9, 0xCE, 0x55, 0x28, 0xDF,
+        0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB,
+        0x16,
+    ];
+
+    /// Words that look random, the same at every run.
+    fn words() -> impl Iterator<Item = u32> {
+        let mut state = 0x9e37_79b9u32;
+        core::iter::repeat_with(move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        })
+    }
+
+    /// S1 as TS 35.216 writes it: SR from its table, then the matrix.
+    fn s1_of_the_specification(w: u32) -> u32 {
+        let [r0, r1, r2, r3] = w.to_be_bytes().map(|octet| SR[usize::from(octet)]);
+        let o0 = mulx(r0, 0x1B) ^ r1 ^ r2 ^ (mulx(r3, 0x1B) ^ r3);
+        let o1 = (mulx(r0, 0x1B) ^ r0) ^ mulx(r1, 0x1B) ^ r2 ^ r3;
+        let o2 = r0 ^ (mulx(r1, 0x1B) ^ r1) ^ mulx(r2, 0x1B) ^ r3;
+        let o3 = r0 ^ r1 ^ (mulx(r2, 0x1B) ^ r2) ^ mulx(r3, 0x1B);
+        u32::from_be_bytes([o0, o1, o2, o3])
+    }
+
+    /// S2 as TS 35.216 writes it: SQ from its table, then the matrix.
+    fn s2_of_the_specification(w: u32) -> u32 {
+        let [r0, r1, r2, r3] = w.to_be_bytes().map(|octet| SQ_OCTETS[usize::from(octet)]);
+        let o0 = mulx(r0, 0x69) ^ r1 ^ r2 ^ (mulx(r3, 0x69) ^ r3);
+        let o1 = (mulx(r0, 0x69) ^ r0) ^ mulx(r1, 0x69) ^ r2 ^ r3;
+        let o2 = r0 ^ (mulx(r1, 0x69) ^ r1) ^ mulx(r2, 0x69) ^ r3;
+        let o3 = r0 ^ r1 ^ (mulx(r2, 0x69) ^ r2) ^ mulx(r3, 0x69);
+        u32::from_be_bytes([o0, o1, o2, o3])
+    }
+
+    /// The round of AES on a column is S1, and the narrowed table is SQ: on
+    /// every value of each octet with the others at two settings, and on
+    /// words that look random.
+    #[test]
+    fn s1_and_s2_are_those_of_the_specification() {
+        let mut block = [0xa5; 16];
+        let each_octet = (0..4).flat_map(|position| {
+            (0..=255u32).flat_map(move |octet| {
+                [0u32, 0xffff_ffff]
+                    .map(|others| (others & !(0xff << (8 * position))) | (octet << (8 * position)))
+            })
+        });
+        for w in each_octet.chain(words().take(200_000)) {
+            assert_eq!(
+                s1(w, &mut block),
+                s1_of_the_specification(w),
+                "S1 {w:#010x}"
+            );
+            assert_eq!(s2(w), s2_of_the_specification(w), "S2 {w:#010x}");
+        }
+    }
+
+    /// MULα and DIVα are the MULxPOW of TS 35.216 on every pair of octets.
+    #[test]
+    fn mul_alpha_and_div_alpha_are_those_of_the_specification() {
+        for mul in 0..=u8::MAX {
+            for div in 0..=u8::MAX {
+                assert_eq!(
+                    mul_div_alpha(mul, div),
+                    (mul_alpha_value(mul), div_alpha_value(div)),
+                    "{mul:#04x} {div:#04x}"
+                );
+            }
+        }
+        // The four powers of x of each, modulo x^8 + x^7 + x^5 + x^3 + 1
+        assert_eq!(mul_div_alpha(0x01, 0x01), (0xe19f_cf13, 0x180f_40cd));
+    }
 
     #[test]
     fn split_fill_matches_single_call() {

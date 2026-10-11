@@ -174,10 +174,11 @@ and what a type cannot say is a `Result`. Every call below changes.
   0.11, aes 0.9, p256 0.14 and x25519-dalek 3, where 0.2.0 had sha2 0.10,
   aes 0.8, p256 0.13 and x25519-dalek 2. getrandom 0.4 gives the ephemeral
   keys of SUCI; `hmac`, `cipher` and `rand_core` are no longer direct
-  dependencies. p256 is built without its default features, and the minimum
-  versions are `aes` 0.9.2, `zeroize` 1.9 and `subtle` 2.6. The minimum
-  supported Rust version stays 1.88: aes 0.9.3 needs Rust 1.89, and on 1.88
-  Cargo's resolver takes 0.9.2 in its place.
+  dependencies. p256 is built without its default features, `aes` with its
+  `zeroize` and `hazmat` features, and the minimum versions are `aes` 0.9.2,
+  `zeroize` 1.9 and `subtle` 2.6. The minimum supported Rust version stays
+  1.88: aes 0.9.3 needs Rust 1.89, and on 1.88 Cargo's resolver takes 0.9.2
+  in its place.
 - A failure of the system's random number generator while a SUCI is
   concealed is `SecurityError::Ecies`, where 0.2.0 panicked.
 - `thiserror` is no longer a dependency, nor the `derive` feature of
@@ -186,22 +187,26 @@ and what a type cannot say is a `Result`. Every call below changes.
 - The crate forbids `unsafe` code, of which it had none, and warns on a
   public item without documentation. The 35 items that had none, among them
   `Snow3G`, `Zuc` and the `SecurityError` variants, are documented.
+- SNOW 3G, ZUC, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor
+  branch on a secret value. 0.2.0 read its S-boxes and its MULα and DIVα
+  tables at indices taken from the key and the keystream, and its
+  multiplications in GF(2^64) and GF(2^128) branched on their bits, which
+  showed both to whoever measures time or shares a cache. Now:
+  - S1 of SNOW 3G and the S-box S1 of ZUC are one round of AES, which the
+    `aes` crate runs on the AES instructions of the processor or as a
+    bitsliced routine;
+  - the S-box SQ of SNOW 3G is read whole and narrowed down through masks,
+    and S0 of ZUC is three four-bit S-boxes, each a word that is shifted;
+  - MULα, DIVα, the multiplications of 128-EIA1 and the sums of 128-EIA3
+    are carry-less products, made with shifts and integer multiplications,
+    and the reduction modulo 2^31 - 1 of ZUC has no branch;
+  - a mask that a secret bit gives goes through `core::hint::black_box`:
+    without it the compiler turned the selection of SQ into conditional
+    jumps on bits of the state.
 
-- SNOW 3G, ZUC, 128-EIA1 and the 128-EIA2 subkey doubling avoid secret-dependent
-  indexing and branches in source: S-box and MULα/DIVα lookups read the whole table through masks, and
-  the GF(2^64) and GF(2^128) multiplications and the ZUC reduction modulo
-  2^31 - 1 have no branch on secret bits. Table lookups indexed by key or
-  keystream bits, and those branches, exposed a timing risk. Compiled-code
-  timing has not been audited across supported targets. It costs time, which
-  the benchmark of `benches/` measured in its first form; these are the
-  fastest batches of three runs on one core of an AMD Ryzen 7 5700G with Rust 1.98.1, and 0.2.0
-  in the same loop. On a 1500-octet message 128-EEA1 takes 53.6 µs and
-  128-EEA3 37.9 µs, where 0.2.0 took 4.8 µs and 5.2 µs; 128-EIA1 takes
-  14.3 µs and 128-EIA3 63.0 µs, where 0.2.0 took 8.9 µs and 15.2 µs. On a
-  64-octet message the four take 4.5 µs to 6.3 µs, where 0.2.0 took 0.52 µs
-  to 0.99 µs. 128-EEA2 and 128-EIA2 take 1.8 µs each on 1500 octets (2.8 µs
-  and 2.9 µs in 0.2.0), and 0.17 µs and 0.23 µs on 64 (0.15 µs and
-  0.25 µs).
+  The compiled code was read for x86-64 with Rust 1.98.1, and no timing
+  was measured: the README says what was checked.
+- This costs time in 128-EEA1 and 128-EEA3, which `benches/` measures.
 
 ### Added
 

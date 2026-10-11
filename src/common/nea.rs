@@ -103,12 +103,17 @@ fn cipher_bits(
 }
 
 /// XOR a keystream of 32-bit words, most significant octet first, into the
-/// data. The copy of each word is wiped.
+/// data. The copy of the last word is wiped.
 fn xor_keystream(data: &mut [u8], mut next_word: impl FnMut() -> u32) {
-    let mut word = Zeroizing::new([0u8; 4]);
-    for chunk in data.chunks_mut(4) {
-        *word = next_word().to_be_bytes();
-        for (octet, key_octet) in chunk.iter_mut().zip(word.iter()) {
+    let mut word = Zeroizing::new(0u32);
+    let (words, rest) = data.as_chunks_mut::<4>();
+    for octets in words {
+        *word = next_word();
+        *octets = (u32::from_be_bytes(*octets) ^ *word).to_be_bytes();
+    }
+    if !rest.is_empty() {
+        *word = next_word();
+        for (octet, key_octet) in rest.iter_mut().zip(word.to_be_bytes()) {
             *octet ^= key_octet;
         }
     }

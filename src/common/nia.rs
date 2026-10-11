@@ -32,6 +32,7 @@
 //!
 //! For a NAS message use [`nas_5gs::nas_mac`](crate::nas_5gs::nas_mac) or
 //! [`nas_eps::nas_mac`](crate::nas_eps::nas_mac), which take a NAS COUNT.
+use crate::common::ct::{clmul64, clmul128, mask8};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, Direction, IntegrityAlgorithm, octets_of};
 use crate::snow3g::Snow3G;
@@ -216,16 +217,16 @@ fn eia1(
 }
 
 /// Multiplication in GF(2^64) with reduction polynomial x^64 + x^4 + x^3 + x + 1.
-/// Both operands are secret, so the bits select through masks, not branches.
-fn mul64(mut a: u64, mut b: u64) -> u64 {
-    let mut result: u64 = 0;
-    for _ in 0..64 {
-        result ^= a & 0u64.wrapping_sub(b & 1);
-        b >>= 1;
-        let carry = a >> 63;
-        a = (a << 1) ^ (0x1B & 0u64.wrapping_sub(carry)); // x^4 + x^3 + x + 1
-    }
-    result
+///
+/// Both operands are secret. The product of the two polynomials has 127
+/// bits, in two words, and x^64 is x^4 + x^3 + x + 1: the high word is
+/// added four times, shifted, and the few bits that these shifts push out
+/// once more.
+fn mul64(a: u64, b: u64) -> u64 {
+    let (low, high) = clmul128(a, b);
+    let overflow = (high >> 63) ^ (high >> 61) ^ (high >> 60);
+    let fold = |word: u64| word ^ (word << 1) ^ (word << 3) ^ (word << 4);
+    low ^ fold(high) ^ fold(overflow)
 }
 
 // ── NIA2: 128-EIA2 (AES-CMAC) ─────────────────────────────────────────────────
@@ -275,7 +276,7 @@ fn cmac_double(block: &mut [u8; 16]) {
     for index in 0..15 {
         block[index] = (block[index] << 1) | (block[index + 1] >> 7);
     }
-    block[15] = (block[15] << 1) ^ (0x87 & 0u8.wrapping_sub(carry));
+    block[15] = (block[15] << 1) ^ (0x87 & mask8(carry));
 }
 
 fn aes_encrypt_block(cipher: &Aes128Enc, block: &mut [u8; 16]) {
@@ -419,27 +420,31 @@ fn eia3(
     // The keystream is z[0], z[1], ... in 32-bit words, and the MAC takes
     // of it the word that starts at the position of each one bit of the
     // message (EIA3 §4.4). The window holds the two words around the
-    // position, so a word at any bit offset is read from it.
+    // position, so the word at any of 32 positions is 32 of its bits.
+    //
+    // The words for the set bits of 32 bits of the message add up to one
+    // carry-less product: bit i of the message, counted from the first,
+    // takes the window shifted left by i, and the word is in its high half.
+    // With the 32 bits reversed, bit i is the coefficient of x^i.
     let mut zuc = Zuc::new(key, &iv);
     let mut window = Zeroizing::new(0u64);
     shift_in(&mut window, &mut zuc);
     shift_in(&mut window, &mut zuc);
 
     let mut tag: u32 = 0;
-    let last = message.octets.len().wrapping_sub(1);
-    for (index, &octet) in message.octets.iter().enumerate() {
+    let groups = message.octets.len().div_ceil(4);
+    for (index, group) in message.octets.chunks(4).enumerate() {
         // A new 32-bit group of the message moves the window by a word
-        if index % 4 == 0 && index != 0 {
+        if index != 0 {
             shift_in(&mut window, &mut zuc);
         }
-        let valid = if index == last { message.last_bits } else { 8 };
-        let offset = (index % 4) as u32 * 8;
-        for bit in 0..valid {
-            // The word at this position, taken or not through a mask
-            let word = ((*window << (offset + bit)) >> 32) as u32;
-            let set = u32::from(octet >> (7 - bit)) & 1;
-            tag ^= word & 0u32.wrapping_sub(set);
+        let mut bits = [0u8; 4];
+        bits[..group.len()].copy_from_slice(group);
+        if index + 1 == groups {
+            bits[group.len() - 1] &= message.last_mask();
         }
+        let bits = u64::from(u32::from_be_bytes(bits).reverse_bits());
+        tag ^= (clmul64(bits, *window) >> 32) as u32;
     }
 
     // The word at the position LENGTH, then the last word z[L - 1], where
@@ -981,6 +986,44 @@ mod tests {
             nia3_mac_bits(&key, 0x561eb2dd, bearer(0x1c), direction(0), msg, 5670),
             Ok(0x0ca12792)
         );
+    }
+
+    /// The product in GF(2^64) is that of the shift-and-add multiplication,
+    /// one bit of `b` at a time.
+    #[test]
+    fn mul64_is_the_product_modulo_the_polynomial_of_uia2() {
+        fn reference(mut a: u64, mut b: u64) -> u64 {
+            let mut result = 0;
+            for _ in 0..64 {
+                if b & 1 == 1 {
+                    result ^= a;
+                }
+                b >>= 1;
+                let carry = a >> 63;
+                a <<= 1;
+                if carry == 1 {
+                    a ^= 0x1b; // x^4 + x^3 + x + 1
+                }
+            }
+            result
+        }
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let edges = [0, 1, 2, 0x1b, 1 << 63, u64::MAX, u64::MAX - 1];
+        for a in edges {
+            for b in edges {
+                assert_eq!(mul64(a, b), reference(a, b), "{a:#x} {b:#x}");
+            }
+        }
+        for _ in 0..20_000 {
+            let (a, b) = (next(), next());
+            assert_eq!(mul64(a, b), reference(a, b), "{a:#x} {b:#x}");
+        }
     }
 
     // ── NIA0 null integrity ───────────────────────────────────────────────────

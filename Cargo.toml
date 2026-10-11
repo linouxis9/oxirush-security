@@ -25,8 +25,9 @@ nai = ["suci", "dep:unicode-normalization", "dep:idna", "dep:base64", "dep:hex"]
 # KDF and SUCI: SHA-256 whose state is wiped on drop
 sha2 = { version = "0.11", features = ["zeroize"] }
 
-# NIA2 (AES-CMAC) + NEA2 (AES-CTR), with key schedules wiped on drop
-aes = { version = "0.9.2", features = ["zeroize"] }
+# NIA2 (AES-CMAC) + NEA2 (AES-CTR), with key schedules wiped on drop, and
+# the AES round that is S1 of SNOW 3G and gives the S-box S1 of ZUC
+aes = { version = "0.9.2", features = ["hazmat", "zeroize"] }
 
 # Key material zeroization
 zeroize = "1.9"
