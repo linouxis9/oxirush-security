@@ -6,6 +6,19 @@ All notable changes to `oxirush-security` are recorded here.
 
 ### Breaking changes relative to 0.2.0
 
+- **NAS functions and algorithms.** `nas_mac` and `nas_cipher` at the crate
+  root are those of `nas_5gs`: they panic on a NAS COUNT above 2^24 - 1 and
+  on a NAS connection identifier other than 1 or 2. In 0.2.0 the root had
+  the algorithms under these names, which take any 32-bit COUNT and a 5-bit
+  BEARER, so `oxirush_security::nas_mac` accepted what
+  `oxirush_security::nas_5gs::nas_mac` refuses. The algorithms are renamed
+  after what they are: `nas_mac` and `nas_mac_bits` of `common` are `nia_mac`
+  and `nia_mac_bits`, and `nas_cipher` and `nas_cipher_bits` are `nea_cipher`
+  and `nea_cipher_bits`, in `common`, in `common::nia` and `common::nea`, at
+  the crate root, and in `nas_5gs::security` and `nas_eps::security` for the
+  two `*_bits` forms. Call `nia_mac` or `nea_cipher` where an input is
+  outside NAS, such as the test sets of TS 33.401 Annex C or a PDCP COUNT,
+  and `nas_mac` or `nas_cipher` for a NAS message.
 - **KeNB derivation.** `nas_eps::derive_kenb` panics on a COUNT above
   2^24 - 1 other than the all-ones handover sentinel, like
   `nas_5gs::derive_kgnb`; 0.2.0 accepted any 32-bit value, although the EPS
@@ -81,11 +94,11 @@ All notable changes to `oxirush-security` are recorded here.
 
 ### Fixed
 
-- The whole-octet `nas_cipher`, `nea1_cipher`, `nea2_cipher`, `nea3_cipher`,
-  `nas_mac` and `nia2_mac` widen the length of the buffer to 64 bits before
+- The whole-octet `nea_cipher`, `nea1_cipher`, `nea2_cipher`, `nea3_cipher`,
+  `nia_mac` and `nia2_mac` widen the length of the buffer to 64 bits before
   they multiply it by 8. On a 32-bit target the product overflowed `usize`
   for a buffer of 512 MiB or more: a debug build panicked, and in a release
-  build `nas_cipher`, `nas_mac` and `nia2_mac` took the wrapped product for
+  build `nea_cipher`, `nia_mac` and `nia2_mac` took the wrapped product for
   the length to process. The cores behind these three count the bits in a
   `usize` and panic on a bit length that does not fit it, so on such a
   target they refuse a buffer of that size; `nea1_cipher`, `nea2_cipher` and

@@ -18,8 +18,8 @@
 //! EPS NAS EIA/EEA use with zero bearer and a 24-bit COUNT.
 
 pub use crate::common::{
-    nas_cipher_bits, nas_mac_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits,
-    nea3_cipher, nea3_cipher_bits, nia1_mac, nia2_mac, nia2_mac_bits, nia3_mac,
+    nea_cipher_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits, nea3_cipher,
+    nea3_cipher_bits, nia_mac_bits, nia1_mac, nia2_mac, nia2_mac_bits, nia3_mac,
 };
 
 /// Compute an EPS NAS MAC-I with BEARER=0 (EIA0/1/2/3).
@@ -34,7 +34,7 @@ pub fn nas_mac(key: &[u8; 16], count: u32, direction: u8, message: &[u8], algo_i
     assert!(count <= 0x00ff_ffff, "EPS NAS COUNT exhausted");
     assert!(direction <= 1, "invalid EPS NAS direction");
     assert!(algo_id <= 3, "unsupported EPS integrity algorithm");
-    crate::nia::nas_mac(key, count, 0, direction, message, algo_id)
+    crate::nia::nia_mac(key, count, 0, direction, message, algo_id)
 }
 
 /// Cipher or decipher an EPS NAS payload with BEARER=0 (EEA0/1/2/3).
@@ -47,7 +47,7 @@ pub fn nas_cipher(key: &[u8; 16], count: u32, direction: u8, data: &mut [u8], al
     assert!(count <= 0x00ff_ffff, "EPS NAS COUNT exhausted");
     assert!(direction <= 1, "invalid EPS NAS direction");
     assert!(algo_id <= 3, "unsupported EPS ciphering algorithm");
-    crate::nea::nas_cipher(key, count, 0, direction, data, algo_id);
+    crate::nea::nea_cipher(key, count, 0, direction, data, algo_id);
 }
 
 /// Compute UL_NAS_MAC and XDL_NAS_MAC for RRC connection re-establishment
@@ -81,7 +81,7 @@ pub fn re_establishment_nas_mac(
         "E-UTRAN Cell Identifier must be 28 bits"
     );
     let encoded = (target_cell_id << 4).to_be_bytes();
-    let mac = crate::common::nas_mac_bits(key, ul_count, 0, 0, &encoded, 28, algo_id);
+    let mac = crate::common::nia_mac_bits(key, ul_count, 0, 0, &encoded, 28, algo_id);
     ((mac >> 16) as u16, mac as u16)
 }
 
@@ -154,7 +154,7 @@ mod tests {
         let mut payload = b"EPS NAS security".to_vec();
         for algo in 0..=3 {
             let mac = nas_mac(&key, 10, 0, &payload, algo);
-            assert_eq!(mac, crate::nas_mac(&key, 10, 0, 0, &payload, algo));
+            assert_eq!(mac, crate::nia_mac(&key, 10, 0, 0, &payload, algo));
             let original = payload.clone();
             nas_cipher(&key, 10, 0, &mut payload, algo);
             nas_cipher(&key, 10, 0, &mut payload, algo);
@@ -162,7 +162,7 @@ mod tests {
         }
         assert_eq!(
             service_request_short_mac(&key, 10, 0, 0x2a, 2),
-            crate::nas_mac(&key, 10, 0, 0, &[0xc7, 0x2a], 2) as u16
+            crate::nia_mac(&key, 10, 0, 0, &[0xc7, 0x2a], 2) as u16
         );
     }
 }

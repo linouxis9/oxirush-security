@@ -22,8 +22,8 @@
 //! - NIA2: 128-EIA2 (AES-CMAC, TS 33.401 Annex B.2.3, TS 33.501 Annex D.3.1.3).
 //! - NIA3: 128-EIA3 (ZUC, TS 33.401 Annex B.2.4, TS 35.221 and TS 35.222).
 //!
-//! [`nas_mac`] and [`nia2_mac`] are whole-octet conveniences.
-//! [`nas_mac_bits`], [`nia1_mac`], [`nia2_mac_bits`], and [`nia3_mac`]
+//! [`nia_mac`] and [`nia2_mac`] are whole-octet conveniences.
+//! [`nia_mac_bits`], [`nia1_mac`], [`nia2_mac_bits`], and [`nia3_mac`]
 //! accept the bit lengths needed by the non-byte-aligned official vectors
 //! and by bit-string inputs outside ordinary NAS messages.
 //!
@@ -35,18 +35,18 @@ use aes::Aes128;
 use aes::cipher::{BlockEncrypt, KeyInit};
 use zeroize::Zeroize;
 
-/// Unified NAS integrity MAC computation.
+/// Compute the 32-bit MAC of a message of whole octets with the algorithm
+/// that `algo_id` selects: 0 is NIA0 (null), 1 NIA1, 2 NIA2 and 3 NIA3.
 ///
-/// `algo_id`: 0x00 = NIA0 (null), 0x01 = NIA1, 0x02 = NIA2, 0x03 = NIA3
-///
-/// Assumes message length in bits = message.len() * 8 (full bytes, no partial bits).
-/// Returns 32-bit MAC-I.
+/// The inputs have the ranges of the algorithms: a 32-bit COUNT and a 5-bit
+/// BEARER. For a NAS message use [`crate::nas_5gs::nas_mac`] or
+/// [`crate::nas_eps::nas_mac`], which check the ranges of NAS.
 ///
 /// # Panics
 ///
 /// Panics if `bearer` exceeds 31, `direction` exceeds one, or `algo_id` is
 /// above 3.
-pub fn nas_mac(
+pub fn nia_mac(
     key: &[u8; 16],
     count: u32,
     bearer: u8,
@@ -55,11 +55,11 @@ pub fn nas_mac(
     algo_id: u8,
 ) -> u32 {
     let bit_length = (message.len() as u64) * 8;
-    nas_mac_bits(key, count, bearer, direction, message, bit_length, algo_id)
+    nia_mac_bits(key, count, bearer, direction, message, bit_length, algo_id)
 }
 
-/// Unified integrity MAC computation for a message whose final octet may
-/// contain unused low-order bits.
+/// Compute the MAC that [`nia_mac`] computes, for a message whose final
+/// octet may contain unused low-order bits.
 ///
 /// `bit_length` is the number of most-significant message bits to
 /// authenticate. `algo_id` is 0 for null integrity or 1, 2, or 3 for
@@ -69,7 +69,7 @@ pub fn nas_mac(
 ///
 /// Panics if `bearer` exceeds 31, `direction` exceeds one, `bit_length`
 /// exceeds the message length in bits, or `algo_id` is above 3.
-pub fn nas_mac_bits(
+pub fn nia_mac_bits(
     key: &[u8; 16],
     count: u32,
     bearer: u8,
@@ -908,16 +908,16 @@ mod tests {
     #[test]
     fn test_nia0_null() {
         let key = [0u8; 16];
-        assert_eq!(nas_mac(&key, 0, 0, 0, &[0x7E, 0x00, 0x41], 0x00), 0);
+        assert_eq!(nia_mac(&key, 0, 0, 0, &[0x7E, 0x00, 0x41], 0x00), 0);
     }
 
-    // ── nas_mac dispatch ──────────────────────────────────────────────────────
+    // ── nia_mac dispatch ──────────────────────────────────────────────────────
 
     #[test]
     fn test_nas_mac_dispatches_nia2() {
         let key = [0u8; 16];
         let mac_direct = nia2_mac(&key, 0, 0, 0, &[0x7E, 0x00, 0x41]);
-        let mac_dispatch = nas_mac(&key, 0, 0, 0, &[0x7E, 0x00, 0x41], 0x02);
+        let mac_dispatch = nia_mac(&key, 0, 0, 0, &[0x7E, 0x00, 0x41], 0x02);
         assert_eq!(mac_direct, mac_dispatch);
         assert_ne!(mac_dispatch, 0);
     }
@@ -928,7 +928,7 @@ mod tests {
         let msg = &[0x33u8; 8];
         let bit_len = (msg.len() * 8) as u64;
         let mac_direct = nia1_mac(&key, 42, 1, 0, msg, bit_len);
-        let mac_dispatch = nas_mac(&key, 42, 1, 0, msg, 0x01);
+        let mac_dispatch = nia_mac(&key, 42, 1, 0, msg, 0x01);
         assert_eq!(mac_direct, mac_dispatch);
     }
 
@@ -938,7 +938,7 @@ mod tests {
         let msg = &[0xABu8; 8];
         let bit_len = (msg.len() * 8) as u64;
         let mac_direct = nia3_mac(&key, 0x12345678, 3, 1, msg, bit_len);
-        let mac_dispatch = nas_mac(&key, 0x12345678, 3, 1, msg, 0x03);
+        let mac_dispatch = nia_mac(&key, 0x12345678, 3, 1, msg, 0x03);
         assert_eq!(mac_direct, mac_dispatch);
     }
 
@@ -962,7 +962,7 @@ mod tests {
 
         // Both inclusive raw-field limits and a non-octet length are accepted.
         for algo in 0..=3 {
-            let dispatched = nas_mac_bits(&key, 7, 31, 1, &message, bits, algo);
+            let dispatched = nia_mac_bits(&key, 7, 31, 1, &message, bits, algo);
             let direct = match algo {
                 0 => 0,
                 1 => nia1_mac(&key, 7, 31, 1, &message, bits),
@@ -975,7 +975,7 @@ mod tests {
 
         let panics = |bearer, direction, length, algo| {
             std::panic::catch_unwind(|| {
-                nas_mac_bits(&key, 7, bearer, direction, &message, length, algo)
+                nia_mac_bits(&key, 7, bearer, direction, &message, length, algo)
             })
             .is_err()
         };
@@ -983,6 +983,6 @@ mod tests {
         assert!(panics(31, 2, bits, 1));
         assert!(panics(31, 1, 17, 1));
         assert!(panics(31, 1, bits, 4));
-        assert_eq!(nas_mac_bits(&key, 7, 31, 1, &[], 0, 0), 0);
+        assert_eq!(nia_mac_bits(&key, 7, 31, 1, &[], 0, 0), 0);
     }
 }

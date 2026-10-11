@@ -26,7 +26,7 @@
 //! unused low-order bits of a partial final octet unchanged. The convenience
 //! functions without a bit length process every supplied octet.
 //!
-//! With NEA1, NEA2 or NEA3, [`nas_cipher`] and the `*_bits` entry points
+//! With NEA1, NEA2 or NEA3, [`nea_cipher`] and the `*_bits` entry points
 //! panic on data whose length in bits does not fit `usize`: on a 32-bit
 //! target, 512 MiB or more.
 use crate::snow3g::Snow3G;
@@ -35,15 +35,18 @@ use aes::Aes128;
 use cipher::{BlockEncrypt, KeyInit};
 use zeroize::Zeroize;
 
-/// Unified NAS cipher (encrypt or decrypt in-place).
+/// Cipher or decipher octets in place with the algorithm that `algo_id`
+/// selects: 0 is NEA0 (null), 1 NEA1, 2 NEA2 and 3 NEA3.
 ///
-/// `algo_id`: 0x00 = NEA0, 0x01 = NEA1, 0x02 = NEA2, 0x03 = NEA3
+/// The inputs have the ranges of the algorithms: a 32-bit COUNT and a 5-bit
+/// BEARER. For a NAS message use [`crate::nas_5gs::nas_cipher`] or
+/// [`crate::nas_eps::nas_cipher`], which check the ranges of NAS.
 ///
 /// # Panics
 ///
 /// Panics if `bearer` exceeds 31, `direction` exceeds one, or `algo_id` is
 /// above 3.
-pub fn nas_cipher(
+pub fn nea_cipher(
     key: &[u8; 16],
     count: u32,
     bearer: u8,
@@ -51,7 +54,7 @@ pub fn nas_cipher(
     data: &mut [u8],
     algo_id: u8,
 ) {
-    nas_cipher_bits(
+    nea_cipher_bits(
         key,
         count,
         bearer,
@@ -62,14 +65,15 @@ pub fn nas_cipher(
     );
 }
 
-/// Unified cipher for the first `bit_length` most-significant bits of `data`.
-/// Unused low-order bits of the partial final octet are unchanged.
+/// Cipher or decipher, as [`nea_cipher`] does, the first `bit_length`
+/// most-significant bits of `data`. Unused low-order bits of the partial
+/// final octet are unchanged.
 ///
 /// # Panics
 ///
 /// Panics if `bearer` exceeds 31, `direction` exceeds one, `bit_length`
 /// exceeds `data`, or `algo_id` exceeds three.
-pub fn nas_cipher_bits(
+pub fn nea_cipher_bits(
     key: &[u8; 16],
     count: u32,
     bearer: u8,
@@ -365,7 +369,7 @@ mod tests {
         let key = [0u8; 16];
         let original = b"untouched";
         let mut data = original.to_vec();
-        nas_cipher(&key, 0, 0, 0, &mut data, 0x00);
+        nea_cipher(&key, 0, 0, 0, &mut data, 0x00);
         assert_eq!(&data[..], &original[..]);
     }
 
@@ -377,16 +381,16 @@ mod tests {
         // Both inclusive raw-field limits and a non-octet length are accepted.
         for algo in 0..=3 {
             let mut data = original;
-            nas_cipher_bits(&key, 7, 31, 1, &mut data, 13, algo);
+            nea_cipher_bits(&key, 7, 31, 1, &mut data, 13, algo);
             assert_eq!(data[1] & 0x07, original[1] & 0x07);
-            nas_cipher_bits(&key, 7, 31, 1, &mut data, 13, algo);
+            nea_cipher_bits(&key, 7, 31, 1, &mut data, 13, algo);
             assert_eq!(data, original);
         }
 
         let panics = |bearer, direction, bits, algo| {
             std::panic::catch_unwind(|| {
                 let mut data = original;
-                nas_cipher_bits(&key, 7, bearer, direction, &mut data, bits, algo);
+                nea_cipher_bits(&key, 7, bearer, direction, &mut data, bits, algo);
             })
             .is_err()
         };
@@ -396,7 +400,7 @@ mod tests {
         assert!(panics(31, 1, 13, 4));
 
         let mut empty = [];
-        nas_cipher_bits(&key, 7, 31, 1, &mut empty, 0, 3);
+        nea_cipher_bits(&key, 7, 31, 1, &mut empty, 0, 3);
     }
 
     // ── NEA1 test vectors from 3GPP TS 35.215 / free5gc ────────────────────────

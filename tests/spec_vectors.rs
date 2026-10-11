@@ -317,11 +317,11 @@ fn snow3g_uea2_intermediate_set1_state() {
     assert_eq!(z, vec![0xabee9704, 0x7ac31373]);
 }
 #[test]
-fn eia2_all_byte_aligned_sets_via_nas_mac() {
-    // C.2.2 via nas_mac dispatch
+fn eia2_all_byte_aligned_sets_via_nia_mac() {
+    // C.2.2 via nia_mac dispatch
     let key: [u8; 16] = h("d3c5d592327fb11c4035c6680af8c6d1").try_into().unwrap();
     assert_eq!(
-        nia::nas_mac(&key, 0x398a59b4, 0x1a, 1, &h("484583d5afe082ae"), 2),
+        nia::nia_mac(&key, 0x398a59b4, 0x1a, 1, &h("484583d5afe082ae"), 2),
         0xb93787e6
     );
 }

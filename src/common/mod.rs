@@ -36,8 +36,8 @@ pub use ct::constant_time_eq;
 pub use error::SecurityError;
 pub use kdf::extract_128;
 pub use nea::{
-    nas_cipher, nas_cipher_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits,
+    nea_cipher, nea_cipher_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits,
     nea3_cipher, nea3_cipher_bits,
 };
-pub use nia::{nas_mac, nas_mac_bits, nia1_mac, nia2_mac, nia2_mac_bits, nia3_mac};
+pub use nia::{nia_mac, nia_mac_bits, nia1_mac, nia2_mac, nia2_mac_bits, nia3_mac};
 pub use plmn::{plmn_from_bytes, plmn_to_bytes, tbcd_decode, tbcd_encode};

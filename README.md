@@ -71,8 +71,8 @@ The last column names the kind of reference value that the tests have, which
 
 | What | Functions | Specification | Reference values |
 |------|-----------|---------------|------------------|
-| NAS ciphering | `nas_cipher`, `nea1_cipher`, `nea2_cipher`, `nea3_cipher` and their `*_bits` forms | NEA0 (null), NEA1 (SNOW 3G, 128-EEA1), NEA2 (AES-128-CTR, 128-EEA2), NEA3 (ZUC, 128-EEA3): TS 33.401 Annex B.1 | 3GPP |
-| NAS integrity | `nas_mac`, `nia1_mac`, `nia2_mac`, `nia3_mac`, `nas_mac_bits`, `nia2_mac_bits` | NIA1 (SNOW 3G, 128-EIA1), NIA2 (AES-CMAC, 128-EIA2), NIA3 (ZUC, 128-EIA3): TS 33.401 Annex B.2 | 3GPP |
+| NAS ciphering | `nas_cipher`; the algorithms `nea_cipher`, `nea1_cipher`, `nea2_cipher`, `nea3_cipher` and their `*_bits` forms | NEA0 (null), NEA1 (SNOW 3G, 128-EEA1), NEA2 (AES-128-CTR, 128-EEA2), NEA3 (ZUC, 128-EEA3): TS 33.401 Annex B.1 | 3GPP |
+| NAS integrity | `nas_mac`; the algorithms `nia_mac`, `nia1_mac`, `nia2_mac`, `nia3_mac`, `nia_mac_bits`, `nia2_mac_bits` | NIA1 (SNOW 3G, 128-EIA1), NIA2 (AES-CMAC, 128-EIA2), NIA3 (ZUC, 128-EIA3): TS 33.401 Annex B.2 | 3GPP |
 | Keystream generators | `Snow3G`, `Zuc` | TS 35.216, TS 35.222 | 3GPP |
 | 5G AKA | `derive_kausf`, `compute_xres_star`, `compute_hres_star`, `derive_kseaf`, `derive_kamf`, `derive_nas_key`, `derive_kgnb`, `derive_nh` | TS 33.501 Annex A.2 and A.4 to A.10 | other implementations |
 | Other 5GS derivations | KAMF', KN3IWF, KNG-RAN\*, KSN, the RRC and UP keys, the SoR and UPU MACs, the TNAP usage keys, KIAB | TS 33.501 Annex A | calculated |
@@ -174,7 +174,7 @@ let key = hex::decode("2bd6459f82c5b300952c49104881ff48").unwrap().try_into().un
 let message = hex::decode("3332346263393840").unwrap();
 let (count, bearer, direction, bits) = (0x38a6_f056, 0x18, 0, 58);
 
-let mac = common::nas_mac_bits(&key, count, bearer, direction, &message, bits, 2);
+let mac = common::nia_mac_bits(&key, count, bearer, direction, &message, bits, 2);
 assert_eq!(mac, 0x118c_6eb8);
 ```
 
@@ -315,8 +315,8 @@ parsing return a `SecurityError` or `None` instead.
 | Input | Accepted |
 |-------|----------|
 | Algorithm identifier of a MAC or a cipher | 0 to 3 |
-| NAS COUNT | up to 2^24 - 1 in `nas_5gs` and `nas_eps`, and any 32-bit value in the raw cores; `derive_kgnb` and `nas_eps::derive_kenb` also take the all-ones value of a handover |
-| BEARER | 1 or 2 in `nas_5gs`, and up to 31 in the raw cores |
+| NAS COUNT | up to 2^24 - 1 in `nas_mac` and `nas_cipher`, and any 32-bit value in the `nia*` and `nea*` algorithms; `derive_kgnb` and `nas_eps::derive_kenb` also take the all-ones value of a handover |
+| BEARER | 1 or 2 in `nas_mac` and `nas_cipher` of 5GS, and up to 31 in the `nia*` and `nea*` algorithms |
 | DIRECTION | 0 or 1 |
 | Length in bits | no more than the buffer has |
 | PCI | up to 503 for an eNB or an ng-eNB, and 1007 for a gNB |
@@ -324,9 +324,10 @@ parsing return a `SecurityError` or `None` instead.
 | TBCD string | decimal digits, `*`, `#`, `a`, `b` and `c` |
 | AMF set ID and AMF pointer | 10 bits and 6 bits |
 
-The raw cores are the functions of `common`. The crate root re-exports them:
-`oxirush_security::nas_mac` and `oxirush_security::nas_cipher` do not check
-the ranges of 5GS, which the functions of `nas_5gs` with the same names do.
+`nas_mac` and `nas_cipher` are of NAS and check its ranges, in `nas_5gs`,
+in `nas_eps` and at the crate root, which has those of `nas_5gs`. The
+functions named after an algorithm (`nia_mac`, `nea_cipher`, `nia2_mac` and
+the others of `common`) take what the algorithm takes.
 
 ## Key material and timing
 
@@ -367,8 +368,8 @@ values, which do not carry the same weight.
 | [`nas_eps`](src/nas_eps/mod.rs) | TS 33.401 `kdf`, `security`, and `algo` |
 | [`common`](src/common/mod.rs) | HMAC KDF framing (TS 33.220), EEA/EIA cores, SNOW 3G, ZUC, algorithm selection, and PLMN utilities |
 
-The crate root re-exports the existing 5GS and common functions for backward
-compatibility. EPS functions are under `oxirush_security::nas_eps`.
+The crate root has the functions of `nas_5gs` and of `common`. EPS functions
+are under `oxirush_security::nas_eps`.
 
 Each 5GS example has an EPS counterpart; SUCI concealment is 5GS only.
 

@@ -18,8 +18,8 @@
 //! 5GS NAS ciphering and integrity using the shared NEA/NIA algorithm cores.
 
 pub use crate::common::{
-    nas_cipher_bits, nas_mac_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits,
-    nea3_cipher, nea3_cipher_bits, nia1_mac, nia2_mac, nia2_mac_bits, nia3_mac,
+    nea_cipher_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits, nea3_cipher,
+    nea3_cipher_bits, nia_mac_bits, nia1_mac, nia2_mac, nia2_mac_bits, nia3_mac,
 };
 
 /// Compute a 5GS NAS MAC with a 24-bit NAS COUNT and NAS connection identifier 1 or 2.
@@ -43,7 +43,7 @@ pub fn nas_mac(
     );
     assert!(direction <= 1, "invalid 5GS NAS direction");
     assert!(algo_id <= 3, "unsupported 5GS integrity algorithm");
-    crate::common::nas_mac(key, count, bearer, direction, message, algo_id)
+    crate::common::nia_mac(key, count, bearer, direction, message, algo_id)
 }
 
 /// Cipher or decipher a 5GS NAS payload with the selected NEA algorithm.
@@ -66,7 +66,7 @@ pub fn nas_cipher(
     );
     assert!(direction <= 1, "invalid 5GS NAS direction");
     assert!(algo_id <= 3, "unsupported 5GS ciphering algorithm");
-    crate::common::nas_cipher(key, count, bearer, direction, data, algo_id);
+    crate::common::nea_cipher(key, count, bearer, direction, data, algo_id);
 }
 
 /// Compute the MAC of a NAS Container (NASC) for N2 handover with a KAMF
@@ -81,7 +81,7 @@ pub fn nas_cipher(
 /// Panics if `algo_id` exceeds 3.
 pub fn nas_container_mac(key: &[u8; 16], message: &[u8], algo_id: u8) -> u32 {
     assert!(algo_id <= 3, "unsupported 5GS integrity algorithm");
-    crate::common::nas_mac(key, u32::MAX, 0x01, 1, message, algo_id)
+    crate::common::nia_mac(key, u32::MAX, 0x01, 1, message, algo_id)
 }
 
 #[cfg(test)]
@@ -94,11 +94,11 @@ mod tests {
         let container = [0x01, 0x00, 0x00, 0x05, 0x22];
         assert_eq!(
             nas_container_mac(&key, &container, 2),
-            crate::common::nas_mac(&key, 0xffff_ffff, 1, 1, &container, 2)
+            crate::common::nia_mac(&key, 0xffff_ffff, 1, 1, &container, 2)
         );
         assert_ne!(
             nas_container_mac(&key, &container, 2),
-            crate::common::nas_mac(&key, 0x00ff_ffff, 1, 1, &container, 2)
+            crate::common::nia_mac(&key, 0x00ff_ffff, 1, 1, &container, 2)
         );
     }
 
@@ -109,5 +109,29 @@ mod tests {
         assert_eq!(nas_mac(&key, 1, 1, 0, &payload, 2), 0x7f88_ff87);
         assert!(std::panic::catch_unwind(|| nas_mac(&key, 1, 0, 0, &payload, 2)).is_err());
         assert!(std::panic::catch_unwind(|| nas_mac(&key, 1, 3, 0, &payload, 2)).is_err());
+    }
+
+    #[test]
+    fn the_crate_root_has_the_checked_functions() {
+        let key = [0x11; 16];
+        let payload = [0x7e, 0x00, 0x41, 0x01];
+        let exhausted = 1 << 24;
+
+        assert_eq!(crate::nas_mac(&key, 1, 1, 0, &payload, 2), 0x7f88_ff87);
+        assert!(
+            std::panic::catch_unwind(|| crate::nas_mac(&key, exhausted, 1, 0, &payload, 2))
+                .is_err()
+        );
+        assert!(
+            std::panic::catch_unwind(|| {
+                let mut data = payload;
+                crate::nas_cipher(&key, exhausted, 1, 0, &mut data, 2);
+            })
+            .is_err()
+        );
+
+        // The algorithm itself takes any 32-bit COUNT
+        crate::nia_mac(&key, exhausted, 1, 0, &payload, 2);
+        crate::nea_cipher(&key, exhausted, 1, 0, &mut payload.clone(), 2);
     }
 }
