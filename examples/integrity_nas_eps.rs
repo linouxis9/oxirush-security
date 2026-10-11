@@ -61,10 +61,14 @@ fn main() {
     assert_eq!(mac_eia0, 0, "EIA0 must always return 0");
 
     // SERVICE REQUEST: KSI 1, five COUNT bits 0x16
-    let short_mac = service_request_short_mac(&key, count, direction, (1 << 5) | 0x16, 0x02);
+    let ksi_and_sequence_number = (1 << 5) | 0x16;
+    let short_mac =
+        service_request_short_mac(&key, count, direction, ksi_and_sequence_number, 0x02);
     println!("SERVICE REQUEST short MAC (EIA2): 0x{short_mac:04x}");
 
+    // Each algorithm produces a different MAC for the same input
     assert_ne!(mac_eia1, mac_eia2);
     assert_ne!(mac_eia2, mac_eia3);
+
     println!("\nAll MACs computed successfully.");
 }

@@ -39,10 +39,7 @@ fn main() {
     let message = b"Hello 5G NAS integrity!";
 
     println!("=== NAS Integrity MAC computation ===\n");
-    println!(
-        "Key:       {}",
-        key.iter().map(|b| format!("{b:02x}")).collect::<String>()
-    );
+    println!("Key:       {}", hex::encode(key));
     println!("COUNT:     0x{count:08x}");
     println!("Bearer:    {bearer}");
     println!("Direction: {direction} (uplink)");
@@ -68,5 +65,6 @@ fn main() {
     // Each algorithm produces a different MAC for the same input
     assert_ne!(mac_nia1, mac_nia2);
     assert_ne!(mac_nia2, mac_nia3);
+
     println!("\nAll MACs computed successfully.");
 }

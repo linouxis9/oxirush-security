@@ -25,6 +25,7 @@ use oxirush_security::nas_5gs::*;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 fn main() {
+    // The MSIN to conceal
     let msin = "0000000001";
     println!("=== SUCI Concealment (TS 33.501 Annex C.4) ===\n");
     println!("MSIN: {msin}");
@@ -43,7 +44,6 @@ fn main() {
     // Generate a home network key pair (normally provisioned by the operator)
     let home_priv_key = StaticSecret::random_from_rng(rand_core::OsRng);
     let home_pub_key = PublicKey::from(&home_priv_key);
-
     println!(
         "Home network public key:  {}",
         hex::encode(home_pub_key.as_bytes())
@@ -66,20 +66,21 @@ fn main() {
     println!("\nProfile A IMSI round-trip: OK");
 
     // Network-specific SUPIs use the TS 23.003 textual NAI form.
-    let nai = conceal_network_specific_supi(
-        "sensor-17@example.net",
-        "0",
-        NaiProtectionScheme::ProfileA {
-            home_network_public_key_id: 1,
-            home_network_public_key: home_pub_key.as_bytes(),
-        },
-    )
-    .expect("NAI conceal failed");
+    // UE side: conceal the identifier and write the SUCI as a NAI
+    let scheme = NaiProtectionScheme::ProfileA {
+        home_network_public_key_id: 1,
+        home_network_public_key: home_pub_key.as_bytes(),
+    };
+    let nai = conceal_network_specific_supi("sensor-17@example.net", "0", scheme)
+        .expect("NAI conceal failed");
     let encoded_nai = encode_nai_suci(&nai).expect("NAI encoding failed");
+
+    // Home network side: parse the NAI and deconceal the identifier
     let parsed_nai = parse_nai_suci(&encoded_nai).expect("NAI parsing failed");
     let recovered_nai =
         deconceal_network_specific_suci(&parsed_nai, Some(home_priv_key.as_bytes()))
             .expect("NAI deconceal failed");
+
     assert_eq!(recovered_nai, "sensor-17@example.net");
     println!("Profile A NAI round-trip:  OK");
 }

@@ -107,17 +107,24 @@ let res = hex::decode("a54211d5e3ba50bf").unwrap();
 let sqn_xor_ak = [0x55, 0xf3, 0x28, 0xb4, 0x35, 0x77];
 let sn_name = b"5G:mnc093.mcc208.3gppnetwork.org";
 
-// UDM: KAUSF and XRES*. AUSF: HXRES* and KSEAF. SEAF: KAMF
+// UDM: KAUSF and XRES*
 let k_ausf = derive_kausf(&ck, &ik, sn_name, &sqn_xor_ak);
 let xres_star = compute_xres_star(&ck, &ik, sn_name, &rand, &res);
+
+// AUSF: HXRES* and KSEAF
 let hxres_star = compute_hres_star(&rand, xres_star.as_slice().try_into().unwrap());
 let k_seaf = derive_kseaf(&k_ausf, sn_name);
-let k_amf = derive_kamf(&k_seaf, "208930000000001", &[0x00, 0x00]); // SUPI, ABBA
+
+// SEAF: KAMF
+let (supi, abba) = ("208930000000001", [0x00, 0x00]);
+let k_amf = derive_kamf(&k_seaf, supi, &abba);
 
 // Access stratum: KgNB from the uplink NAS COUNT, then NH for a handover
-let k_gnb = derive_kgnb(&k_amf, 0);
+let uplink_nas_count = 0;
+let k_gnb = derive_kgnb(&k_amf, uplink_nas_count);
 let nh = derive_nh(&k_amf, &k_gnb);
 
+// The values of the chain
 assert_eq!(hex::encode(k_ausf), "f2e35260f85194d4f891504d02111e56689ac23dd393bee3abbcc5bfbc013ef9");
 assert_eq!(hex::encode(&xres_star), "5cc9527f4d21c43bee83a15443acf1c4");
 assert_eq!(hex::encode(hxres_star), "6970075e3c8245fdc2073003cf166279");
@@ -154,7 +161,10 @@ assert_eq!(select_integrity_algo_with_preference(0x60, &[1, 2]), Some(1)); // an
 // connection identifier 1 (3GPP access) or 2 (non-3GPP access)
 let key = [0x2b; 16];
 let message = [0x05, 0x7e, 0x00, 0x43]; // the sequence number, then the message
-let macs: Vec<u32> = (0..=3).map(|algo| nas_mac(&key, 5, 1, 1, &message, algo)).collect();
+let (count, access, downlink) = (5, 1, 1);
+
+let mac = |algo| nas_mac(&key, count, access, downlink, &message, algo);
+let macs: Vec<u32> = (0..=3).map(mac).collect();
 assert_eq!(macs[0], 0); // NIA0 is always zero
 
 // `common` has the algorithms as the 3GPP test sets use them: any 32-bit
@@ -162,7 +172,10 @@ assert_eq!(macs[0], 0); // NIA0 is always zero
 // of TS 33.401 Annex C.2.1, a message of 58 bits
 let key = hex::decode("2bd6459f82c5b300952c49104881ff48").unwrap().try_into().unwrap();
 let message = hex::decode("3332346263393840").unwrap();
-assert_eq!(common::nas_mac_bits(&key, 0x38a6_f056, 0x18, 0, &message, 58, 2), 0x118c_6eb8);
+let (count, bearer, direction, bits) = (0x38a6_f056, 0x18, 0, 58);
+
+let mac = common::nas_mac_bits(&key, count, bearer, direction, &message, bits, 2);
+assert_eq!(mac, 0x118c_6eb8);
 ```
 
 ### EPS
@@ -172,21 +185,30 @@ assert_eq!(common::nas_mac_bits(&key, 0x38a6_f056, 0x18, 0, &message, 58, 2), 0x
 ```rust
 use oxirush_security::{common::plmn_to_bytes, nas_eps};
 
+// KASME from CK, IK, the serving network identity and SQN xor AK
 let ck = [0x11; 16];
 let ik = [0x22; 16];
 let sn_id: [u8; 3] = plmn_to_bytes("208", "93").try_into().unwrap();
-let kasme = nas_eps::derive_kasme(&ck, &ik, &sn_id, &[0; 6]);
-let knas_int = nas_eps::extract_128(&nas_eps::derive_nas_key(&kasme, 0x02, 2)); // EIA2
-let knas_enc = nas_eps::extract_128(&nas_eps::derive_nas_key(&kasme, 0x01, 2)); // EEA2
+let sqn_xor_ak = [0; 6];
+let kasme = nas_eps::derive_kasme(&ck, &ik, &sn_id, &sqn_xor_ak);
 
-// Uplink EMM STATUS with cause #3, NAS COUNT 0
+// The NAS keys: 0x02 with EIA2 for integrity, 0x01 with EEA2 for ciphering
+let knas_int = nas_eps::extract_128(&nas_eps::derive_nas_key(&kasme, 0x02, 2));
+let knas_enc = nas_eps::extract_128(&nas_eps::derive_nas_key(&kasme, 0x01, 2));
+
+// Uplink EMM STATUS with cause #3, NAS COUNT 0: cipher it, then compute the
+// MAC over the sequence number and the ciphertext
+let (count, uplink) = (0, 0);
 let mut payload = vec![0x07, 0x60, 0x03];
-nas_eps::nas_cipher(&knas_enc, 0, 0, &mut payload, 2);
-let mac = nas_eps::nas_mac(&knas_int, 0, 0, &[&[0], payload.as_slice()].concat(), 2);
+nas_eps::nas_cipher(&knas_enc, count, uplink, &mut payload, 2);
+let protected = [&[count as u8][..], &payload].concat();
+let mac = nas_eps::nas_mac(&knas_int, count, uplink, &protected, 2);
 assert_eq!((hex::encode(&payload), mac), ("b02c47".to_string(), 0x190a_f1e7));
 
 // The 16-bit short MAC of a SERVICE REQUEST: NAS COUNT 1, KSI 0 and sequence number 1
-let short_mac = nas_eps::service_request_short_mac(&knas_int, 1, 0, 0x01, 2);
+let (count, ksi_and_sequence_number) = (1, 0x01);
+let short_mac =
+    nas_eps::service_request_short_mac(&knas_int, count, uplink, ksi_and_sequence_number, 2);
 assert_eq!(short_mac, 0x7e95);
 ```
 
@@ -201,18 +223,22 @@ let hex = |s: &str| hex::decode(s).unwrap();
 let msin = msin_to_bcd("001002086");
 assert_eq!(msin, [0x00, 0x01, 0x20, 0x80, 0xf6]);
 
-// Profile A, X25519: ephemeral public key (32) || ciphertext || MAC tag (8)
+// The home network key pair of Profile A, X25519
 let public_a = hex("5a8d38864820197c3394b92613b20b91633cbd897119273bf8e4a6f4eec0a650");
 let private_a = hex("c53c22208b61860b06c62e5406a7b330c2b577aa5558981510d128247d38bd1d");
 let (public_a, private_a): ([u8; 32], [u8; 32]) =
     (public_a.try_into().unwrap(), private_a.try_into().unwrap());
+
+// Its scheme output: ephemeral public key (32) || ciphertext || MAC tag (8)
 let output = suci_scheme_output_a(&msin, &public_a).unwrap();
 assert_eq!(output.len(), 32 + msin.len() + 8);
 assert_eq!(suci_decrypt_a(&output, &private_a).unwrap(), msin);
 
-// Profile B, P-256: compressed ephemeral public key (33) || ciphertext || MAC tag (8)
+// The home network key pair of Profile B, P-256
 let public_b = hex("0272da71976234ce833a6907425867b82e074d44ef907dfb4b3e21c1c2256ebcd1");
 let private_b = hex("f1ab1074477ebcc7f554ea1c5fc368b1616730155e0041ac447d6301975fecda");
+
+// Its scheme output: compressed ephemeral public key (33) || ciphertext || MAC tag (8)
 let output = suci_scheme_output_b(&msin, &public_b).unwrap();
 assert_eq!(output.len(), 33 + msin.len() + 8);
 assert_eq!(suci_decrypt_b(&output, &private_b).unwrap(), msin);
@@ -225,6 +251,8 @@ let mut suci = vec![0x01]; // SUPI format IMSI, type of identity SUCI
 suci.extend(plmn_to_bytes("274", "012"));
 suci.extend([0xf0, 0xff, 0x01, 0x01]); // routing indicator 0, Profile A, key identifier 1
 suci.extend(&output);
+
+// It is deconcealed with the private key, and not without it
 assert_eq!(suci_to_supi(&suci, Some(&private_a)).as_deref(), Some("imsi-274012001002086"));
 assert_eq!(suci_to_supi(&suci, None), None);
 
@@ -236,6 +264,8 @@ let scheme = NaiProtectionScheme::ProfileA {
 };
 let suci = conceal_network_specific_supi("sensor-17@example.net", "0", scheme).unwrap();
 let text = encode_nai_suci(&suci).unwrap();
+
+// The home network parses the NAI and deconceals the identifier
 let parsed = parse_nai_suci(&text).unwrap();
 let supi = deconceal_network_specific_suci(&parsed, Some(&private_a)).unwrap();
 assert_eq!(supi, "sensor-17@example.net");
@@ -254,16 +284,22 @@ use oxirush_security::{
     tbcd_encode,
 };
 
+// A PLMN identity: MCC 208 and MNC 93
 let plmn = plmn_to_bytes("208", "93");
 assert_eq!(plmn, [0x02, 0xf8, 0x39]);
 assert_eq!(plmn_from_bytes(&plmn), Some(("208".to_string(), "93".to_string())));
 
-// AMF region 1, set 1 and pointer 2, and a 5G-TMSI
-let guti = build_guti_bytes(&plmn, 0x01, 0x001, 0x02, 0x1122_3344);
+// A 5G-GUTI: AMF region 1, set 1 and pointer 2, and a 5G-TMSI
+let (region, set, pointer, tmsi) = (0x01, 0x001, 0x02, 0x1122_3344);
+let guti = build_guti_bytes(&plmn, region, set, pointer, tmsi);
 assert_eq!(hex::encode(&guti), "f202f83901004211223344");
-assert_eq!(parse_guti_tmsi(&guti), Some(0x1122_3344));
-assert_eq!(parse_s_tmsi(&[0xf4, 0x00, 0x42, 0x11, 0x22, 0x33, 0x44]), Some(0x1122_3344));
+assert_eq!(parse_guti_tmsi(&guti), Some(tmsi));
 
+// The 5G-TMSI of a 5G-S-TMSI
+let s_tmsi = [0xf4, 0x00, 0x42, 0x11, 0x22, 0x33, 0x44];
+assert_eq!(parse_s_tmsi(&s_tmsi), Some(tmsi));
+
+// The digits of an IMSI as a TBCD string
 let imsi = tbcd_encode("208930000000001");
 assert_eq!(hex::encode(&imsi), "02980300000000f1");
 assert_eq!(tbcd_decode(&imsi), "208930000000001");

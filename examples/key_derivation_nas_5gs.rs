@@ -28,9 +28,11 @@ fn main() {
     let sn_name = b"5G:mnc093.mcc208.3gppnetwork.org";
     let abba = [0x00, 0x00]; // 5G standalone
 
-    // CK || IK -> KAUSF -> KSEAF
+    // CK || IK -> KAUSF
     let k_ausf = derive_kausf(&ck, &ik, sn_name, &sqn_xor_ak);
     println!("KAUSF: {}", hex::encode(k_ausf));
+
+    // KAUSF -> KSEAF
     let k_seaf = derive_kseaf(&k_ausf, sn_name);
     println!("KSEAF: {}", hex::encode(k_seaf));
 
