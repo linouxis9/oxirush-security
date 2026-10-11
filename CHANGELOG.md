@@ -177,8 +177,9 @@ and what a type cannot say is a `Result`. Every call below changes.
   dependencies. p256 is built without its default features, `aes` with its
   `zeroize` and `hazmat` features, and the minimum versions are `aes` 0.9.2,
   `zeroize` 1.9 and `subtle` 2.6. The minimum supported Rust version stays
-  1.88: aes 0.9.3 needs Rust 1.89, and on 1.88 Cargo's resolver takes 0.9.2
-  in its place.
+  1.88, for a project whose resolver chooses dependencies by Rust version,
+  as resolver 3 does: a dependency may publish a version that needs a newer
+  Rust.
 - A failure of the system's random number generator while a SUCI is
   concealed is `SecurityError::Ecies`, where 0.2.0 panicked.
 - `thiserror` is no longer a dependency, nor the `derive` feature of
@@ -206,9 +207,20 @@ and what a type cannot say is a `Result`. Every call below changes.
 
   The compiled code was read for x86-64 with Rust 1.98.1, and no timing
   was measured: the README says what was checked.
-- This costs time in 128-EEA1 and 128-EEA3, which `benches/` measures.
+- This costs time in 128-EEA1 and 128-EEA3, and in their MACs on a short
+  message. `benches/` measures it, on one core of an AMD Ryzen 7 5700G with
+  Rust 1.98.1 here, the lowest median of four runs, and of two for 0.2.0 in
+  the same benchmark. On a 1500-octet message 128-EEA1 takes 18.7 µs and
+  128-EEA3 11.0 µs, where 0.2.0 took 5.1 µs and 5.2 µs; 128-EIA1 takes
+  4.7 µs and 128-EIA3 14.3 µs, where 0.2.0 took 8.4 µs and 13.8 µs. On a
+  64-octet message the four take 1.3 µs to 2.1 µs, where 0.2.0 took 0.53 µs
+  to 0.99 µs.
 - 128-EEA2 encrypts eight counter blocks in one call to the cipher, and
-  128-EIA2 keeps its subkeys and its state in words.
+  128-EIA2 keeps its subkeys and its state in words. On a 1500-octet message
+  they take 0.66 µs and 1.8 µs, where 0.2.0 took 2.8 µs each; on a 64-octet
+  message 0.15 µs and 0.23 µs, where 0.2.0 took 0.15 µs and 0.24 µs.
+- A key derivation takes 0.22 µs, where 0.2.0 took 0.16 µs: HMAC-SHA-256
+  now wipes its hash states, its key block and its inner hash.
 
 ### Added
 

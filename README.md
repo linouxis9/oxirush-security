@@ -96,9 +96,11 @@ Two features, both on by default, bring what only part of the crate needs:
 oxirush-security = { version = "0.3", default-features = false }
 ```
 
-The minimum supported Rust version is 1.88. On 1.88 itself Cargo has to
-choose the dependencies by Rust version, as resolver 3 does, the default of
-edition 2024: `aes` 0.9.3 needs Rust 1.89 and 0.9.2 takes its place.
+The minimum supported Rust version is 1.88. A project that is built with
+that version has to let Cargo choose its dependencies by Rust version, as
+resolver 3 does, the default of edition 2024 (`resolver = "3"` in an older
+workspace): a dependency of this crate may publish a version that needs a
+newer Rust, and that resolver then keeps the last one that 1.88 builds.
 
 ## Terms
 
@@ -437,12 +439,13 @@ the others of `common`) take what the algorithm takes.
 
 ## Test evidence
 
-The unit tests and `tests/spec_vectors.rs` rest on three kinds of reference
+The unit tests and `tests/spec_vectors.rs` rest on four kinds of reference
 values, which do not carry the same weight.
 
 | Kind | What is tested against it |
 |------|---------------------------|
 | **3GPP** test data | 128-EEA1/2/3 and 128-EIA1/2/3 on the TS 33.401 Annex C, TS 35.217, TS 35.218 and TS 35.223 sets, including non-byte-aligned EEA1, EEA2, EEA3, EIA1, EIA2 and EIA3 inputs; the SNOW 3G and ZUC keystreams; SUCI on every TS 33.501 Annex C.4 data set. |
+| **RFC and FIPS** test data | HMAC-SHA-256, which is this crate's over the SHA-256 of `sha2`, on test cases 1, 2, 3, 6 and 7 of RFC 4231; SHA-256 on the examples of FIPS 180-4; the subkeys of AES-CMAC on the example of RFC 4493. |
 | Values of **other implementations** | The 5G AKA chain from the TS 35.208 test set 1 MILENAGE outputs through KAUSF, XRES\*, HXRES\*, KSEAF, KAMF, the NAS keys, KgNB and NH, which `tests/five_g_aka_chain.py` derives with the HMAC-SHA-256 of Python's standard library; HASHMME on ATTACH REQUESTs and the values a network returned for them. |
 | Values **calculated** in the tests | The other 5GS KDFs, the EPS and interworking KDFs, and the NAS container, short and re-establishment MACs are compared with HMAC-SHA-256 or the MAC over the parameter layout as the test writes it. The identity encodings and the algorithm selection are compared with what the test writes too. These tests keep a layout from changing unnoticed; they are not independent vectors. |
 
@@ -472,24 +475,35 @@ go tool pprof -top target/criterion/cipher/128-EEA1/1500/profile/profile.pb
 The profile is one that Go's `pprof` reads. With `PROFILE=flamegraph` in
 the environment it is `flamegraph.svg`, in the same directory.
 
-The figures below are from the first form of the benchmark, a loop: the
-fastest batches of three runs on one core of an AMD Ryzen 7 5700G with
-Rust 1.98.1, per call. The last two columns are 0.2.0 in the same loop.
+These are the times of one call, on one core of an AMD Ryzen 7 5700G with
+Rust 1.98.1, while other cores of the machine did other work: each is the
+lowest median of four runs of the benchmark, and of two for 0.2.0, which
+the last two columns have from the same benchmark.
 
 | | 64 octets | 1500 octets | 0.2.0, 64 | 0.2.0, 1500 |
 |---|---|---|---|---|
-| 128-EEA1, 128-NEA1 (SNOW 3G) | 6.3 µs | 53.6 µs | 0.52 µs | 4.8 µs |
-| 128-EEA2, 128-NEA2 (AES-CTR) | 0.17 µs | 1.8 µs | 0.15 µs | 2.8 µs |
-| 128-EEA3, 128-NEA3 (ZUC) | 4.5 µs | 37.9 µs | 0.61 µs | 5.2 µs |
-| 128-EIA1, 128-NIA1 (SNOW 3G) | 5.3 µs | 14.3 µs | 0.78 µs | 8.9 µs |
-| 128-EIA2, 128-NIA2 (AES-CMAC) | 0.23 µs | 1.8 µs | 0.25 µs | 2.9 µs |
-| 128-EIA3, 128-NIA3 (ZUC) | 5.8 µs | 63.0 µs | 0.99 µs | 15.2 µs |
+| 128-EEA1, 128-NEA1 (SNOW 3G) | 2.1 µs | 18.7 µs | 0.53 µs | 5.1 µs |
+| 128-EEA2, 128-NEA2 (AES-CTR) | 0.15 µs | 0.66 µs | 0.15 µs | 2.8 µs |
+| 128-EEA3, 128-NEA3 (ZUC) | 1.3 µs | 11.0 µs | 0.61 µs | 5.2 µs |
+| 128-EIA1, 128-NIA1 (SNOW 3G) | 1.7 µs | 4.7 µs | 0.75 µs | 8.4 µs |
+| 128-EIA2, 128-NIA2 (AES-CMAC) | 0.23 µs | 1.8 µs | 0.24 µs | 2.8 µs |
+| 128-EIA3, 128-NIA3 (ZUC) | 1.5 µs | 14.3 µs | 0.99 µs | 13.8 µs |
 
-SNOW 3G and ZUC are 4 to 12 times slower than in 0.2.0: each S-box lookup
-now reads the whole table, so that its memory accesses do not depend on the
-key. A key derivation, one HMAC-SHA-256, takes 0.21 µs (0.17 µs in 0.2.0).
-SUCI concealment takes 57 µs with Profile A and 289 µs with Profile B, and
-deconcealment 44 µs and 149 µs.
+128-EEA1 takes 3.7 to 4 times as long as in 0.2.0, and 128-EEA3 a little
+over twice as long. 0.2.0 read its S-boxes from tables, at indices taken
+from the state of the generator: here no memory access depends on a
+secret, and the S-box SQ of SNOW 3G, which no instruction of a processor
+computes, is most of the time of 128-EEA1. The two MACs pay for it on a
+short message, which is mostly the initialization of the generator. On a
+long message their multiplications, now carry-less products, make up for
+it. AES-CTR encrypts eight counter blocks at a time.
+
+A key derivation, one HMAC-SHA-256, takes 0.22 µs, and 0.16 µs in 0.2.0,
+whose HMAC did not wipe its state. Wiping is also about half of an AES
+call on a short message: the `aes` crate wipes its key schedule one octet
+at a time.
+SUCI concealment takes 57 µs with Profile A and 285 µs with Profile B, and
+deconcealment 44 µs and 148 µs.
 
 ## What it does not do
 
