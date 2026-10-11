@@ -180,6 +180,9 @@ and what a type cannot say is a `Result`. Every call below changes.
   Cargo's resolver takes 0.9.2 in its place.
 - A failure of the system's random number generator while a SUCI is
   concealed is `SecurityError::Ecies`, where 0.2.0 panicked.
+- `thiserror` is no longer a dependency, nor the `derive` feature of
+  `zeroize`: `SecurityError`, `Snow3G` and `Zuc` implement by hand what the
+  macros gave them, with the same error texts.
 - The crate forbids `unsafe` code, of which it had none, and warns on a
   public item without documentation. The 35 items that had none, among them
   `Snow3G`, `Zuc` and the `SecurityError` variants, are documented.
@@ -197,6 +200,18 @@ and what a type cannot say is a `Result`. Every call below changes.
 
 ### Added
 
+- Two Cargo features, both on by default, so that a caller who needs the
+  key derivations and the algorithms alone builds 15 crates and no
+  procedural macro:
+
+  | Features | What the crate has | Crates in its tree |
+  |----------|--------------------|--------------------|
+  | none (`default-features = false`) | The key derivations, the algorithms, NAS integrity and ciphering, 5G-GUTI, PLMN and TBCD | 15 |
+  | `suci` | And SUCI concealment and deconcealment with the null scheme, Profile A and Profile B, which bring X25519 and P-256 | 41 |
+  | `suci` and `nai`, the default | And the SUCI and SUPI of the NAI format, which bring Unicode normalization and IDNA | 71 |
+
+  0.2.0 had no feature and 76 crates. Without `nai`, `suci_to_supi` returns
+  `None` for a SUCI in a NAI format.
 - `constant_time_eq` compares two octet strings through `subtle`, in a time
   that depends on their lengths and not on where they differ: RES* with
   XRES*, HRES* with HXRES*, or another value derived from a key with the one

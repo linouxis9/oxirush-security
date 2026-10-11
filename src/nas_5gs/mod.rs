@@ -22,6 +22,8 @@ pub mod algo;
 pub mod guti;
 pub mod kdf;
 pub mod security;
+#[cfg(feature = "suci")]
+#[cfg_attr(docsrs, doc(cfg(feature = "suci")))]
 pub mod suci;
 
 pub use crate::common::{
@@ -43,9 +45,15 @@ pub use kdf::{
     derive_sor_mac_ue, derive_tnap_usage_key, derive_upu_mac_ausf, derive_upu_mac_ue,
 };
 pub use security::{NasConnection, nas_cipher, nas_container_mac, nas_mac};
+#[cfg(feature = "nai")]
+#[cfg_attr(docsrs, doc(cfg(feature = "nai")))]
 pub use suci::{
     NaiProtectionScheme, NaiSuci, SuciSchemeOutput, SupiType, conceal_network_specific_supi,
-    deconceal_nai_suci, deconceal_network_specific_suci, encode_nai_suci, msin_to_bcd,
-    parse_nai_suci, suci_conceal, suci_decrypt_a, suci_decrypt_b, suci_scheme_output_a,
+    deconceal_nai_suci, deconceal_network_specific_suci, encode_nai_suci, parse_nai_suci,
+};
+#[cfg(feature = "suci")]
+#[cfg_attr(docsrs, doc(cfg(feature = "suci")))]
+pub use suci::{
+    msin_to_bcd, suci_conceal, suci_decrypt_a, suci_decrypt_b, suci_scheme_output_a,
     suci_scheme_output_b, suci_to_string, suci_to_supi,
 };

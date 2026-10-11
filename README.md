@@ -64,11 +64,22 @@ oxirush-security = "0.3"
 hex = "0.4"
 ```
 
-The crate has no Cargo features. The minimum supported Rust version is 1.88.
-On 1.88 itself Cargo has to choose the dependencies by Rust version, as
-resolver 3 does, the default of edition 2024: `aes` 0.9.3 needs Rust 1.89
-and 0.9.2 takes its place. The examples of this page also use the `hex`
-crate.
+Two features, both on by default, bring what only part of the crate needs:
+
+| Features | What the crate has | Crates in its tree |
+|----------|--------------------|--------------------|
+| none | The key derivations, the algorithms, NAS integrity and ciphering, 5G-GUTI, PLMN and TBCD | 15 |
+| `suci` | And SUCI concealment and deconcealment with the null scheme, Profile A and Profile B, which bring X25519 and P-256 | 41 |
+| `suci` and `nai`, the default | And the SUCI and SUPI of the NAI format, which bring Unicode normalization and IDNA | 71 |
+
+```toml
+# The key derivations and the algorithms alone
+oxirush-security = { version = "0.3", default-features = false }
+```
+
+The minimum supported Rust version is 1.88. On 1.88 itself Cargo has to
+choose the dependencies by Rust version, as resolver 3 does, the default of
+edition 2024: `aes` 0.9.3 needs Rust 1.89 and 0.9.2 takes its place.
 
 ## What it implements
 

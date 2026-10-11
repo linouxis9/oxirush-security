@@ -24,13 +24,15 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod common;
 pub mod nas_5gs;
 pub mod nas_eps;
 
-// The examples of the README are compiled and run with the doctests.
-#[cfg(doctest)]
+// The examples of the README are compiled and run with the doctests. They
+// use every feature.
+#[cfg(all(doctest, feature = "nai"))]
 #[doc = include_str!("../README.md")]
 struct Readme;
 
@@ -46,17 +48,29 @@ pub use common::{
     plmn_from_bytes, plmn_to_bytes, tbcd_decode, tbcd_encode,
 };
 pub use common::{error, input, nea, nia, plmn, snow3g, zuc};
+#[cfg(feature = "suci")]
+#[cfg_attr(docsrs, doc(cfg(feature = "suci")))]
+pub use nas_5gs::suci;
 pub use nas_5gs::{
-    IabIpAddress, KamfMobilityDirection, NaiProtectionScheme, NaiSuci, NasConnection,
-    SuciSchemeOutput, SupiType, TnapKeyUsage, build_guti_bytes, compute_hres_star,
-    compute_xres_star, conceal_network_specific_supi, deconceal_nai_suci,
-    deconceal_network_specific_suci, derive_kamf, derive_kamf_prime, derive_kamf_prime_handover,
-    derive_kamf_prime_idle, derive_kausf, derive_kgnb, derive_kiab, derive_knas_enc,
-    derive_knas_int, derive_kseaf, derive_ksn, derive_nh, derive_sor_mac_ausf, derive_sor_mac_ue,
-    derive_tnap_usage_key, derive_upu_mac_ausf, derive_upu_mac_ue, encode_nai_suci,
-    mobile_identity_type, msin_to_bcd, nas_cipher, nas_mac, parse_guti_tmsi, parse_nai_suci,
-    parse_s_tmsi, select_ciphering_algo, select_ciphering_algo_with_preference,
-    select_integrity_algo, select_integrity_algo_with_preference, suci_conceal, suci_decrypt_a,
-    suci_decrypt_b, suci_scheme_output_a, suci_scheme_output_b, suci_to_string, suci_to_supi,
+    IabIpAddress, KamfMobilityDirection, NasConnection, TnapKeyUsage, build_guti_bytes,
+    compute_hres_star, compute_xres_star, derive_kamf, derive_kamf_prime,
+    derive_kamf_prime_handover, derive_kamf_prime_idle, derive_kausf, derive_kgnb, derive_kiab,
+    derive_knas_enc, derive_knas_int, derive_kseaf, derive_ksn, derive_nh, derive_sor_mac_ausf,
+    derive_sor_mac_ue, derive_tnap_usage_key, derive_upu_mac_ausf, derive_upu_mac_ue,
+    mobile_identity_type, nas_cipher, nas_mac, parse_guti_tmsi, parse_s_tmsi,
+    select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
+    select_integrity_algo_with_preference,
 };
-pub use nas_5gs::{algo, guti, kdf, suci};
+#[cfg(feature = "nai")]
+#[cfg_attr(docsrs, doc(cfg(feature = "nai")))]
+pub use nas_5gs::{
+    NaiProtectionScheme, NaiSuci, SuciSchemeOutput, SupiType, conceal_network_specific_supi,
+    deconceal_nai_suci, deconceal_network_specific_suci, encode_nai_suci, parse_nai_suci,
+};
+pub use nas_5gs::{algo, guti, kdf};
+#[cfg(feature = "suci")]
+#[cfg_attr(docsrs, doc(cfg(feature = "suci")))]
+pub use nas_5gs::{
+    msin_to_bcd, suci_conceal, suci_decrypt_a, suci_decrypt_b, suci_scheme_output_a,
+    suci_scheme_output_b, suci_to_string, suci_to_supi,
+};

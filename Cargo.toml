@@ -12,6 +12,15 @@ categories = ["cryptography", "network-programming"]
 readme = "README.md"
 exclude = [".github/", ".gitignore"]
 
+[features]
+default = ["suci", "nai"]
+# SUCI concealment and deconcealment with the null scheme, Profile A (X25519)
+# and Profile B (P-256), TS 33.501 Annex C
+suci = ["dep:x25519-dalek", "dep:p256", "dep:getrandom"]
+# SUCI and SUPI in the NAI format, TS 23.003 clause 28.7.3: network specific
+# identifiers, GCI and GLI. It brings Unicode normalization and IDNA.
+nai = ["suci", "dep:unicode-normalization", "dep:idna", "dep:base64", "dep:hex"]
+
 [dependencies]
 # KDF and SUCI: SHA-256 whose state is wiped on drop
 sha2 = { version = "0.11", features = ["zeroize"] }
@@ -19,24 +28,36 @@ sha2 = { version = "0.11", features = ["zeroize"] }
 # NIA2 (AES-CMAC) + NEA2 (AES-CTR), with key schedules wiped on drop
 aes = { version = "0.9.2", features = ["zeroize"] }
 
-# SUCI concealment (TS 33.501 Annex C)
-x25519-dalek = { version = "3", features = ["static_secrets"] }
-p256 = { version = "0.14", default-features = false, features = ["ecdh", "getrandom"] }
-getrandom = "0.4"
-
-# Error handling
-thiserror = "2"
-
 # Key material zeroization
-zeroize = { version = "1.9", features = ["derive"] }
+zeroize = "1.9"
 
 # Constant-time comparison for SUCI MAC and constant_time_eq
 subtle = "2.6"
 
-# Hex encoding for SUCI scheme output
+# `suci`: ECIES over X25519 and P-256 (TS 33.501 Annex C.3)
+x25519-dalek = { version = "3", features = ["static_secrets"], optional = true }
+p256 = { version = "0.14", default-features = false, features = ["ecdh", "getrandom"], optional = true }
+getrandom = { version = "0.4", optional = true }
+
+# `nai`: RFC 7542 requires NFC-normalized UTF-8 NAIs and RFC 5891 realms; the
+# keys and the ciphertext of a NAI are hexadecimal, and a GLI is base64.
+unicode-normalization = { version = "0.1", optional = true }
+idna = { version = "1", optional = true }
+base64 = { version = "0.22", optional = true }
+hex = { version = "0.4", optional = true }
+
+[dev-dependencies]
 hex = "0.4"
 
-# RFC 7542 requires NFC-normalized UTF-8 NAIs and RFC 5891 realms.
-unicode-normalization = "0.1"
-idna = "1"
-base64 = "0.22"
+[[example]]
+name = "suci_conceal"
+required-features = ["nai"]
+
+[[test]]
+name = "suci_validation"
+required-features = ["suci"]
+
+# docs.rs shows which feature an item needs
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

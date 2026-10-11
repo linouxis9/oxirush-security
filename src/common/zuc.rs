@@ -122,13 +122,29 @@ fn sbox(x: u32) -> u32 {
 
 /// ZUC keystream generator: the LFSR and the two registers of the nonlinear
 /// function, initialized with a key and an IV. The state is wiped on drop.
-#[derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct Zuc {
     s: [u32; 16], // LFSR (31-bit stages)
     r1: u32,
     r2: u32,
     started: bool,
 }
+
+impl zeroize::Zeroize for Zuc {
+    fn zeroize(&mut self) {
+        self.s.zeroize();
+        self.r1.zeroize();
+        self.r2.zeroize();
+        self.started.zeroize();
+    }
+}
+
+impl Drop for Zuc {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(self);
+    }
+}
+
+impl zeroize::ZeroizeOnDrop for Zuc {}
 
 impl Zuc {
     /// Initialize ZUC with 128-bit key and 128-bit IV.

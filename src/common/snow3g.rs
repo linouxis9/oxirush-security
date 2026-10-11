@@ -174,7 +174,6 @@ fn s2(w: u32) -> u32 {
 
 /// SNOW 3G keystream generator: the LFSR and the FSM registers, initialized
 /// with a key and an IV. The state is wiped on drop.
-#[derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct Snow3G {
     lfsr: [u32; 16],
     r1: u32,
@@ -182,6 +181,24 @@ pub struct Snow3G {
     r3: u32,
     started: bool,
 }
+
+impl zeroize::Zeroize for Snow3G {
+    fn zeroize(&mut self) {
+        self.lfsr.zeroize();
+        self.r1.zeroize();
+        self.r2.zeroize();
+        self.r3.zeroize();
+        self.started.zeroize();
+    }
+}
+
+impl Drop for Snow3G {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(self);
+    }
+}
+
+impl zeroize::ZeroizeOnDrop for Snow3G {}
 
 impl Snow3G {
     /// Initialize SNOW 3G with key and IV as 4 u32 words each.
