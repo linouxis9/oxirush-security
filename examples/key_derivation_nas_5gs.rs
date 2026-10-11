@@ -42,11 +42,12 @@ fn main() {
     println!("KAMF:  {}", hex::encode(k_amf));
 
     // KAMF -> KNASint (NIA2 = algorithm ID 2, distinguisher 0x02)
-    let k_nas_int = derive_nas_key(&k_amf, 0x02, 2); // integrity, NIA2
+    // The key is the 128 least significant bits of the 256 that are derived
+    let k_nas_int = extract_128(&derive_nas_key(&k_amf, 0x02, 2)); // integrity, NIA2
     println!("KNASint (NIA2): {}", hex::encode(k_nas_int));
 
     // KAMF -> KNASenc (NEA2 = algorithm ID 2, distinguisher 0x01)
-    let k_nas_enc = derive_nas_key(&k_amf, 0x01, 2); // ciphering, NEA2
+    let k_nas_enc = extract_128(&derive_nas_key(&k_amf, 0x01, 2)); // ciphering, NEA2
     println!("KNASenc (NEA2): {}", hex::encode(k_nas_enc));
 
     // KAMF -> KAMF' for idle mobility (UL NAS COUNT = 0)

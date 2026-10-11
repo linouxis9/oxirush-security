@@ -307,9 +307,9 @@ assert_eq!(tbcd_decode(&imsi), "208930000000001");
 
 ## Inputs that panic
 
-A function that takes a protocol value documented as bounded panics on a
-value out of range, and lists its conditions under `# Panics`. Check values
-received from a peer before passing them. SUCI concealment, deconcealment and
+A function panics when an argument is outside the range that the
+specification allows, and lists those conditions under `# Panics`. Check
+values received from a peer before passing them. SUCI concealment, deconcealment and
 parsing return a `SecurityError` or `None` instead.
 
 | Input | Accepted |
@@ -324,10 +324,10 @@ parsing return a `SecurityError` or `None` instead.
 | TBCD string | decimal digits, `*`, `#`, `a`, `b` and `c` |
 | AMF set ID and AMF pointer | 10 bits and 6 bits |
 
-`nas_mac` and `nas_cipher` are of NAS and check its ranges, in `nas_5gs`,
-in `nas_eps` and at the crate root, which has those of `nas_5gs`. The
-functions named after an algorithm (`nia_mac`, `nea_cipher`, `nia2_mac` and
-the others of `common`) take what the algorithm takes.
+`nas_mac` and `nas_cipher` enforce the ranges of NAS. They exist in
+`nas_5gs` and in `nas_eps`, and the crate root re-exports those of `nas_5gs`.
+The functions named after an algorithm (`nia_mac`, `nea_cipher`, `nia2_mac`
+and the others of `common`) take what the algorithm takes.
 
 ## Key material and timing
 

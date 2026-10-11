@@ -32,11 +32,12 @@ fn main() {
     println!("KASME: {}", hex::encode(k_asme));
 
     // KASME -> KNASint (EIA2 = algorithm ID 2, distinguisher 0x02)
-    let k_nas_int = derive_nas_key(&k_asme, 0x02, 2); // integrity, EIA2
+    // The key is the 128 least significant bits of the 256 that are derived
+    let k_nas_int = extract_128(&derive_nas_key(&k_asme, 0x02, 2)); // integrity, EIA2
     println!("KNASint (EIA2): {}", hex::encode(k_nas_int));
 
     // KASME -> KNASenc (EEA2 = algorithm ID 2, distinguisher 0x01)
-    let k_nas_enc = derive_nas_key(&k_asme, 0x01, 2); // ciphering, EEA2
+    let k_nas_enc = extract_128(&derive_nas_key(&k_asme, 0x01, 2)); // ciphering, EEA2
     println!("KNASenc (EEA2): {}", hex::encode(k_nas_enc));
 
     // KASME -> KeNB (for initial context setup)
