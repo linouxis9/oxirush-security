@@ -105,6 +105,17 @@ jobs:
           fuzz/corpus/${{ matrix.target }} fuzz/seeds/${{ matrix.target }}
           -- -max_total_time=60 -max_len=512
 
+  bench:
+    name: Benchmark runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Each case once, without timing: the figures of a shared runner say
+      # nothing
+      - run: cargo test --benches
+
   package:
     name: Package
     runs-on: ubuntu-latest
