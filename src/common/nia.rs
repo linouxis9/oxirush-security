@@ -36,7 +36,7 @@ use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, Direction, IntegrityAlgorithm, octets_of};
 use crate::snow3g::Snow3G;
 use crate::zuc::Zuc;
-use aes::Aes128;
+use aes::Aes128Enc;
 use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -278,14 +278,14 @@ fn cmac_double(block: &mut [u8; 16]) {
     block[15] = (block[15] << 1) ^ (0x87 & 0u8.wrapping_sub(carry));
 }
 
-fn aes_encrypt_block(cipher: &Aes128, block: &mut [u8; 16]) {
+fn aes_encrypt_block(cipher: &Aes128Enc, block: &mut [u8; 16]) {
     let mut value = aes::Block::from(*block);
     cipher.encrypt_block(&mut value);
     block.copy_from_slice(&value);
 }
 
 /// `state = AES(state XOR block)`, one step of the CBC-MAC.
-fn cmac_absorb(cipher: &Aes128, state: &mut [u8; 16], block: &[u8; 16]) {
+fn cmac_absorb(cipher: &Aes128Enc, state: &mut [u8; 16], block: &[u8; 16]) {
     for (left, right) in state.iter_mut().zip(block) {
         *left ^= right;
     }
@@ -299,7 +299,7 @@ fn eia2(
     direction: Direction,
     message: BitString<'_>,
 ) -> u32 {
-    let cipher = Aes128::new(key.into());
+    let cipher = Aes128Enc::new(key.into());
     let mut l = [0u8; 16];
     aes_encrypt_block(&cipher, &mut l);
     let mut k1 = l;
@@ -307,25 +307,26 @@ fn eia2(
     let mut k2 = k1;
     cmac_double(&mut k2);
 
-    // The first block begins with COUNT || BEARER || DIRECTION || 0^26
+    // The first block begins with COUNT || BEARER || DIRECTION || 0^26, and
+    // takes the first eight octets of the message
     let mut block = [0u8; 16];
     block[..4].copy_from_slice(&count.to_be_bytes());
     block[4] = (bearer.get() << 3) | (u8::from(direction) << 2);
-    let mut filled = 8;
+    let (head, rest) = message.octets.split_at(message.octets.len().min(8));
+    block[8..8 + head.len()].copy_from_slice(head);
+    let mut filled = 8 + head.len();
 
-    // Every block but the last goes through the CBC-MAC as it is
+    // Every block but the last goes through the CBC-MAC as it is: the last
+    // one, of 1 to 16 octets, is kept for the subkey
     let mut state = [0u8; 16];
-    let mut remaining = message.octets;
-    loop {
-        let take = (16 - filled).min(remaining.len());
-        block[filled..filled + take].copy_from_slice(&remaining[..take]);
-        filled += take;
-        remaining = &remaining[take..];
-        if remaining.is_empty() {
-            break;
-        }
+    if let Some(last_index) = rest.len().checked_sub(1) {
         cmac_absorb(&cipher, &mut state, &block);
-        filled = 0;
+        let (body, last) = rest.split_at(last_index - last_index % 16);
+        for chunk in body.as_chunks::<16>().0 {
+            cmac_absorb(&cipher, &mut state, chunk);
+        }
+        block[..last.len()].copy_from_slice(last);
+        filled = last.len();
     }
 
     // The last block: K1 when it is complete, otherwise a one bit, zero

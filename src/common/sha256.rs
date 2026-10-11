@@ -34,7 +34,7 @@ use zeroize::Zeroizing;
 const _: fn() = || {
     fn wiped_on_drop<T: zeroize::ZeroizeOnDrop>() {}
     wiped_on_drop::<Sha256>();
-    wiped_on_drop::<aes::Aes128>();
+    wiped_on_drop::<aes::Aes128Enc>();
 };
 
 /// SHA-256 (FIPS 180-4) of the concatenation of `parts`, in a buffer that

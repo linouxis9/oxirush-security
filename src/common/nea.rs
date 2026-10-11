@@ -39,7 +39,7 @@ use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, octets_of};
 use crate::snow3g::Snow3G;
 use crate::zuc::Zuc;
-use aes::Aes128;
+use aes::Aes128Enc;
 use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -194,7 +194,7 @@ pub fn nea2_cipher(
         return;
     }
 
-    let cipher = Aes128::new(key.into());
+    let cipher = Aes128Enc::new(key.into());
 
     // The upper eight octets of the counter block are fixed
     let mut counter_block = [0u8; 16];

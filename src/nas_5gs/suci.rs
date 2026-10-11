@@ -26,7 +26,7 @@
 //! are the `nai` feature beside it.
 
 use crate::error::SecurityError;
-use aes::Aes128;
+use aes::Aes128Enc;
 use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, Zeroizing};
@@ -85,7 +85,7 @@ fn ansi_x963_kdf(
 /// as one 128-bit big-endian integer. The keystream and counter blocks are
 /// wiped.
 fn aes128_ctr(key: &[u8; 16], icb: &[u8; 16], data: &[u8]) -> Vec<u8> {
-    let aes = Aes128::new(key.into());
+    let aes = Aes128Enc::new(key.into());
     let mut out = Vec::with_capacity(data.len());
     let mut counter = Zeroizing::new(*icb);
     for chunk in data.chunks(16) {
@@ -690,7 +690,7 @@ mod tests {
         let key = [0x2b; 16];
         let block = |counter: [u8; 16]| {
             let mut block = aes::Block::from(counter);
-            Aes128::new(&key.into()).encrypt_block(&mut block);
+            Aes128Enc::new(&key.into()).encrypt_block(&mut block);
             block
         };
         let mut icb = [0u8; 16];
