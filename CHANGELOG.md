@@ -6,25 +6,140 @@ All notable changes to `oxirush-security` are recorded here.
 
 ### Breaking changes relative to 0.2.0
 
-- **NAS functions and algorithms.** `nas_mac` and `nas_cipher` at the crate
-  root are those of `nas_5gs`: they panic on a NAS COUNT above 2^24 - 1 and
-  on a NAS connection identifier other than 1 or 2. In 0.2.0 the root had
-  the algorithms under these names, which take any 32-bit COUNT and a 5-bit
-  BEARER, so `oxirush_security::nas_mac` accepted what
-  `oxirush_security::nas_5gs::nas_mac` refuses. The algorithms are renamed
-  after what they are: `nas_mac` and `nas_mac_bits` of `common` are `nia_mac`
-  and `nia_mac_bits`, and `nas_cipher` and `nas_cipher_bits` are `nea_cipher`
-  and `nea_cipher_bits`, in `common`, in `common::nia` and `common::nea`, at
-  the crate root, and in `nas_5gs::security` and `nas_eps::security` for the
-  two `*_bits` forms. Call `nia_mac` or `nea_cipher` where an input is
-  outside NAS, such as the test sets of TS 33.401 Annex C or a PDCP COUNT,
-  and `nas_mac` or `nas_cipher` for a NAS message.
-- **KeNB derivation.** `nas_eps::derive_kenb` panics on a COUNT above
-  2^24 - 1 other than the all-ones handover sentinel, like
-  `nas_5gs::derive_kgnb`; 0.2.0 accepted any 32-bit value, although the EPS
-  NAS COUNT has 24 bits (TS 24.301 §4.4.3.1). Check a COUNT that is not known
-  to be in range before the call, and pass `0xffff_ffff` only for the 5GS to
-  EPS handover of TS 33.501 §8.3.2.
+No public function panics on its arguments any more. 0.2.0 took the
+algorithm, the direction, the bearer and the COUNT as integers and panicked
+on a value out of range, as its `# Panics` sections said. A value that a
+specification bounds now has a type that holds only the values in range,
+and what a type cannot say is a `Result`. Every call below changes.
+
+- **New types**, at the crate root and in `nas_5gs`, `nas_eps` and `common`:
+
+  | Type | Values | From an integer |
+  |------|--------|-----------------|
+  | `IntegrityAlgorithm` | `Null`, `Snow3g`, `Aes`, `Zuc`, also named `NIA0` to `NIA3` and `EIA0` to `EIA3` | `try_from(u8)`, `Err(UnsupportedAlgorithm)` for 4 and above |
+  | `CipheringAlgorithm` | `Null`, `Snow3g`, `Aes`, `Zuc`, also named `NEA0` to `NEA3` and `EEA0` to `EEA3` | `try_from(u8)` |
+  | `Direction` | `Uplink` (0), `Downlink` (1) | `try_from(u8)` |
+  | `NasCount` | 0 to 2^24 - 1 | `new(u32)`, `try_from(u32)`, `from_parts(overflow, sequence_number)` |
+  | `AccessKeyCount` | `Nas(NasCount)`, or `Handover` for 2^32 - 1 | `try_from(u32)`; a `NasCount` converts into it |
+  | `NasConnection` (5GS) | `ThreeGpp` (1), `Non3Gpp` (2) | `try_from(u8)` |
+  | `Bearer` | 0 to 31 | `new(u8)`, `try_from(u8)`; a `NasConnection` converts into it |
+
+  `u8::from` and `u32::from` give the number back.
+
+- **NAS integrity and ciphering.** `nas_mac` and `nas_cipher` take these
+  types and cannot fail:
+
+  ```rust
+  // 0.2.0
+  let mac = nas_5gs::nas_mac(&key, count, 1, 0, &message, 2);
+  nas_eps::nas_cipher(&key, count, 1, &mut data, 2);
+
+  // 0.3.0
+  let count = NasCount::new(count)?;
+  let mac = nas_5gs::nas_mac(
+      &key, count, NasConnection::ThreeGpp, Direction::Uplink, &message, IntegrityAlgorithm::NIA2,
+  );
+  nas_eps::nas_cipher(&key, count, Direction::Downlink, &mut data, CipheringAlgorithm::EEA2);
+  ```
+
+  `nas_container_mac`, `nas_eps::re_establishment_nas_mac`,
+  `service_request_short_mac` and `service_request_short_mac_with_header`
+  take them too. `re_establishment_nas_mac` returns a `Result`, for a cell
+  identity above 28 bits, and so does
+  `service_request_short_mac_with_header`, for a first octet that is not
+  that of a SERVICE REQUEST.
+
+- **The algorithms.** `nas_mac` and `nas_cipher` at the crate root are now
+  those of `nas_5gs`, for a NAS message. In 0.2.0 the root had the
+  algorithms themselves under these names, which take any 32-bit COUNT and a
+  5-bit BEARER. They are renamed after what they are, in `common`, in
+  `common::nia` and `common::nea`, at the crate root, and in
+  `nas_5gs::security` and `nas_eps::security`:
+
+  | 0.2.0 | 0.3.0 |
+  |-------|-------|
+  | `common::nas_mac(key, count, bearer: u8, direction: u8, message, algo_id: u8) -> u32` | `nia_mac(key, count, Bearer, Direction, message, IntegrityAlgorithm) -> u32` |
+  | `common::nas_mac_bits(.., bit_length, algo_id) -> u32` | `nia_mac_bits(.., bit_length, IntegrityAlgorithm) -> Result<u32, SecurityError>` |
+  | `common::nas_cipher(key, count, bearer, direction, data, algo_id)` | `nea_cipher(key, count, Bearer, Direction, data, CipheringAlgorithm)` |
+  | `common::nas_cipher_bits(.., bit_length, algo_id)` | `nea_cipher_bits(.., bit_length, CipheringAlgorithm) -> Result<(), SecurityError>` |
+  | `nia1_mac(.., message, bit_length) -> u32` | `nia1_mac_bits(.., message, bit_length) -> Result<u32, SecurityError>`; `nia1_mac(.., message) -> u32` is the MAC of whole octets |
+  | `nia3_mac(.., message, bit_length) -> u32` | `nia3_mac_bits(..)` and `nia3_mac(..)`, likewise |
+  | `nia2_mac_bits(..) -> u32` | `-> Result<u32, SecurityError>` |
+  | `nea1_cipher_bits`, `nea2_cipher_bits`, `nea3_cipher_bits` | `-> Result<(), SecurityError>` |
+
+  Each takes a `Bearer` and a `Direction` where 0.2.0 took two `u8`. The
+  whole-octet functions cannot fail. A `*_bits` function returns
+  `Err(BitLengthExceedsData)` for a length that the buffer does not hold.
+  Call `nia_mac` or `nea_cipher` where an input is outside NAS, such as the
+  test sets of TS 33.401 Annex C or a PDCP COUNT, and `nas_mac` or
+  `nas_cipher` for a NAS message.
+
+- **Algorithm keys.** A function for each key replaces `derive_nas_key`,
+  `derive_as_key` and `nas_eps::derive_sgnb_algorithm_key`, which took the
+  algorithm type distinguisher and the algorithm identity as two `u8`. Each
+  returns the 128-bit key, so the call to `extract_128` goes away:
+
+  | 0.2.0 | 0.3.0 |
+  |-------|-------|
+  | `extract_128(&derive_nas_key(&k, 0x01, id))` | `derive_knas_enc(&k, CipheringAlgorithm)` |
+  | `extract_128(&derive_nas_key(&k, 0x02, id))` | `derive_knas_int(&k, IntegrityAlgorithm)` |
+  | `extract_128(&derive_as_key(&k, 0x03, id))` | `derive_krrc_enc(&k, CipheringAlgorithm)` |
+  | `extract_128(&derive_as_key(&k, 0x04, id))` | `derive_krrc_int(&k, IntegrityAlgorithm)` |
+  | `extract_128(&derive_as_key(&k, 0x05, id))` | `derive_kup_enc(&k, CipheringAlgorithm)` |
+  | `extract_128(&derive_as_key(&k, 0x06, id))` | `derive_kup_int(&k, IntegrityAlgorithm)` |
+  | `nas_eps::derive_sgnb_algorithm_key(&s_kgnb, type, id)` | `nas_5gs::derive_krrc_enc(&s_kgnb, ..)` and the three beside it, which are the function of TS 33.501 Annex A.8 that TS 33.401 Annex A.19 names |
+
+  They exist in `nas_5gs` (from KAMF and KgNB) and in `nas_eps` (from KASME
+  and KeNB). For the 256-bit output, or for an identity that is reserved,
+  build the input yourself: `kdf(&k, &build_s(0x69, &[&[type], &[id]])?)`.
+
+- **Key derivations that take a NAS COUNT** take a `NasCount`:
+  `derive_kn3iwf`, `derive_mapped_kasme_idle`,
+  `derive_mapped_kasme_handover`, `derive_kasme_srvcc`, `derive_kamf_prime`
+  and its `_idle` and `_handover` forms, and in `nas_eps`
+  `derive_ck_ik_handover`, `derive_nas_token_full`, `derive_nas_token`,
+  `derive_ck_ik_srvcc`, `derive_ck_ik_idle_mobility` and
+  `derive_mapped_kamf_idle`. `derive_kamf_prime` and its two forms return
+  the key and no longer a `Result`.
+
+- **KgNB and KeNB.** `derive_kgnb` and `nas_eps::derive_kenb` take a
+  `NasCount`, or `AccessKeyCount::Handover` where 0.2.0 took `0xffff_ffff`
+  for a handover (TS 33.501 §6.9.2.3.3, §8.3.2 and §8.4.2).
+  `AccessKeyCount::try_from(u32)` reads a stored value that is one or the
+  other. 0.2.0 let `derive_kenb` take any 32-bit value, although the EPS NAS
+  COUNT has 24 bits (TS 24.301 §4.4.3.1).
+
+- **Functions that return a `Result` where 0.2.0 panicked:**
+
+  | Function | Error |
+  |----------|-------|
+  | `derive_kausf`, `derive_kseaf`, `derive_kamf`, `nas_eps::derive_kn`, `kdf::build_s` | `InputTooLong` for a parameter above 65535 octets |
+  | `compute_xres_star`, which now returns `[u8; 16]` and no longer a `Vec<u8>` | `InputTooLong`, and `InvalidParameter` for an XRES that is not 4 to 16 octets long |
+  | `derive_kng_ran_star`, `derive_kng_ran_star_ng_enb`, `nas_eps::derive_kenb_star` | `OutOfRange` for a PCI or an ARFCN above its largest value |
+  | `build_guti_bytes`, which takes the PLMN as `&[u8; 3]` and returns `[u8; 11]` | `OutOfRange` for an AMF Set ID above 10 bits or an AMF Pointer above 6 |
+  | `plmn_to_bytes`, which now returns `[u8; 3]` and no longer a `Vec<u8>` | `InvalidParameter` for an MCC or an MNC that is not decimal digits of the right number |
+  | `tbcd_encode`, `msin_to_bcd` | `InvalidParameter` for a character that the encoding does not have |
+
+- **Algorithm selection.** `select_integrity_algo` and
+  `select_ciphering_algo` return an `Option<IntegrityAlgorithm>` and an
+  `Option<CipheringAlgorithm>`, and their `*_with_preference` forms take the
+  preference as a slice of those. 0.2.0 ignored a preference above 3, which
+  can no longer be written.
+
+- **`SecurityError`** is `#[non_exhaustive]`, so a `match` on it needs a
+  wildcard arm, and has three more variants: `OutOfRange`,
+  `UnsupportedAlgorithm` and `BitLengthExceedsData`. It is now `Clone`,
+  `PartialEq` and `Eq`. `IntegrityAlgorithm`, `CipheringAlgorithm`,
+  `SupiType`, `SuciSchemeOutput`, `NaiProtectionScheme` and `TnapKeyUsage`
+  are `#[non_exhaustive]` too.
+
+- **Keystream generators.** `Snow3G::generate` and `Zuc::generate`, which
+  returned a `Vec<u32>` of a length that the caller gave, are replaced by
+  `next_word()` and `fill(&mut [u32])`, which allocate nothing.
+
+- **Removed.** `derive_kausf_standard`, deprecated since 0.1.0: call
+  `derive_kausf`.
+
 - **TBCD decoding.** `tbcd_decode` decodes the TS 29.002 TBCD-STRING: 0xA to
   0xE are "*", "#", "a", "b" and "c", and the first 0xF filler ends the
   value. 0.2.0 dropped those nibbles and a 0xF anywhere, so "12*3" decoded as
@@ -94,16 +209,12 @@ All notable changes to `oxirush-security` are recorded here.
 
 ### Fixed
 
-- The whole-octet `nea_cipher`, `nea1_cipher`, `nea2_cipher`, `nea3_cipher`,
-  `nia_mac` and `nia2_mac` widen the length of the buffer to 64 bits before
-  they multiply it by 8. On a 32-bit target the product overflowed `usize`
-  for a buffer of 512 MiB or more: a debug build panicked, and in a release
-  build `nea_cipher`, `nia_mac` and `nia2_mac` took the wrapped product for
-  the length to process. The cores behind these three count the bits in a
-  `usize` and panic on a bit length that does not fit it, so on such a
-  target they refuse a buffer of that size; `nea1_cipher`, `nea2_cipher` and
-  `nea3_cipher` take it. `nia1_mac` and `nia3_mac` converted the bit length
-  with `as`, which dropped its high bits.
+- The algorithms count octets, not bits. On a 32-bit target the length of
+  a buffer of 512 MiB or more, multiplied by 8, overflowed `usize`: a debug
+  build panicked, and in a release build the whole-octet `nas_cipher`,
+  `nas_mac` and `nia2_mac` took the wrapped product for the length to
+  process. `nia1_mac` and `nia3_mac` converted the bit length with `as`,
+  which dropped its high bits.
 - The AES-128-CTR of SUCI Profile A and Profile B counts over the whole
   16-octet block. Only the low 32 bits were incremented, so a plaintext
   longer than one block (a NAI username) was concealed or deconcealed
@@ -129,9 +240,6 @@ All notable changes to `oxirush-security` are recorded here.
 - The `re_establishment_nas_mac` documentation says that the 28-bit reading
   of the target Cell-ID is this crate's interpretation, for which no test
   data or other implementation exists.
-- `derive_kausf`, `derive_kseaf`, `derive_kamf`, and `compute_xres_star`
-  document that they panic on a KDF parameter longer than 65535 octets,
-  which a two-octet L field cannot encode (TS 33.220 Annex B.2).
 - The `suci_to_supi` documentation says that a SUCI in a NAI format gives
   the `username@realm` SUPI without a prefix; it promised
   `imsi-<MCC><MNC><MSIN>` for every SUCI.

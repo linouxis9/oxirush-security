@@ -15,39 +15,47 @@
    limitations under the License.
 */
 
-//! EPS NAS EIA/EEA use with zero bearer and a 24-bit COUNT.
+//! EPS NAS integrity and ciphering (TS 33.401 §8.1 and §8.2): the
+//! algorithms with BEARER 0 and a 24-bit NAS COUNT.
 
+use crate::common::error::SecurityError;
+use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
 pub use crate::common::{
-    nea_cipher_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits, nea3_cipher,
-    nea3_cipher_bits, nia_mac_bits, nia1_mac, nia2_mac, nia2_mac_bits, nia3_mac,
+    nea_cipher, nea_cipher_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits,
+    nea3_cipher, nea3_cipher_bits, nia_mac, nia_mac_bits, nia1_mac, nia1_mac_bits, nia2_mac,
+    nia2_mac_bits, nia3_mac, nia3_mac_bits,
 };
 
-/// Compute an EPS NAS MAC-I with BEARER=0 (EIA0/1/2/3).
+/// Compute the MAC of an EPS NAS message, with BEARER 0.
 ///
-/// `message` is the sequence-number octet followed by the protected payload.
-///
-/// # Panics
-///
-/// Panics if `count` exceeds 2^24 - 1, `direction` exceeds 1, or `algo_id`
-/// exceeds 3.
-pub fn nas_mac(key: &[u8; 16], count: u32, direction: u8, message: &[u8], algo_id: u8) -> u32 {
-    assert!(count <= 0x00ff_ffff, "EPS NAS COUNT exhausted");
-    assert!(direction <= 1, "invalid EPS NAS direction");
-    assert!(algo_id <= 3, "unsupported EPS integrity algorithm");
-    crate::nia::nia_mac(key, count, 0, direction, message, algo_id)
+/// `message` is what the MAC covers: the sequence number octet, then the
+/// NAS message, ciphered when it is to be.
+pub fn nas_mac(
+    key: &[u8; 16],
+    count: NasCount,
+    direction: Direction,
+    message: &[u8],
+    algorithm: IntegrityAlgorithm,
+) -> u32 {
+    nia_mac(
+        key,
+        count.get(),
+        Bearer::ZERO,
+        direction,
+        message,
+        algorithm,
+    )
 }
 
-/// Cipher or decipher an EPS NAS payload with BEARER=0 (EEA0/1/2/3).
-///
-/// # Panics
-///
-/// Panics if `count` exceeds 2^24 - 1, `direction` exceeds 1, or `algo_id`
-/// exceeds 3.
-pub fn nas_cipher(key: &[u8; 16], count: u32, direction: u8, data: &mut [u8], algo_id: u8) {
-    assert!(count <= 0x00ff_ffff, "EPS NAS COUNT exhausted");
-    assert!(direction <= 1, "invalid EPS NAS direction");
-    assert!(algo_id <= 3, "unsupported EPS ciphering algorithm");
-    crate::nea::nea_cipher(key, count, 0, direction, data, algo_id);
+/// Cipher or decipher an EPS NAS message in place, with BEARER 0.
+pub fn nas_cipher(
+    key: &[u8; 16],
+    count: NasCount,
+    direction: Direction,
+    data: &mut [u8],
+    algorithm: CipheringAlgorithm,
+) {
+    nea_cipher(key, count.get(), Bearer::ZERO, direction, data, algorithm);
 }
 
 /// Compute UL_NAS_MAC and XDL_NAS_MAC for RRC connection re-establishment
@@ -65,74 +73,80 @@ pub fn nas_cipher(key: &[u8; 16], count: u32, direction: u8, data: &mut [u8], al
 /// the selected 128-EIA algorithm. That reading is this crate's: no test
 /// data or other implementation exists to check it against.
 ///
-/// # Panics
-///
-/// Panics if `ul_count` exceeds 2^24 - 1, `target_cell_id` exceeds 28 bits,
-/// or `algo_id` exceeds 3.
+/// A `target_cell_id` above 28 bits is [`SecurityError::OutOfRange`].
 pub fn re_establishment_nas_mac(
     key: &[u8; 16],
-    ul_count: u32,
+    ul_count: NasCount,
     target_cell_id: u32,
-    algo_id: u8,
-) -> (u16, u16) {
-    assert!(ul_count <= 0x00ff_ffff, "EPS NAS COUNT exhausted");
-    assert!(
-        target_cell_id <= 0x0fff_ffff,
-        "E-UTRAN Cell Identifier must be 28 bits"
-    );
+    algorithm: IntegrityAlgorithm,
+) -> Result<(u16, u16), SecurityError> {
+    if target_cell_id > 0x0fff_ffff {
+        return Err(SecurityError::OutOfRange {
+            field: "E-UTRAN Cell Identifier",
+            maximum: 0x0fff_ffff,
+            got: target_cell_id.into(),
+        });
+    }
     let encoded = (target_cell_id << 4).to_be_bytes();
-    let mac = crate::common::nia_mac_bits(key, ul_count, 0, 0, &encoded, 28, algo_id);
-    ((mac >> 16) as u16, mac as u16)
+    let mac = nia_mac_bits(
+        key,
+        ul_count.get(),
+        Bearer::ZERO,
+        Direction::Uplink,
+        &encoded,
+        28,
+        algorithm,
+    )?;
+    Ok(((mac >> 16) as u16, mac as u16))
 }
 
-/// Compute the two least significant octets of a SERVICE REQUEST MAC.
+/// Compute the short MAC of a SERVICE REQUEST: the two least significant
+/// octets of the MAC over its first two octets (TS 24.301 §9.9.3.28).
 ///
-/// `ksi_and_sequence_number` contains the 3-bit KSI and 5-bit NAS SQN.
-/// TS 24.301 section 9.9.3.28 protects octets 1 and 2 of the short message.
-///
-/// # Panics
-///
-/// Panics under the conditions of [`nas_mac`].
+/// `ksi_and_sequence_number` is the second octet: the 3-bit KSI and the
+/// 5-bit NAS sequence number. The first octet is 0xC7, security header type
+/// 12 with the protocol discriminator of EMM.
 pub fn service_request_short_mac(
     key: &[u8; 16],
-    count: u32,
-    direction: u8,
+    count: NasCount,
+    direction: Direction,
     ksi_and_sequence_number: u8,
-    algo_id: u8,
+    algorithm: IntegrityAlgorithm,
 ) -> u16 {
-    service_request_short_mac_with_header(
-        key,
-        count,
-        direction,
-        0xc7,
-        ksi_and_sequence_number,
-        algo_id,
-    )
-}
-
-/// Compute a short MAC using the actual received SERVICE REQUEST first octet.
-/// TS 24.301 table 9.3.1 also interprets header nibbles D–F as SERVICE REQUEST.
-///
-/// # Panics
-///
-/// Panics if `first_octet` is not a SERVICE REQUEST header, or under the
-/// conditions of [`nas_mac`].
-pub fn service_request_short_mac_with_header(
-    key: &[u8; 16],
-    count: u32,
-    direction: u8,
-    first_octet: u8,
-    ksi_and_sequence_number: u8,
-    algo_id: u8,
-) -> u16 {
-    assert!(matches!(first_octet, 0xc7 | 0xd7 | 0xe7 | 0xf7));
     nas_mac(
         key,
         count,
         direction,
-        &[first_octet, ksi_and_sequence_number],
-        algo_id,
+        &[0xc7, ksi_and_sequence_number],
+        algorithm,
     ) as u16
+}
+
+/// Compute a short MAC with the first octet that a SERVICE REQUEST was
+/// received with. TS 24.301 §9.3.1 reads the security header types 12 to
+/// 15 as a SERVICE REQUEST, so the octet is 0xC7, 0xD7, 0xE7 or 0xF7.
+///
+/// Another `first_octet` is [`SecurityError::InvalidParameter`].
+pub fn service_request_short_mac_with_header(
+    key: &[u8; 16],
+    count: NasCount,
+    direction: Direction,
+    first_octet: u8,
+    ksi_and_sequence_number: u8,
+    algorithm: IntegrityAlgorithm,
+) -> Result<u16, SecurityError> {
+    if !matches!(first_octet, 0xc7 | 0xd7 | 0xe7 | 0xf7) {
+        return Err(SecurityError::InvalidParameter(
+            "the first octet is not that of a SERVICE REQUEST",
+        ));
+    }
+    Ok(nas_mac(
+        key,
+        count,
+        direction,
+        &[first_octet, ksi_and_sequence_number],
+        algorithm,
+    ) as u16)
 }
 
 #[cfg(test)]
@@ -143,26 +157,99 @@ mod tests {
     fn re_establishment_mac_authenticates_the_28_bit_cell_id() {
         let key = [0x33; 16];
         assert_eq!(
-            re_establishment_nas_mac(&key, 7, 0x0123_4567, 2),
-            (0xe14e, 0xc9e7)
+            re_establishment_nas_mac(
+                &key,
+                NasCount::from_parts(0, 7),
+                0x0123_4567,
+                IntegrityAlgorithm::EIA2
+            ),
+            Ok((0xe14e, 0xc9e7))
+        );
+        assert!(
+            re_establishment_nas_mac(&key, NasCount::ZERO, 0x0fff_ffff, IntegrityAlgorithm::EIA2)
+                .is_ok()
+        );
+        assert_eq!(
+            re_establishment_nas_mac(&key, NasCount::ZERO, 0x1000_0000, IntegrityAlgorithm::EIA2),
+            Err(SecurityError::OutOfRange {
+                field: "E-UTRAN Cell Identifier",
+                maximum: 0x0fff_ffff,
+                got: 0x1000_0000
+            })
         );
     }
 
     #[test]
-    fn eps_nas_algorithms_share_eea_eia_cores() {
+    fn eps_nas_uses_the_algorithms_with_bearer_zero() {
         let key = [0x23; 16];
         let mut payload = b"EPS NAS security".to_vec();
-        for algo in 0..=3 {
-            let mac = nas_mac(&key, 10, 0, &payload, algo);
-            assert_eq!(mac, crate::nia_mac(&key, 10, 0, 0, &payload, algo));
+        let (count, uplink) = (NasCount::from_parts(0, 10), Direction::Uplink);
+        for (integrity, ciphering) in [
+            (IntegrityAlgorithm::EIA0, CipheringAlgorithm::EEA0),
+            (IntegrityAlgorithm::EIA1, CipheringAlgorithm::EEA1),
+            (IntegrityAlgorithm::EIA2, CipheringAlgorithm::EEA2),
+            (IntegrityAlgorithm::EIA3, CipheringAlgorithm::EEA3),
+        ] {
+            let mac = nas_mac(&key, count, uplink, &payload, integrity);
+            assert_eq!(
+                mac,
+                nia_mac(&key, 10, Bearer::ZERO, uplink, &payload, integrity)
+            );
             let original = payload.clone();
-            nas_cipher(&key, 10, 0, &mut payload, algo);
-            nas_cipher(&key, 10, 0, &mut payload, algo);
+            nas_cipher(&key, count, uplink, &mut payload, ciphering);
+            let mut expected = original.clone();
+            nea_cipher(&key, 10, Bearer::ZERO, uplink, &mut expected, ciphering);
+            assert_eq!(payload, expected);
+            nas_cipher(&key, count, uplink, &mut payload, ciphering);
             assert_eq!(payload, original);
         }
+    }
+
+    /// TS 24.301 §9.9.3.28: the short MAC is the 2 least significant octets
+    /// of the MAC over octets 1 and 2 of the SERVICE REQUEST.
+    #[test]
+    fn the_short_mac_covers_the_first_two_octets() {
+        let key = [0x23; 16];
+        let (count, uplink) = (NasCount::from_parts(0, 10), Direction::Uplink);
+        let over = |octets: [u8; 2]| {
+            nia_mac(
+                &key,
+                10,
+                Bearer::ZERO,
+                uplink,
+                &octets,
+                IntegrityAlgorithm::EIA2,
+            ) as u16
+        };
         assert_eq!(
-            service_request_short_mac(&key, 10, 0, 0x2a, 2),
-            crate::nia_mac(&key, 10, 0, 0, &[0xc7, 0x2a], 2) as u16
+            service_request_short_mac(&key, count, uplink, 0x2a, IntegrityAlgorithm::EIA2),
+            over([0xc7, 0x2a])
         );
+        for first_octet in [0xc7, 0xd7, 0xe7, 0xf7] {
+            assert_eq!(
+                service_request_short_mac_with_header(
+                    &key,
+                    count,
+                    uplink,
+                    first_octet,
+                    0x2a,
+                    IntegrityAlgorithm::EIA2
+                ),
+                Ok(over([first_octet, 0x2a]))
+            );
+        }
+        for first_octet in [0x07, 0x17, 0xb7, 0xc0, 0xc2] {
+            assert!(
+                service_request_short_mac_with_header(
+                    &key,
+                    count,
+                    uplink,
+                    first_octet,
+                    0x2a,
+                    IntegrityAlgorithm::EIA2
+                )
+                .is_err()
+            );
+        }
     }
 }

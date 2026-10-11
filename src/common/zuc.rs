@@ -155,8 +155,8 @@ impl Zuc {
         z
     }
 
-    /// Generate `n` keystream words.
-    pub fn generate(&mut self, n: usize) -> Vec<u32> {
+    /// The next keystream word.
+    pub fn next_word(&mut self) -> u32 {
         if !self.started {
             // TS 35.222 discards one word after initialization, once per state.
             let (x0, x1, x2, x3) = self.bit_reorg();
@@ -164,15 +164,17 @@ impl Zuc {
             self.lfsr_keystream();
             self.started = true;
         }
+        let (x0, x1, x2, x3) = self.bit_reorg();
+        let word = self.f(x0, x1, x2, x3) ^ x3;
+        self.lfsr_keystream();
+        word
+    }
 
-        let mut ks = Vec::with_capacity(n);
-        for _ in 0..n {
-            let (x0, x1, x2, x3) = self.bit_reorg();
-            let w = self.f(x0, x1, x2, x3);
-            ks.push(w ^ x3);
-            self.lfsr_keystream();
+    /// Fill `words` with the next keystream words.
+    pub fn fill(&mut self, words: &mut [u32]) {
+        for word in words {
+            *word = self.next_word();
         }
-        ks
     }
 
     /// Bit Reorganization: extract X0..X3 from LFSR stages.
@@ -265,14 +267,17 @@ mod tests {
     }
 
     #[test]
-    fn split_generate_matches_single_call() {
+    fn split_fill_matches_single_call() {
         let key = [0x23; 16];
         let iv = [0x42; 16];
         let mut one = Zuc::new(&key, &iv);
         let mut split = Zuc::new(&key, &iv);
-        let expected = one.generate(8);
-        let mut actual = split.generate(3);
-        actual.extend(split.generate(5));
+        let mut expected = [0; 8];
+        one.fill(&mut expected);
+        let mut actual = [0; 8];
+        let (first, second) = actual.split_at_mut(3);
+        split.fill(first);
+        split.fill(second);
         assert_eq!(actual, expected);
     }
 
@@ -283,7 +288,8 @@ mod tests {
         let key = [0u8; 16];
         let iv = [0u8; 16];
         let mut z = Zuc::new(&key, &iv);
-        let ks = z.generate(2);
+        let mut ks = [0; 2];
+        z.fill(&mut ks);
         assert_eq!(ks[0], 0x27BE_DE74);
         assert_eq!(ks[1], 0x0180_82DA);
     }
@@ -294,7 +300,8 @@ mod tests {
         let key = [0xFFu8; 16];
         let iv = [0xFFu8; 16];
         let mut z = Zuc::new(&key, &iv);
-        let ks = z.generate(2);
+        let mut ks = [0; 2];
+        z.fill(&mut ks);
         assert_eq!(ks[0], 0x0657_CFA0);
         assert_eq!(ks[1], 0x7096_398B);
     }
@@ -311,7 +318,8 @@ mod tests {
             0xC7, 0x66,
         ];
         let mut z = Zuc::new(&key, &iv);
-        let ks = z.generate(2);
+        let mut ks = [0; 2];
+        z.fill(&mut ks);
         assert_eq!(ks[0], 0x14F1_C272);
         assert_eq!(ks[1], 0x3279_C419);
     }

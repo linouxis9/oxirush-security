@@ -31,7 +31,7 @@ fn main() {
     println!("MSIN: {msin}");
 
     // ── Null scheme ──────────────────────────────────────────────────────
-    let msin_bcd = msin_to_bcd(msin);
+    let msin_bcd = msin_to_bcd(msin).expect("an MSIN of decimal digits");
     println!(
         "\n--- Null scheme (0x00) ---\nMSIN BCD: {}",
         hex::encode(&msin_bcd)

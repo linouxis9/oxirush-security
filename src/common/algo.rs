@@ -15,78 +15,106 @@
    limitations under the License.
 */
 
-//! Shared NAS algorithm selection for 5GS and EPS.
+//! Algorithm selection from the capabilities of a UE, for 5GS and EPS.
 //!
-//! The first capability byte has EA bits and the second has IA bits. Both
-//! TS 24.501 and TS 24.301 assign bit 8 to algorithm 0, bit 7 to algorithm 1,
-//! bit 6 to algorithm 2, and bit 5 to algorithm 3.
+//! A UE security capability gives one octet to the ciphering algorithms
+//! and one to the integrity algorithms. TS 24.501 §9.11.3.54 and TS 24.301
+//! §9.9.3.34 both assign bit 8 to algorithm 0, bit 7 to algorithm 1, bit 6
+//! to algorithm 2 and bit 5 to algorithm 3, so one function reads the octet
+//! of either system.
+
+use crate::common::input::{CipheringAlgorithm, IntegrityAlgorithm};
 
 /// Default integrity algorithm preference: algorithm 2 > 1 > 3.
 /// Null integrity is excluded from ordinary protected NAS signalling.
-const NIA_PREFERENCE: &[u8] = &[2, 1, 3];
+const INTEGRITY_PREFERENCE: &[IntegrityAlgorithm] = &[
+    IntegrityAlgorithm::Aes,
+    IntegrityAlgorithm::Snow3g,
+    IntegrityAlgorithm::Zuc,
+];
 
 /// Default ciphering algorithm preference: algorithm 2 > 1 > 3 > 0.
-const NEA_PREFERENCE: &[u8] = &[2, 1, 3, 0];
+const CIPHERING_PREFERENCE: &[CipheringAlgorithm] = &[
+    CipheringAlgorithm::Aes,
+    CipheringAlgorithm::Snow3g,
+    CipheringAlgorithm::Zuc,
+    CipheringAlgorithm::Null,
+];
 
-/// Select the best integrity algorithm supported by the UE.
+/// Select the integrity algorithm for a UE with the default preference:
+/// algorithm 2, then 1, then 3.
 ///
-/// `nia_capability` is the IA capability byte.
-/// Returns `Some(algorithm_id)` (0x01–0x03), or `None` if no valid algorithm matches.
-/// Algorithm 0 (null) is not selected for ordinary protected signalling.
-pub fn select_integrity_algo(nia_capability: u8) -> Option<u8> {
-    select_integrity_algo_with_preference(nia_capability, NIA_PREFERENCE)
+/// `capability` is the octet of the integrity algorithms: 5G-IA0 to 5G-IA7
+/// or EIA0 to EIA7. The null algorithm is not selected, as ordinary
+/// signalling must not use it; `None` when the UE supports none of the
+/// three others.
+pub fn select_integrity_algo(capability: u8) -> Option<IntegrityAlgorithm> {
+    select_integrity_algo_with_preference(capability, INTEGRITY_PREFERENCE)
 }
 
-/// Select the first integrity algorithm in an operator-configured preference
-/// list that the UE supports (TS 33.401 §7.2.4.3.1 and TS 33.501 §6.7.1).
+/// Select the first integrity algorithm of an operator's preference list
+/// that the UE supports (TS 33.401 §7.2.4.3.1, TS 33.501 §6.7.1).
 ///
-/// Algorithm IDs outside 0 through 3 are ignored. Including algorithm 0 in
-/// `preference` explicitly permits null integrity for the exceptional
-/// unauthenticated emergency/RLOS policy; ordinary signalling should omit it.
-pub fn select_integrity_algo_with_preference(nia_capability: u8, preference: &[u8]) -> Option<u8> {
-    select_with_preference(nia_capability, preference)
-}
-
-/// Select the best ciphering algorithm supported by the UE.
-///
-/// `nea_capability` is the EA capability byte.
-/// Returns `Some(algorithm_id)` (0x00–0x03), or `None` if no bits match.
-pub fn select_ciphering_algo(nea_capability: u8) -> Option<u8> {
-    select_ciphering_algo_with_preference(nea_capability, NEA_PREFERENCE)
-}
-
-/// Select the first ciphering algorithm in an operator-configured preference
-/// list that the UE supports. Algorithm IDs outside 0 through 3 are ignored.
-pub fn select_ciphering_algo_with_preference(nea_capability: u8, preference: &[u8]) -> Option<u8> {
-    select_with_preference(nea_capability, preference)
-}
-
-fn select_with_preference(capability: u8, preference: &[u8]) -> Option<u8> {
+/// A list with [`IntegrityAlgorithm::Null`] permits null integrity, which
+/// is for unauthenticated emergency sessions only; a list for ordinary
+/// signalling leaves it out.
+pub fn select_integrity_algo_with_preference(
+    capability: u8,
+    preference: &[IntegrityAlgorithm],
+) -> Option<IntegrityAlgorithm> {
     preference
         .iter()
         .copied()
-        .filter(|algorithm| *algorithm <= 3)
-        .find(|algorithm| capability & (0x80 >> algorithm) != 0)
+        .find(|algorithm| supported(capability, (*algorithm).into()))
+}
+
+/// Select the ciphering algorithm for a UE with the default preference:
+/// algorithm 2, then 1, then 3, then the null algorithm.
+///
+/// `capability` is the octet of the ciphering algorithms: 5G-EA0 to 5G-EA7
+/// or EEA0 to EEA7. `None` when the UE supports none of the four.
+pub fn select_ciphering_algo(capability: u8) -> Option<CipheringAlgorithm> {
+    select_ciphering_algo_with_preference(capability, CIPHERING_PREFERENCE)
+}
+
+/// Select the first ciphering algorithm of an operator's preference list
+/// that the UE supports (TS 33.401 §7.2.4.3.1, TS 33.501 §6.7.1).
+pub fn select_ciphering_algo_with_preference(
+    capability: u8,
+    preference: &[CipheringAlgorithm],
+) -> Option<CipheringAlgorithm> {
+    preference
+        .iter()
+        .copied()
+        .find(|algorithm| supported(capability, (*algorithm).into()))
+}
+
+/// Whether the capability octet has the bit of an algorithm: bit 8 for
+/// algorithm 0 down to bit 5 for algorithm 3.
+fn supported(capability: u8, identifier: u8) -> bool {
+    capability & (0x80 >> identifier) != 0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use CipheringAlgorithm as Nea;
+    use IntegrityAlgorithm as Nia;
 
     #[test]
     fn integrity_prefers_nia2() {
         // All algorithms supported → picks NIA2
-        assert_eq!(select_integrity_algo(0xF0), Some(0x02));
+        assert_eq!(select_integrity_algo(0xF0), Some(Nia::NIA2));
     }
 
     #[test]
     fn integrity_nia1_when_no_nia2() {
-        assert_eq!(select_integrity_algo(0xD0), Some(0x01)); // NIA0 + NIA1 + NIA3
+        assert_eq!(select_integrity_algo(0xD0), Some(Nia::NIA1)); // NIA0 + NIA1 + NIA3
     }
 
     #[test]
     fn integrity_nia3_when_only_nia3_nia0() {
-        assert_eq!(select_integrity_algo(0x90), Some(0x03)); // NIA0 + NIA3
+        assert_eq!(select_integrity_algo(0x90), Some(Nia::NIA3)); // NIA0 + NIA3
     }
 
     #[test]
@@ -96,54 +124,57 @@ mod tests {
     }
 
     #[test]
-    fn integrity_fallback_nia2() {
+    fn integrity_none_without_capability() {
         assert_eq!(select_integrity_algo(0x00), None);
+        // The bits of algorithms 4 to 7 select nothing
+        assert_eq!(select_integrity_algo(0x0f), None);
     }
 
     #[test]
     fn ciphering_prefers_nea2() {
-        assert_eq!(select_ciphering_algo(0xF0), Some(0x02));
+        assert_eq!(select_ciphering_algo(0xF0), Some(Nea::NEA2));
     }
 
     #[test]
     fn ciphering_nea1_when_no_nea2() {
-        assert_eq!(select_ciphering_algo(0xC0), Some(0x01)); // NEA0 + NEA1
+        assert_eq!(select_ciphering_algo(0xC0), Some(Nea::NEA1)); // NEA0 + NEA1
     }
 
     #[test]
     fn ciphering_nea3_when_only_nea3() {
-        assert_eq!(select_ciphering_algo(0x10), Some(0x03));
+        assert_eq!(select_ciphering_algo(0x10), Some(Nea::NEA3));
     }
 
     #[test]
     fn ciphering_fallback_nea0() {
         // Only NEA0 bit set → NEA0 selected
-        assert_eq!(select_ciphering_algo(0x80), Some(0x00));
+        assert_eq!(select_ciphering_algo(0x80), Some(Nea::NEA0));
     }
 
     #[test]
-    fn ciphering_no_bits_nea0() {
+    fn ciphering_none_without_capability() {
         assert_eq!(select_ciphering_algo(0x00), None);
+        assert_eq!(select_ciphering_algo(0x0f), None);
     }
 
     #[test]
     fn operator_order_and_explicit_null_policy_are_honoured() {
         assert_eq!(
-            select_integrity_algo_with_preference(0x70, &[3, 1, 2]),
-            Some(3)
+            select_integrity_algo_with_preference(0x70, &[Nia::Zuc, Nia::Snow3g, Nia::Aes]),
+            Some(Nia::Zuc)
         );
         assert_eq!(
-            select_ciphering_algo_with_preference(0x70, &[1, 3, 2]),
-            Some(1)
+            select_ciphering_algo_with_preference(0x70, &[Nea::Snow3g, Nea::Zuc, Nea::Aes]),
+            Some(Nea::Snow3g)
         );
         assert_eq!(
-            select_integrity_algo_with_preference(0x80, &[2, 1, 3]),
+            select_integrity_algo_with_preference(0x80, &[Nia::Aes, Nia::Snow3g, Nia::Zuc]),
             None
         );
-        assert_eq!(select_integrity_algo_with_preference(0x80, &[0]), Some(0));
         assert_eq!(
-            select_ciphering_algo_with_preference(0x20, &[9, 2]),
-            Some(2)
+            select_integrity_algo_with_preference(0x80, &[Nia::Null]),
+            Some(Nia::Null)
         );
+        assert_eq!(select_ciphering_algo_with_preference(0xf0, &[]), None);
     }
 }

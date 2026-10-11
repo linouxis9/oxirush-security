@@ -15,11 +15,13 @@
    limitations under the License.
 */
 
-//! Shared KDF framing, algorithm cores, and PLMN utilities for 5GS and EPS.
+//! What 5GS and EPS share: the algorithms, the KDF framing of TS 33.220,
+//! the types of their inputs, and the PLMN and TBCD encodings.
 
 pub mod algo;
 pub(crate) mod ct;
 pub mod error;
+pub mod input;
 pub mod kdf;
 pub mod nea;
 pub mod nia;
@@ -34,10 +36,16 @@ pub use algo::{
 };
 pub use ct::constant_time_eq;
 pub use error::SecurityError;
+pub use input::{
+    AccessKeyCount, Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount,
+};
 pub use kdf::extract_128;
 pub use nea::{
     nea_cipher, nea_cipher_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits,
     nea3_cipher, nea3_cipher_bits,
 };
-pub use nia::{nia_mac, nia_mac_bits, nia1_mac, nia2_mac, nia2_mac_bits, nia3_mac};
+pub use nia::{
+    nia_mac, nia_mac_bits, nia1_mac, nia1_mac_bits, nia2_mac, nia2_mac_bits, nia3_mac,
+    nia3_mac_bits,
+};
 pub use plmn::{plmn_from_bytes, plmn_to_bytes, tbcd_decode, tbcd_encode};

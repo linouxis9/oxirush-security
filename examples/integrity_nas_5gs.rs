@@ -15,11 +15,11 @@
    limitations under the License.
 */
 
-//! Demonstrate NAS integrity algorithms (NIA1, NIA2, NIA3) per TS 33.501.
+//! Demonstrate the NAS integrity algorithms of 5GS (NIA0, 128-NIA1,
+//! 128-NIA2 and 128-NIA3) per TS 33.501.
 //!
-//! Each algorithm computes a 32-bit MAC over the same message, showing
-//! how to use the unified `nas_mac()` function and the individual
-//! `nia1_mac`, `nia2_mac`, `nia3_mac` functions.
+//! `nas_mac` computes the 32-bit MAC of the same message with each
+//! algorithm.
 
 use oxirush_security::nas_5gs::*;
 
@@ -30,35 +30,39 @@ fn main() {
         0x48,
     ];
 
-    // NAS security parameters
-    let count: u32 = 0x00a6f056; // 24-bit NAS COUNT
-    let bearer: u8 = 0x01; // 3GPP access; use 2 for non-3GPP access
-    let direction: u8 = 0; // 0 = uplink, 1 = downlink
+    // The inputs of a NAS message: its 24-bit NAS COUNT, the NAS connection
+    // (3GPP or non-3GPP access) and its direction
+    let count = NasCount::new(0x00a6f056).expect("a 24-bit NAS COUNT");
+    let connection = NasConnection::ThreeGpp;
+    let direction = Direction::Uplink;
 
     // Example NAS message payload
     let message = b"Hello 5G NAS integrity!";
 
     println!("=== NAS Integrity MAC computation ===\n");
     println!("Key:       {}", hex::encode(key));
-    println!("COUNT:     0x{count:08x}");
-    println!("Bearer:    {bearer}");
-    println!("Direction: {direction} (uplink)");
+    println!("COUNT:     0x{:08x}", count.get());
+    println!("Bearer:    {} (3GPP access)", u8::from(connection));
+    println!("Direction: {} (uplink)", u8::from(direction));
     println!("Message:   {:?}\n", String::from_utf8_lossy(message));
 
+    // One call for every algorithm
+    let mac = |algorithm| nas_mac(&key, count, connection, direction, message, algorithm);
+
     // NIA1 — SNOW 3G (128-EIA1)
-    let mac_nia1 = nas_mac(&key, count, bearer, direction, message, 0x01);
+    let mac_nia1 = mac(IntegrityAlgorithm::NIA1);
     println!("NIA1 (SNOW 3G)  MAC: 0x{mac_nia1:08x}");
 
     // NIA2 — AES-CMAC (128-EIA2)
-    let mac_nia2 = nas_mac(&key, count, bearer, direction, message, 0x02);
+    let mac_nia2 = mac(IntegrityAlgorithm::NIA2);
     println!("NIA2 (AES-CMAC) MAC: 0x{mac_nia2:08x}");
 
     // NIA3 — ZUC (128-EIA3)
-    let mac_nia3 = nas_mac(&key, count, bearer, direction, message, 0x03);
+    let mac_nia3 = mac(IntegrityAlgorithm::NIA3);
     println!("NIA3 (ZUC)      MAC: 0x{mac_nia3:08x}");
 
     // NIA0 — null integrity (always returns 0)
-    let mac_nia0 = nas_mac(&key, count, bearer, direction, message, 0x00);
+    let mac_nia0 = mac(IntegrityAlgorithm::NIA0);
     println!("NIA0 (null)     MAC: 0x{mac_nia0:08x}");
     assert_eq!(mac_nia0, 0, "NIA0 must always return 0");
 

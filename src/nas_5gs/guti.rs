@@ -17,7 +17,9 @@
 
 //! 5G-GUTI construction and parsing (TS 24.501 §9.11.3.4)
 
-/// Build the 11-byte 5G-GUTI mobile identity value.
+use crate::common::error::SecurityError;
+
+/// Build the 11 octets of a 5G-GUTI mobile identity.
 ///
 /// Layout (TS 24.501 §9.11.3.4, Figure 9.11.3.4.1):
 /// ```text
@@ -28,30 +30,46 @@
 ///   [7..10]  5G-TMSI (4 bytes)
 /// ```
 ///
-/// # Panics
-///
-/// Panics if `plmn_bytes` has fewer than three octets, `amf_set_id` exceeds
-/// 10 bits, or `amf_pointer` exceeds 6 bits.
+/// `plmn` is what [`plmn_to_bytes`](crate::plmn::plmn_to_bytes) gives. An
+/// `amf_set_id` above 10 bits or an `amf_pointer` above 6 bits is
+/// [`SecurityError::OutOfRange`].
 pub fn build_guti_bytes(
-    plmn_bytes: &[u8],
+    plmn: &[u8; 3],
     amf_region_id: u8,
     amf_set_id: u16,
     amf_pointer: u8,
     tmsi: u32,
-) -> Vec<u8> {
-    assert!(plmn_bytes.len() >= 3, "PLMN must contain three octets");
-    assert!(amf_set_id <= 0x3FF, "AMF Set ID must be 10 bits");
-    assert!(amf_pointer <= 0x3F, "AMF Pointer must be 6 bits");
-    let mut g = Vec::with_capacity(11);
-    // TS 24.501 Figure 9.11.3.4.1: bits 8-5 are "1111", bit 4 is spare, and
-    // bits 3-1 are type 010.
-    g.push(0xF2);
-    g.extend_from_slice(&plmn_bytes[..3]);
-    g.push(amf_region_id);
-    g.push((amf_set_id >> 2) as u8);
-    g.push(((amf_set_id as u8 & 0x03) << 6) | (amf_pointer & 0x3F));
-    g.extend_from_slice(&tmsi.to_be_bytes());
-    g
+) -> Result<[u8; 11], SecurityError> {
+    if amf_set_id > 0x3ff {
+        return Err(SecurityError::OutOfRange {
+            field: "AMF Set ID",
+            maximum: 0x3ff,
+            got: amf_set_id.into(),
+        });
+    }
+    if amf_pointer > 0x3f {
+        return Err(SecurityError::OutOfRange {
+            field: "AMF Pointer",
+            maximum: 0x3f,
+            got: amf_pointer.into(),
+        });
+    }
+    let [set_high, set_low] = (amf_set_id << 6).to_be_bytes();
+    let [tmsi_0, tmsi_1, tmsi_2, tmsi_3] = tmsi.to_be_bytes();
+    Ok([
+        // Bits 8-5 are "1111", bit 4 is spare, and bits 3-1 are type 010
+        0xf2,
+        plmn[0],
+        plmn[1],
+        plmn[2],
+        amf_region_id,
+        set_high,
+        set_low | amf_pointer,
+        tmsi_0,
+        tmsi_1,
+        tmsi_2,
+        tmsi_3,
+    ])
 }
 
 /// Parse a 5G-GUTI mobile identity (type 010) and return the 5G-TMSI.
@@ -103,21 +121,54 @@ mod tests {
 
     #[test]
     fn guti_and_s_tmsi_use_the_ts_24501_identity_octet() {
-        let guti = build_guti_bytes(&[0x02, 0xf8, 0x39], 0xca, 0x3ff, 0x3f, 0x1234_5678);
+        let guti = build_guti_bytes(&[0x02, 0xf8, 0x39], 0xca, 0x3ff, 0x3f, 0x1234_5678).unwrap();
         assert_eq!(guti[0], 0xf2);
         assert_eq!(&guti[5..7], [0xff, 0xff]);
         assert_eq!(parse_guti_tmsi(&guti), Some(0x1234_5678));
         // Receivers check only the type bits.
-        let mut legacy = guti.clone();
+        let mut legacy = guti;
         legacy[0] = 0x02;
         assert_eq!(parse_guti_tmsi(&legacy), Some(0x1234_5678));
         assert_eq!(parse_s_tmsi(&[0xf4, 0xff, 0xff, 0, 0, 0, 7]), Some(7));
         assert_eq!(parse_s_tmsi(&[0xf2, 0xff, 0xff, 0, 0, 0, 7]), None);
         // TS 24.501 receiver behavior ignores excess contents for these identities.
-        let mut long_guti = guti.clone();
+        let mut long_guti = guti.to_vec();
         long_guti.extend_from_slice(&[0xaa, 0xbb]);
         assert_eq!(parse_guti_tmsi(&long_guti), Some(0x1234_5678));
         assert_eq!(parse_s_tmsi(&[0xf4, 0xff, 0xff, 0, 0, 0, 7, 0xaa]), Some(7));
         assert_eq!(mobile_identity_type(&guti), 2);
+    }
+
+    /// TS 24.501 Figure 9.11.3.4.1: the AMF Set ID takes octet 9 and bits
+    /// 8 and 7 of octet 10, and the AMF Pointer bits 6 to 1 of octet 10.
+    #[test]
+    fn the_amf_set_id_and_pointer_share_two_octets() {
+        let plmn = [0x02, 0xf8, 0x39];
+        assert_eq!(
+            build_guti_bytes(&plmn, 0x01, 0x001, 0x02, 0x1122_3344),
+            Ok([
+                0xf2, 0x02, 0xf8, 0x39, 0x01, 0x00, 0x42, 0x11, 0x22, 0x33, 0x44
+            ])
+        );
+        assert_eq!(
+            build_guti_bytes(&plmn, 0, 0x2a5, 0x15, 0).unwrap()[5..7],
+            [0xa9, 0x55]
+        );
+        assert_eq!(
+            build_guti_bytes(&plmn, 0, 0x400, 0, 0),
+            Err(SecurityError::OutOfRange {
+                field: "AMF Set ID",
+                maximum: 0x3ff,
+                got: 0x400
+            })
+        );
+        assert_eq!(
+            build_guti_bytes(&plmn, 0, 0, 0x40, 0),
+            Err(SecurityError::OutOfRange {
+                field: "AMF Pointer",
+                maximum: 0x3f,
+                got: 0x40
+            })
+        );
     }
 }

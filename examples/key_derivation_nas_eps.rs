@@ -20,31 +20,32 @@
 
 use oxirush_security::{common::plmn_to_bytes, nas_eps::*};
 
-fn main() {
+fn main() -> Result<(), SecurityError> {
     // Example key material; in practice CK and IK come from EPS AKA
     let ck = [0x11; 16];
     let ik = [0x22; 16];
-    let sn_id: [u8; 3] = plmn_to_bytes("208", "93").try_into().unwrap();
+    let sn_id = plmn_to_bytes("208", "93")?;
     let sqn_xor_ak = [0; 6];
 
     // CK || IK -> KASME
     let k_asme = derive_kasme(&ck, &ik, &sn_id, &sqn_xor_ak);
     println!("KASME: {}", hex::encode(k_asme));
 
-    // KASME -> KNASint (EIA2 = algorithm ID 2, distinguisher 0x02)
-    // The key is the 128 least significant bits of the 256 that are derived
-    let k_nas_int = extract_128(&derive_nas_key(&k_asme, 0x02, 2)); // integrity, EIA2
+    // KASME -> KNASint, the 128-bit integrity key of the selected algorithm
+    let k_nas_int = derive_knas_int(&k_asme, IntegrityAlgorithm::EIA2);
     println!("KNASint (EIA2): {}", hex::encode(k_nas_int));
 
-    // KASME -> KNASenc (EEA2 = algorithm ID 2, distinguisher 0x01)
-    let k_nas_enc = extract_128(&derive_nas_key(&k_asme, 0x01, 2)); // ciphering, EEA2
+    // KASME -> KNASenc, the 128-bit ciphering key of the selected algorithm
+    let k_nas_enc = derive_knas_enc(&k_asme, CipheringAlgorithm::EEA2);
     println!("KNASenc (EEA2): {}", hex::encode(k_nas_enc));
 
-    // KASME -> KeNB (for initial context setup)
-    let k_enb = derive_kenb(&k_asme, 0); // uplink NAS COUNT = 0
+    // KASME -> KeNB (for initial context setup), with the uplink NAS COUNT
+    let k_enb = derive_kenb(&k_asme, NasCount::ZERO);
     println!("KeNB: {}", hex::encode(k_enb));
 
     // KeNB -> NH (for handover, NCC=1)
     let nh = derive_nh(&k_asme, &k_enb);
     println!("NH (NCC=1): {}", hex::encode(nh));
+
+    Ok(())
 }

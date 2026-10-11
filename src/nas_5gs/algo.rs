@@ -15,7 +15,8 @@
    limitations under the License.
 */
 
-//! 5GS NAS algorithm selection from UE security capabilities.
+//! 5GS NAS algorithm selection from the 5G-EA and 5G-IA octets of the UE
+//! security capability (TS 24.501 §9.11.3.54).
 
 pub use crate::common::algo::{
     select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,

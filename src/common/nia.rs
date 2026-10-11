@@ -15,108 +15,124 @@
    limitations under the License.
 */
 
-//! 5GS and EPS NAS integrity algorithms per TS 33.501 and TS 33.401.
+//! The integrity algorithms of 5GS and EPS (TS 33.501 Annex D.3,
+//! TS 33.401 Annex B.2).
 //!
-//! - NIA0: null integrity.
-//! - NIA1: 128-EIA1 (SNOW 3G, TS 33.401 Annex B.2.2, TS 35.215 and TS 35.216).
-//! - NIA2: 128-EIA2 (AES-CMAC, TS 33.401 Annex B.2.3, TS 33.501 Annex D.3.1.3).
-//! - NIA3: 128-EIA3 (ZUC, TS 33.401 Annex B.2.4, TS 35.221 and TS 35.222).
+//! - NIA0, EIA0: null integrity.
+//! - 128-NIA1, 128-EIA1: SNOW 3G (TS 33.401 Annex B.2.2, TS 35.215 and TS 35.216).
+//! - 128-NIA2, 128-EIA2: AES-CMAC (TS 33.401 Annex B.2.3).
+//! - 128-NIA3, 128-EIA3: ZUC (TS 33.401 Annex B.2.4, TS 35.221 and TS 35.222).
 //!
-//! [`nia_mac`] and [`nia2_mac`] are whole-octet conveniences.
-//! [`nia_mac_bits`], [`nia1_mac`], [`nia2_mac_bits`], and [`nia3_mac`]
-//! accept the bit lengths needed by the non-byte-aligned official vectors
-//! and by bit-string inputs outside ordinary NAS messages.
+//! These functions take what the algorithms take: any 32-bit COUNT and a
+//! five-bit [`Bearer`]. [`nia_mac`], [`nia1_mac`], [`nia2_mac`] and
+//! [`nia3_mac`] authenticate whole octets and cannot fail. The `*_bits`
+//! forms authenticate the first bits of a message, as the test data of
+//! 3GPP and the bit strings outside NAS need, and return an error for a
+//! length that the message does not have.
 //!
-//! Every function panics on a message whose length in bits does not fit
-//! `usize`: on a 32-bit target, one of 512 MiB or more.
+//! For a NAS message use [`nas_5gs::nas_mac`](crate::nas_5gs::nas_mac) or
+//! [`nas_eps::nas_mac`](crate::nas_eps::nas_mac), which take a NAS COUNT.
+use crate::common::error::SecurityError;
+use crate::common::input::{Bearer, Direction, IntegrityAlgorithm, octets_of};
 use crate::snow3g::Snow3G;
 use crate::zuc::Zuc;
 use aes::Aes128;
 use aes::cipher::{BlockEncrypt, KeyInit};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
-/// Compute the 32-bit MAC of a message of whole octets with the algorithm
-/// that `algo_id` selects: 0 is NIA0 (null), 1 NIA1, 2 NIA2 and 3 NIA3.
+/// Compute the 32-bit MAC of a message of whole octets with `algorithm`.
 ///
-/// The inputs have the ranges of the algorithms: a 32-bit COUNT and a 5-bit
-/// BEARER. For a NAS message use [`crate::nas_5gs::nas_mac`] or
-/// [`crate::nas_eps::nas_mac`], which check the ranges of NAS.
-///
-/// # Panics
-///
-/// Panics if `bearer` exceeds 31, `direction` exceeds one, or `algo_id` is
-/// above 3.
+/// The null algorithm gives zero.
 pub fn nia_mac(
     key: &[u8; 16],
     count: u32,
-    bearer: u8,
-    direction: u8,
+    bearer: Bearer,
+    direction: Direction,
     message: &[u8],
-    algo_id: u8,
+    algorithm: IntegrityAlgorithm,
 ) -> u32 {
-    let bit_length = (message.len() as u64) * 8;
-    nia_mac_bits(key, count, bearer, direction, message, bit_length, algo_id)
-}
-
-/// Compute the MAC that [`nia_mac`] computes, for a message whose final
-/// octet may contain unused low-order bits.
-///
-/// `bit_length` is the number of most-significant message bits to
-/// authenticate. `algo_id` is 0 for null integrity or 1, 2, or 3 for
-/// 128-EIA1, 128-EIA2, or 128-EIA3 respectively.
-///
-/// # Panics
-///
-/// Panics if `bearer` exceeds 31, `direction` exceeds one, `bit_length`
-/// exceeds the message length in bits, or `algo_id` is above 3.
-pub fn nia_mac_bits(
-    key: &[u8; 16],
-    count: u32,
-    bearer: u8,
-    direction: u8,
-    message: &[u8],
-    bit_length: u64,
-    algo_id: u8,
-) -> u32 {
-    check_inputs(bearer, direction, message.len(), bit_length);
-    assert!(
-        bit_length <= (message.len() as u64) * 8,
-        "message shorter than bit length"
-    );
-    match algo_id {
-        0x01 => nia1_mac(key, count, bearer, direction, message, bit_length),
-        0x02 => nia2_mac_bits(key, count, bearer, direction, message, bit_length),
-        0x03 => nia3_mac(key, count, bearer, direction, message, bit_length),
-        0 => {
-            // NIA0 (null integrity) returns MAC-I = 0. It is used only for
-            // unauthenticated emergency sessions (TS 33.401 §5.1.4.1 and
-            // §7.2.4a, TS 33.501 §5.5.2).
-            0
-        }
-        _ => panic!("unsupported NAS integrity algorithm {algo_id}"),
+    match algorithm {
+        IntegrityAlgorithm::Null => 0,
+        IntegrityAlgorithm::Snow3g => nia1_mac(key, count, bearer, direction, message),
+        IntegrityAlgorithm::Aes => nia2_mac(key, count, bearer, direction, message),
+        IntegrityAlgorithm::Zuc => nia3_mac(key, count, bearer, direction, message),
     }
 }
 
-fn check_inputs(bearer: u8, direction: u8, byte_length: usize, bit_length: u64) {
-    assert!(bearer <= 0x1f, "bearer must fit five bits");
-    assert!(direction <= 1, "direction must fit one bit");
-    assert!(
-        bit_length <= (byte_length as u64) * 8,
-        "message shorter than bit length"
-    );
-    // The cores count the bits of the message in a `usize`.
-    assert!(
-        usize::try_from(bit_length).is_ok(),
-        "message bit length must fit usize"
-    );
+/// Compute the MAC that [`nia_mac`] computes over the first `bit_length`
+/// bits of `message`. The unused low-order bits of the last octet are
+/// ignored.
+///
+/// A `bit_length` above the length of `message` in bits is
+/// [`SecurityError::BitLengthExceedsData`], with the null algorithm too.
+pub fn nia_mac_bits(
+    key: &[u8; 16],
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    message: &[u8],
+    bit_length: u64,
+    algorithm: IntegrityAlgorithm,
+) -> Result<u32, SecurityError> {
+    let bits = BitString::new(message, bit_length)?;
+    Ok(match algorithm {
+        IntegrityAlgorithm::Null => 0,
+        IntegrityAlgorithm::Snow3g => eia1(key, count, bearer, direction, bits),
+        IntegrityAlgorithm::Aes => eia2(key, count, bearer, direction, bits),
+        IntegrityAlgorithm::Zuc => eia3(key, count, bearer, direction, bits),
+    })
+}
+
+/// The first bits of a message: the octets that hold them, and how many
+/// bits of the last octet belong to them.
+#[derive(Clone, Copy)]
+struct BitString<'a> {
+    /// The octets that hold the bits; the last may be partial.
+    octets: &'a [u8],
+    /// Bits of the last octet that are part of the string: 1 to 8, or 8
+    /// for an empty string.
+    last_bits: u32,
+}
+
+impl<'a> BitString<'a> {
+    fn new(message: &'a [u8], bit_length: u64) -> Result<Self, SecurityError> {
+        let octets = octets_of(bit_length, message.len())?;
+        Ok(Self {
+            octets: &message[..octets],
+            last_bits: match (bit_length % 8) as u32 {
+                0 => 8,
+                bits => bits,
+            },
+        })
+    }
+
+    fn whole(message: &'a [u8]) -> Self {
+        Self {
+            octets: message,
+            last_bits: 8,
+        }
+    }
+
+    /// The length in bits modulo 2^64, which is what the algorithms that
+    /// take a LENGTH input read of it.
+    fn bit_length(&self) -> u64 {
+        (self.octets.len() as u64)
+            .wrapping_mul(8)
+            .wrapping_sub(u64::from(8 - self.last_bits))
+    }
+
+    /// The mask of the bits of the last octet that are part of the string.
+    fn last_mask(&self) -> u8 {
+        0xff << (8 - self.last_bits)
+    }
 }
 
 // ── NIA1: 128-EIA1 (SNOW 3G MAC) ──────────────────────────────────────────────
 
-/// Compute NAS-MAC using NIA1 / 128-EIA1 (TS 35.215 §4.3, TS 35.216)
+/// Compute the MAC of a message of whole octets with 128-NIA1 / 128-EIA1
+/// (TS 33.401 Annex B.2.2, TS 35.215 §4, TS 35.216).
 ///
-/// Maps the NAS inputs to UIA2 (TS 33.401 Annex B.2.2, UEA2/UIA2
-/// specification §4.4):
+/// The inputs map to UIA2 (UEA2/UIA2 specification §4.4):
 /// ```text
 /// - FRESH = BEARER << 27
 /// - IV[0] = FRESH ^ (DIRECTION << 15)
@@ -124,89 +140,76 @@ fn check_inputs(bearer: u8, direction: u8, byte_length: usize, bit_length: u64) 
 /// - IV[2] = FRESH
 /// - IV[3] = COUNT
 /// ```
-///
-/// `bit_length`: number of bits in the message (may be < message.len() * 8 for
-/// partial last byte; unused low bits are ignored).
-///
-/// # Panics
-///
-/// Panics if `bearer` exceeds 31, `direction` exceeds one, or `bit_length`
-/// exceeds the message length in bits.
 pub fn nia1_mac(
     key: &[u8; 16],
     count: u32,
-    bearer: u8,
-    direction: u8,
+    bearer: Bearer,
+    direction: Direction,
+    message: &[u8],
+) -> u32 {
+    eia1(key, count, bearer, direction, BitString::whole(message))
+}
+
+/// Compute the 128-NIA1 / 128-EIA1 MAC of the first `bit_length` bits of
+/// `message`. The unused low-order bits of the last octet are ignored.
+///
+/// A `bit_length` above the length of `message` in bits is
+/// [`SecurityError::BitLengthExceedsData`].
+pub fn nia1_mac_bits(
+    key: &[u8; 16],
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
     message: &[u8],
     bit_length: u64,
+) -> Result<u32, SecurityError> {
+    let bits = BitString::new(message, bit_length)?;
+    Ok(eia1(key, count, bearer, direction, bits))
+}
+
+fn eia1(
+    key: &[u8; 16],
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    message: BitString<'_>,
 ) -> u32 {
-    check_inputs(bearer, direction, message.len(), bit_length);
-    assert!(
-        bit_length <= (message.len() as u64) * 8,
-        "message shorter than bit length"
-    );
-    let fresh = (bearer as u32 & 0x1F) << 27;
-    let dir32 = direction as u32 & 0x01;
+    let fresh = u32::from(bearer.get()) << 27;
+    let dir32 = u32::from(u8::from(direction));
 
     // The key words are loaded last word first (UIA2 §4.4).
-    let k = zeroize::Zeroizing::new([
-        u32::from_be_bytes(
-            key[12..16]
-                .try_into()
-                .expect("4-byte slice from 16-byte key"),
-        ),
-        u32::from_be_bytes(
-            key[8..12]
-                .try_into()
-                .expect("4-byte slice from 16-byte key"),
-        ),
-        u32::from_be_bytes(key[4..8].try_into().expect("4-byte slice from 16-byte key")),
-        u32::from_be_bytes(key[0..4].try_into().expect("4-byte slice from 16-byte key")),
+    let (words, _) = key.as_chunks::<4>();
+    let k = Zeroizing::new([
+        u32::from_be_bytes(words[3]),
+        u32::from_be_bytes(words[2]),
+        u32::from_be_bytes(words[1]),
+        u32::from_be_bytes(words[0]),
     ]);
     let iv = [fresh ^ (dir32 << 15), count ^ (dir32 << 31), fresh, count];
 
-    // Only 5 keystream words needed: z[0..1]=P, z[2..3]=Q, z[4]=final mask
+    // Five keystream words: z[0..1] = P, z[2..3] = Q, z[4] = the final mask
     let mut snow = Snow3G::new(*k, iv);
-    let z = zeroize::Zeroizing::new(snow.generate(5));
+    let mut z = Zeroizing::new([0u32; 5]);
+    snow.fill(z.as_mut());
 
     // Polynomial evaluation MAC (UIA2 §4.4)
     let p = ((z[0] as u64) << 32) | (z[1] as u64);
     let q = ((z[2] as u64) << 32) | (z[3] as u64);
 
-    // D = ceil(bit_length/64) + 1
-    let d = (bit_length.div_ceil(64) + 1) as usize;
-
-    // Process D-2 full 64-bit message blocks
+    // The message in 64-bit blocks, the last one padded with zero bits
     let mut eval: u64 = 0;
-    for i in 0..(d.saturating_sub(2).min(message.len() / 8)) {
-        let m = u64::from_be_bytes(
-            message[8 * i..8 * (i + 1)]
-                .try_into()
-                .expect("8-byte aligned message block"),
-        );
-        eval ^= m;
-        eval = mul64(eval, p);
-    }
-
-    // Last partial block (zero-padded to 8 bytes)
-    if d >= 2 {
-        let start = 8 * (d - 2);
-        let mut tmp = [0u8; 8];
-        let remaining_bits = (bit_length as usize).saturating_sub(start * 8).min(64);
-        let remaining = remaining_bits.div_ceil(8);
-        if remaining > 0 {
-            tmp[..remaining].copy_from_slice(&message[start..start + remaining]);
-            if !remaining_bits.is_multiple_of(8) {
-                tmp[remaining - 1] &= 0xff << (8 - remaining_bits % 8);
-            }
+    let mut blocks = message.octets.chunks(8).peekable();
+    while let Some(chunk) = blocks.next() {
+        let mut block = [0u8; 8];
+        block[..chunk.len()].copy_from_slice(chunk);
+        if blocks.peek().is_none() {
+            block[chunk.len() - 1] &= message.last_mask();
         }
-        let m = u64::from_be_bytes(tmp);
-        eval ^= m;
-        eval = mul64(eval, p);
+        eval = mul64(eval ^ u64::from_be_bytes(block), p);
     }
 
-    // Finalize: XOR with bit length, multiply by Q
-    eval ^= bit_length;
+    // The block of the length, multiplied by Q
+    eval ^= message.bit_length();
     eval = mul64(eval, q);
     // MAC-I = upper 32 bits XOR z[4]
     ((eval >> 32) as u32) ^ z[4]
@@ -227,25 +230,42 @@ fn mul64(mut a: u64, mut b: u64) -> u64 {
 
 // ── NIA2: 128-EIA2 (AES-CMAC) ─────────────────────────────────────────────────
 
-/// Compute NAS-MAC using NIA2 (TS 33.401 Annex B.2.3 / TS 33.501 Annex D.3.1.3)
+/// Compute the MAC of a message of whole octets with 128-NIA2 / 128-EIA2
+/// (TS 33.401 Annex B.2.3).
 ///
 /// ```text
 /// Input block M = COUNT[31:0] || BEARER[4:0] || DIRECTION[0] || 0*26 || message
 /// ```
 /// Returns the 32-bit MAC-I (first 4 bytes of AES-CMAC output).
+pub fn nia2_mac(
+    key: &[u8; 16],
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    message: &[u8],
+) -> u32 {
+    eia2(key, count, bearer, direction, BitString::whole(message))
+}
+
+/// Compute the 128-NIA2 / 128-EIA2 MAC of the first `bit_length` bits of
+/// `message`.
 ///
-/// # Panics
+/// The final partial octet is left aligned and its unused low-order bits are
+/// ignored, as in TS 33.401 Annex C.2. The 64-bit COUNT/BEARER/DIRECTION
+/// prefix is included by this function.
 ///
-/// Panics if `bearer` exceeds 31 or `direction` exceeds one.
-pub fn nia2_mac(key: &[u8; 16], count: u32, bearer: u8, direction: u8, message: &[u8]) -> u32 {
-    nia2_mac_bits(
-        key,
-        count,
-        bearer,
-        direction,
-        message,
-        (message.len() as u64) * 8,
-    )
+/// A `bit_length` above the length of `message` in bits is
+/// [`SecurityError::BitLengthExceedsData`].
+pub fn nia2_mac_bits(
+    key: &[u8; 16],
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    message: &[u8],
+    bit_length: u64,
+) -> Result<u32, SecurityError> {
+    let bits = BitString::new(message, bit_length)?;
+    Ok(eia2(key, count, bearer, direction, bits))
 }
 
 /// Doubling in GF(2^128) for the CMAC subkeys (RFC 4493 §2.3), with no
@@ -264,41 +284,21 @@ fn aes_encrypt_block(cipher: &Aes128, block: &mut [u8; 16]) {
     block.copy_from_slice(&value);
 }
 
-/// Compute a 128-EIA2 MAC over the first `bit_length` bits of `message`.
-///
-/// The final partial octet is left aligned and its unused low-order bits are
-/// ignored, as in TS 33.401 Annex C.2. The 64-bit COUNT/BEARER/DIRECTION
-/// prefix is included by this function.
-///
-/// # Panics
-///
-/// Panics if `bearer` exceeds 31, `direction` exceeds one, or `bit_length`
-/// exceeds the message length in bits.
-pub fn nia2_mac_bits(
+/// `state = AES(state XOR block)`, one step of the CBC-MAC.
+fn cmac_absorb(cipher: &Aes128, state: &mut [u8; 16], block: &[u8; 16]) {
+    for (left, right) in state.iter_mut().zip(block) {
+        *left ^= right;
+    }
+    aes_encrypt_block(cipher, state);
+}
+
+fn eia2(
     key: &[u8; 16],
     count: u32,
-    bearer: u8,
-    direction: u8,
-    message: &[u8],
-    bit_length: u64,
+    bearer: Bearer,
+    direction: Direction,
+    message: BitString<'_>,
 ) -> u32 {
-    check_inputs(bearer, direction, message.len(), bit_length);
-    assert!(
-        bit_length <= (message.len() as u64) * 8,
-        "message shorter than bit length"
-    );
-    let bit_length = usize::try_from(bit_length).expect("message bit length fits usize");
-    let message_octets = bit_length.div_ceil(8);
-    let mut input = Vec::with_capacity(8 + message_octets);
-    input.extend_from_slice(&count.to_be_bytes());
-    input.push(((bearer & 0x1f) << 3) | ((direction & 0x01) << 2));
-    input.extend_from_slice(&[0; 3]);
-    input.extend_from_slice(&message[..message_octets]);
-    if bit_length % 8 != 0 {
-        let last = input.len() - 1;
-        input[last] &= 0xff << (8 - bit_length % 8);
-    }
-
     let cipher = Aes128::new(key.into());
     let mut l = [0u8; 16];
     aes_encrypt_block(&cipher, &mut l);
@@ -307,132 +307,171 @@ pub fn nia2_mac_bits(
     let mut k2 = k1;
     cmac_double(&mut k2);
 
-    let total_bits = 64 + bit_length;
-    let block_count = total_bits.div_ceil(128);
-    let complete_last_block = total_bits % 128 == 0;
+    // The first block begins with COUNT || BEARER || DIRECTION || 0^26
+    let mut block = [0u8; 16];
+    block[..4].copy_from_slice(&count.to_be_bytes());
+    block[4] = (bearer.get() << 3) | (u8::from(direction) << 2);
+    let mut filled = 8;
+
+    // Every block but the last goes through the CBC-MAC as it is
     let mut state = [0u8; 16];
-    for chunk in input.as_chunks::<16>().0.iter().take(block_count - 1) {
-        for (left, right) in state.iter_mut().zip(chunk) {
-            *left ^= right;
+    let mut remaining = message.octets;
+    loop {
+        let take = (16 - filled).min(remaining.len());
+        block[filled..filled + take].copy_from_slice(&remaining[..take]);
+        filled += take;
+        remaining = &remaining[take..];
+        if remaining.is_empty() {
+            break;
         }
-        aes_encrypt_block(&cipher, &mut state);
+        cmac_absorb(&cipher, &mut state, &block);
+        filled = 0;
     }
 
-    let last_bits = total_bits - 128 * (block_count - 1);
-    let last_octets = last_bits.div_ceil(8);
-    let mut last = [0u8; 16];
-    let offset = 16 * (block_count - 1);
-    last[..last_octets].copy_from_slice(&input[offset..offset + last_octets]);
-    let subkey = if complete_last_block {
-        &k1
-    } else {
-        last[last_bits / 8] |= 1 << (7 - last_bits % 8);
+    // The last block: K1 when it is complete, otherwise a one bit, zero
+    // bits and K2 (RFC 4493 §2.4)
+    block[filled..].fill(0);
+    let partial_octet = !message.octets.is_empty() && message.last_bits != 8;
+    let subkey = if partial_octet {
+        block[filled - 1] &= message.last_mask();
+        block[filled - 1] |= 0x80 >> message.last_bits;
         &k2
+    } else if filled < 16 {
+        block[filled] = 0x80;
+        &k2
+    } else {
+        &k1
     };
-    for index in 0..16 {
-        state[index] ^= last[index] ^ subkey[index];
+    for (octet, key_octet) in block.iter_mut().zip(subkey) {
+        *octet ^= key_octet;
     }
-    aes_encrypt_block(&cipher, &mut state);
-    let mac = u32::from_be_bytes(state[..4].try_into().expect("four-byte MAC-I"));
+    cmac_absorb(&cipher, &mut state, &block);
+    let mac = u32::from_be_bytes([state[0], state[1], state[2], state[3]]);
 
-    input.zeroize();
     l.zeroize();
     k1.zeroize();
     k2.zeroize();
-    last.zeroize();
+    block.zeroize();
     state.zeroize();
     mac
 }
 
 // ── NIA3: 128-EIA3 (ZUC MAC) ──────────────────────────────────────────────────
 
-/// Compute NAS-MAC using NIA3 / 128-EIA3 (TS 35.221 §4.3).
+/// Compute the MAC of a message of whole octets with 128-NIA3 / 128-EIA3
+/// (TS 33.401 Annex B.2.4, TS 35.221 §4).
 ///
-/// IV construction (TS 33.401 Annex B.2.4, EEA3/EIA3 specification §4.3):
+/// IV construction (EEA3/EIA3 specification §4.3):
 /// ```text
 ///   Bytes [0..3]:  COUNT (big-endian)
-///   Byte  [4]:     (BEARER & 0x1F) << 3
+///   Byte  [4]:     BEARER << 3
 ///   Bytes [5..7]:  0x000000
 ///   Byte  [8]:     COUNT_byte0 XOR (DIRECTION << 7)
 ///   Bytes [9..13]: COUNT_byte1..BEARER_byte (iv[1..5])
 ///   Byte  [14]:    iv[6] XOR (DIRECTION << 7)  = DIRECTION << 7 (since iv[6]=0)
 ///   Byte  [15]:    0x00
 /// ```
-///
-/// `bit_length`: number of message bits to authenticate; unused bits are ignored.
-///
-/// # Panics
-///
-/// Panics if `bearer` exceeds 31, `direction` exceeds one, or `bit_length`
-/// exceeds the message length in bits.
 pub fn nia3_mac(
     key: &[u8; 16],
     count: u32,
-    bearer: u8,
-    direction: u8,
+    bearer: Bearer,
+    direction: Direction,
+    message: &[u8],
+) -> u32 {
+    eia3(key, count, bearer, direction, BitString::whole(message))
+}
+
+/// Compute the 128-NIA3 / 128-EIA3 MAC of the first `bit_length` bits of
+/// `message`. The unused low-order bits of the last octet are ignored.
+///
+/// A `bit_length` above the length of `message` in bits is
+/// [`SecurityError::BitLengthExceedsData`].
+pub fn nia3_mac_bits(
+    key: &[u8; 16],
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
     message: &[u8],
     bit_length: u64,
-) -> u32 {
-    check_inputs(bearer, direction, message.len(), bit_length);
-    assert!(
-        bit_length <= (message.len() as u64) * 8,
-        "message shorter than bit length"
-    );
-    let mut iv = [0u8; 16];
-    let count_bytes = count.to_be_bytes();
-    iv[0..4].copy_from_slice(&count_bytes);
-    iv[4] = (bearer & 0x1F) << 3;
-    // iv[5..7] = 0
+) -> Result<u32, SecurityError> {
+    let bits = BitString::new(message, bit_length)?;
+    Ok(eia3(key, count, bearer, direction, bits))
+}
 
-    // Upper half: iv[8..16] derived from iv[0..8] with direction bit
-    iv[8] = iv[0] ^ (direction << 7);
-    for i in 1..8 {
-        iv[i + 8] = iv[i];
-    }
+fn eia3(
+    key: &[u8; 16],
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    message: BitString<'_>,
+) -> u32 {
+    let direction = u8::from(direction);
+    let mut iv = [0u8; 16];
+    iv[0..4].copy_from_slice(&count.to_be_bytes());
+    iv[4] = bearer.get() << 3;
+    // The upper half repeats the lower one, with the direction bit in two
+    // places
+    iv.copy_within(0..8, 8);
+    iv[8] ^= direction << 7;
     iv[14] ^= direction << 7;
 
-    // L = ceil(bit_length / 32), generate L + 2 keystream words
-    let l = bit_length.div_ceil(32) as usize;
-    let n_words = l + 2;
+    // The keystream is z[0], z[1], ... in 32-bit words, and the MAC takes
+    // of it the word that starts at the position of each one bit of the
+    // message (EIA3 §4.4). The window holds the two words around the
+    // position, so a word at any bit offset is read from it.
     let mut zuc = Zuc::new(key, &iv);
-    let stream = zeroize::Zeroizing::new(zuc.generate(n_words));
+    let mut window = Zeroizing::new(0u64);
+    shift_in(&mut window, &mut zuc);
+    shift_in(&mut window, &mut zuc);
 
-    // Compute the MAC with the bit-level word extraction of EIA3 §4.4
-    let mut t: u32 = 0;
-
-    // For each bit i in [0, bit_length): if bit i is 1, XOR in getWord(stream, i)
-    for i in 0..bit_length as usize {
-        let byte_idx = i / 8;
-        let bit_idx = 7 - (i % 8); // MSB first
-        if byte_idx < message.len() && (message[byte_idx] >> bit_idx) & 1 == 1 {
-            t ^= get_word(&stream, i);
+    let mut tag: u32 = 0;
+    let last = message.octets.len().wrapping_sub(1);
+    for (index, &octet) in message.octets.iter().enumerate() {
+        // A new 32-bit group of the message moves the window by a word
+        if index % 4 == 0 && index != 0 {
+            shift_in(&mut window, &mut zuc);
+        }
+        let valid = if index == last { message.last_bits } else { 8 };
+        let offset = (index % 4) as u32 * 8;
+        for bit in 0..valid {
+            // The word at this position, taken or not through a mask
+            let word = ((*window << (offset + bit)) >> 32) as u32;
+            let set = u32::from(octet >> (7 - bit)) & 1;
+            tag ^= word & 0u32.wrapping_sub(set);
         }
     }
 
-    // XOR with getWord(stream, bit_length) and stream[L+1]
-    t ^= get_word(&stream, bit_length as usize);
-    t ^= stream[l + 1];
-
-    t
+    // The word at the position LENGTH, then the last word z[L - 1], where
+    // L = ceil(LENGTH / 32) + 2
+    let end = (message.bit_length() % 32) as u32;
+    if end == 0 && !message.octets.is_empty() {
+        shift_in(&mut window, &mut zuc);
+    }
+    tag ^= ((*window << end) >> 32) as u32;
+    let last_word = if end == 0 {
+        *window as u32
+    } else {
+        zuc.next_word()
+    };
+    tag ^ last_word
 }
 
-/// Extract a 32-bit word from stream starting at bit position i (MSB-first).
-/// If i is 32-bit-aligned, returns stream[i/32].
-/// Otherwise, spans two consecutive words.
-#[inline]
-fn get_word(stream: &[u32], i: usize) -> u32 {
-    let word_idx = i / 32;
-    let bit_off = i % 32;
-    if bit_off == 0 {
-        stream[word_idx]
-    } else {
-        (stream[word_idx] << bit_off) | (stream[word_idx + 1] >> (32 - bit_off))
-    }
+/// Move the window of two keystream words forward by one word.
+fn shift_in(window: &mut u64, zuc: &mut Zuc) {
+    *window = (*window << 32) | u64::from(zuc.next_word());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bearer(value: u8) -> Bearer {
+        Bearer::new(value).unwrap()
+    }
+
+    fn direction(bit: u8) -> Direction {
+        Direction::try_from(bit).unwrap()
+    }
 
     // ── NIA1 test vectors from free5gc (3GPP TS 35.215/35.216) ────────────────
 
@@ -446,7 +485,10 @@ mod tests {
             0x33, 0x32, 0x34, 0x62, 0x63, 0x39, 0x38, 0x61, 0x37, 0x34, 0x79, 0x00, 0x00, 0x00,
             0x00, 0x00,
         ];
-        assert_eq!(nia1_mac(&key, 0x38a6f056, 0x1f, 0, msg, 88), 0x731f1165);
+        assert_eq!(
+            nia1_mac_bits(&key, 0x38a6f056, bearer(0x1f), direction(0), msg, 88),
+            Ok(0x731f1165)
+        );
     }
 
     #[test]
@@ -460,7 +502,10 @@ mod tests {
             0x2d, 0x84, 0xb7, 0x26, 0xb6, 0xa2, 0x78, 0xd8, 0x02, 0xd1, 0xee, 0xaf, 0x13, 0x21,
             0xba, 0x59, 0x29, 0xdc,
         ];
-        assert_eq!(nia1_mac(&key, 0x36af6144, 0x18, 1, msg, 254), 0xe3259f6f);
+        assert_eq!(
+            nia1_mac_bits(&key, 0x36af6144, bearer(0x18), direction(1), msg, 254),
+            Ok(0xe3259f6f)
+        );
     }
 
     #[test]
@@ -476,7 +521,10 @@ mod tests {
             0xb5, 0xd8, 0xc0, 0xc6, 0x6a, 0x8b, 0x6d, 0xa5, 0x56, 0x66, 0x3e, 0x4e, 0x46, 0x12,
             0x05, 0xd8, 0x45, 0x80, 0xbe, 0xe5, 0xbc, 0x7e,
         ];
-        assert_eq!(nia1_mac(&key, 0xc7590ea9, 0x17, 0, msg, 511), 0x9a16c77d);
+        assert_eq!(
+            nia1_mac_bits(&key, 0xc7590ea9, bearer(0x17), direction(0), msg, 511),
+            Ok(0x9a16c77d)
+        );
     }
 
     #[test]
@@ -494,7 +542,10 @@ mod tests {
             0xa5, 0xaf, 0x05, 0x55, 0x61, 0x76, 0xf6, 0xea, 0xa2, 0xef, 0x1d, 0x05, 0xe4, 0xb0,
             0x83, 0x18, 0x1e, 0xe6, 0x74, 0xcd, 0xa5, 0xa4, 0x85, 0xf7, 0x4d, 0x7a,
         ];
-        assert_eq!(nia1_mac(&key, 0x36af6144, 0x0f, 1, msg, 768), 0xbba74492);
+        assert_eq!(
+            nia1_mac_bits(&key, 0x36af6144, bearer(0x0f), direction(1), msg, 768),
+            Ok(0xbba74492)
+        );
     }
 
     #[test]
@@ -509,7 +560,10 @@ mod tests {
             0x85, 0x47, 0x20, 0x29, 0xb7, 0x1d, 0x80, 0x8c, 0xe3, 0x3e, 0x2c, 0xc3, 0xc0, 0xb5,
             0xfc, 0x1f, 0x3d, 0xe8, 0xa6, 0xdc,
         ];
-        assert_eq!(nia1_mac(&key, 0x36af6144, 0x18, 0, msg, 383), 0x4145e4b0);
+        assert_eq!(
+            nia1_mac_bits(&key, 0x36af6144, bearer(0x18), direction(0), msg, 383),
+            Ok(0x4145e4b0)
+        );
     }
 
     // ── NIA2 test vectors ────────────────────────────────────────────────────
@@ -524,8 +578,8 @@ mod tests {
             .unwrap();
         let message = hex::decode("3332346263393840").unwrap();
         assert_eq!(
-            nia2_mac_bits(&key, 0x38a6_f056, 0x18, 0, &message, 58),
-            0x118c_6eb8
+            nia2_mac_bits(&key, 0x38a6_f056, bearer(0x18), direction(0), &message, 58),
+            Ok(0x118c_6eb8)
         );
     }
 
@@ -533,7 +587,7 @@ mod tests {
     fn nia2_remaining_non_byte_aligned_annex_c2_vectors() {
         // TS 33.401 Annex C.2 sets 3, 4, and 6. Each vector is also
         // recomputed after changing only unused low-order padding bits.
-        for (key, count, bearer, direction, message, bits, expected, unused_mask) in [
+        for (key, count, bearer_value, direction_bit, message, bits, expected, unused_mask) in [
             (
                 "7e5e94431e11d73828d739cc6ced4573",
                 0x36af_6144,
@@ -573,14 +627,15 @@ mod tests {
         ] {
             let key: [u8; 16] = hex::decode(key).unwrap().try_into().unwrap();
             let mut message = hex::decode(message).unwrap();
+            let (bearer, direction) = (bearer(bearer_value), direction(direction_bit));
             assert_eq!(
                 nia2_mac_bits(&key, count, bearer, direction, &message, bits),
-                expected
+                Ok(expected)
             );
             *message.last_mut().unwrap() ^= unused_mask;
             assert_eq!(
                 nia2_mac_bits(&key, count, bearer, direction, &message, bits),
-                expected
+                Ok(expected)
             );
         }
     }
@@ -599,7 +654,10 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(message.len(), 96);
-        assert_eq!(nia2_mac(&key, 0x36af_6144, 0x0f, 1, &message), 0xe657_e182);
+        assert_eq!(
+            nia2_mac(&key, 0x36af_6144, bearer(0x0f), direction(1), &message),
+            0xe657_e182
+        );
     }
 
     // Additional NAS vectors from free5GC.
@@ -611,7 +669,10 @@ mod tests {
             0xc6, 0xd1,
         ];
         let msg: &[u8] = &[0x48, 0x45, 0x83, 0xd5, 0xaf, 0xe0, 0x82, 0xae];
-        assert_eq!(nia2_mac(&key, 0x398a59b4, 0x1a, 1, msg), 0xb93787e6);
+        assert_eq!(
+            nia2_mac(&key, 0x398a59b4, bearer(0x1a), direction(1), msg),
+            0xb93787e6
+        );
     }
 
     #[test]
@@ -769,7 +830,10 @@ mod tests {
             0xe4, 0xcf, 0xf3, 0xb3, 0x3d, 0x5d, 0x24, 0xe9, 0xc0, 0x83, 0x11, 0x24, 0xbf, 0x1a,
             0xd5, 0x4b, 0x79, 0x25, 0x32, 0x98, 0x3d, 0xd6, 0xc3, 0xa8, 0xb7, 0xd0,
         ];
-        assert_eq!(nia2_mac(&key, 0x296f393c, 0x0b, 1, msg), 0xebd5ccb0);
+        assert_eq!(
+            nia2_mac(&key, 0x296f393c, bearer(0x0b), direction(1), msg),
+            0xebd5ccb0
+        );
     }
 
     // ── NIA3 test vectors from free5gc (3GPP TS 35.221/35.222) ────────────────
@@ -779,7 +843,10 @@ mod tests {
         // 1 bit message, all zeros
         let key = [0u8; 16];
         let msg: &[u8] = &[0x00, 0x00, 0x00, 0x00];
-        assert_eq!(nia3_mac(&key, 0x0, 0x0, 0, msg, 1), 0xc8a9595e);
+        assert_eq!(
+            nia3_mac_bits(&key, 0x0, bearer(0x0), direction(0), msg, 1),
+            Ok(0xc8a9595e)
+        );
     }
 
     #[test]
@@ -791,7 +858,10 @@ mod tests {
         let msg: &[u8] = &[
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
-        assert_eq!(nia3_mac(&key, 0x561eb2dd, 0x14, 0, msg, 90), 0x6719a088);
+        assert_eq!(
+            nia3_mac_bits(&key, 0x561eb2dd, bearer(0x14), direction(0), msg, 90),
+            Ok(0x6719a088)
+        );
     }
 
     #[test]
@@ -808,7 +878,10 @@ mod tests {
             0x21, 0xe5, 0x69, 0xd2, 0x80, 0xed, 0x77, 0x5c, 0xeb, 0xde, 0x3f, 0x40, 0x93, 0xc5,
             0x38, 0x81, 0x00, 0x00, 0x00, 0x00,
         ];
-        assert_eq!(nia3_mac(&key, 0xa94059da, 0x0a, 1, msg, 577), 0xfae8ff0b);
+        assert_eq!(
+            nia3_mac_bits(&key, 0xa94059da, bearer(0x0a), direction(1), msg, 577),
+            Ok(0xfae8ff0b)
+        );
     }
 
     #[test]
@@ -838,7 +911,10 @@ mod tests {
             0x51, 0x35, 0x69, 0x0b, 0x86, 0x66, 0xbd, 0x54, 0xb7, 0xa7, 0x03, 0xea, 0x7b, 0x6f,
             0x22, 0x0a, 0x54, 0x69, 0xa5, 0x68, 0x02, 0x7e,
         ];
-        assert_eq!(nia3_mac(&key, 0x05097850, 0x10, 1, msg, 2079), 0x004ac4d6);
+        assert_eq!(
+            nia3_mac_bits(&key, 0x05097850, bearer(0x10), direction(1), msg, 2079),
+            Ok(0x004ac4d6)
+        );
     }
 
     #[test]
@@ -900,7 +976,10 @@ mod tests {
             0x71, 0xf6, 0xcc, 0x6d, 0xbb, 0x8d, 0xc7, 0xec, 0x36, 0xe3, 0x6b, 0xe1, 0xed, 0x30,
             0x81, 0x64, 0xc3, 0x1c, 0x7c, 0x0a, 0xfc, 0x54, 0x1c, 0x00, 0x00, 0x00,
         ];
-        assert_eq!(nia3_mac(&key, 0x561eb2dd, 0x1c, 0, msg, 5670), 0x0ca12792);
+        assert_eq!(
+            nia3_mac_bits(&key, 0x561eb2dd, bearer(0x1c), direction(0), msg, 5670),
+            Ok(0x0ca12792)
+        );
     }
 
     // ── NIA0 null integrity ───────────────────────────────────────────────────
@@ -908,81 +987,131 @@ mod tests {
     #[test]
     fn test_nia0_null() {
         let key = [0u8; 16];
-        assert_eq!(nia_mac(&key, 0, 0, 0, &[0x7E, 0x00, 0x41], 0x00), 0);
+        assert_eq!(
+            nia_mac(
+                &key,
+                0,
+                Bearer::ZERO,
+                Direction::Uplink,
+                &[0x7E, 0x00, 0x41],
+                IntegrityAlgorithm::Null
+            ),
+            0
+        );
     }
 
     // ── nia_mac dispatch ──────────────────────────────────────────────────────
 
     #[test]
-    fn test_nas_mac_dispatches_nia2() {
-        let key = [0u8; 16];
-        let mac_direct = nia2_mac(&key, 0, 0, 0, &[0x7E, 0x00, 0x41]);
-        let mac_dispatch = nia_mac(&key, 0, 0, 0, &[0x7E, 0x00, 0x41], 0x02);
-        assert_eq!(mac_direct, mac_dispatch);
-        assert_ne!(mac_dispatch, 0);
-    }
-
-    #[test]
-    fn test_nas_mac_dispatches_nia1() {
-        let key = [0x2bu8; 16];
-        let msg = &[0x33u8; 8];
-        let bit_len = (msg.len() * 8) as u64;
-        let mac_direct = nia1_mac(&key, 42, 1, 0, msg, bit_len);
-        let mac_dispatch = nia_mac(&key, 42, 1, 0, msg, 0x01);
-        assert_eq!(mac_direct, mac_dispatch);
-    }
-
-    #[test]
-    fn test_nas_mac_dispatches_nia3() {
+    fn nia_mac_is_each_algorithm_on_whole_octets() {
         let key = [0x47u8; 16];
-        let msg = &[0xABu8; 8];
-        let bit_len = (msg.len() * 8) as u64;
-        let mac_direct = nia3_mac(&key, 0x12345678, 3, 1, msg, bit_len);
-        let mac_dispatch = nia_mac(&key, 0x12345678, 3, 1, msg, 0x03);
-        assert_eq!(mac_direct, mac_dispatch);
+        let msg = &[0xABu8; 11];
+        let bits = (msg.len() * 8) as u64;
+        let (count, bearer, direction) = (0x12345678, bearer(3), Direction::Downlink);
+        let mac = |algorithm| nia_mac(&key, count, bearer, direction, msg, algorithm);
+
+        let nia1 = nia1_mac(&key, count, bearer, direction, msg);
+        assert_eq!(mac(IntegrityAlgorithm::Snow3g), nia1);
+        assert_eq!(
+            nia1_mac_bits(&key, count, bearer, direction, msg, bits),
+            Ok(nia1)
+        );
+        let nia2 = nia2_mac(&key, count, bearer, direction, msg);
+        assert_eq!(mac(IntegrityAlgorithm::Aes), nia2);
+        assert_eq!(
+            nia2_mac_bits(&key, count, bearer, direction, msg, bits),
+            Ok(nia2)
+        );
+        let nia3 = nia3_mac(&key, count, bearer, direction, msg);
+        assert_eq!(mac(IntegrityAlgorithm::Zuc), nia3);
+        assert_eq!(
+            nia3_mac_bits(&key, count, bearer, direction, msg, bits),
+            Ok(nia3)
+        );
+        assert!(nia1 != nia2 && nia2 != nia3 && nia1 != nia3);
     }
 
+    /// The bits after `bit_length` in the last octet are not part of the
+    /// message (TS 33.401 Annex C.2 gives lengths that are not multiples
+    /// of 8), with every algorithm and at every length of a short message.
     #[test]
-    fn nia1_ignores_unused_bits_of_last_octet() {
+    fn unused_bits_of_the_last_octet_are_ignored() {
         let key: [u8; 16] = hex::decode("2bd6459f82c5b300952c49104881ff48")
             .unwrap()
             .try_into()
             .unwrap();
-        assert_eq!(
-            nia1_mac(&key, 0x38a6f056, 0x1f, 0, &[0x80], 1),
-            nia1_mac(&key, 0x38a6f056, 0x1f, 0, &[0xff], 1)
-        );
+        let message: Vec<u8> = (0..40u8)
+            .map(|octet| octet.wrapping_mul(37) ^ 0x5a)
+            .collect();
+        for algorithm in [
+            IntegrityAlgorithm::Snow3g,
+            IntegrityAlgorithm::Aes,
+            IntegrityAlgorithm::Zuc,
+        ] {
+            let mac = |message: &[u8], bits| {
+                nia_mac_bits(
+                    &key,
+                    0x38a6f056,
+                    bearer(0x1f),
+                    Direction::Uplink,
+                    message,
+                    bits,
+                    algorithm,
+                )
+                .unwrap()
+            };
+            for bits in 1..=(message.len() as u64 * 8) {
+                let octets = bits.div_ceil(8) as usize;
+                let unused = (octets as u64 * 8 - bits) as u32;
+                // The octets after the last one, and the bits after the last
+                // one, change nothing
+                let mut changed = message.clone();
+                changed[octets - 1] ^= ((1u16 << unused) - 1) as u8;
+                for octet in &mut changed[octets..] {
+                    *octet ^= 0xff;
+                }
+                assert_eq!(mac(&message, bits), mac(&changed, bits), "{bits}");
+                // The last bit of the message does
+                changed[octets - 1] ^= 1 << unused;
+                assert_ne!(mac(&message, bits), mac(&changed, bits), "{bits}");
+            }
+        }
     }
 
     #[test]
-    fn raw_mac_dispatch_and_input_boundaries() {
+    fn a_bit_length_longer_than_the_message_is_an_error() {
         let key = [0x5a; 16];
         let message = [0xa5, 0x58];
-        let bits = 13;
-
-        // Both inclusive raw-field limits and a non-octet length are accepted.
-        for algo in 0..=3 {
-            let dispatched = nia_mac_bits(&key, 7, 31, 1, &message, bits, algo);
-            let direct = match algo {
-                0 => 0,
-                1 => nia1_mac(&key, 7, 31, 1, &message, bits),
-                2 => nia2_mac_bits(&key, 7, 31, 1, &message, bits),
-                3 => nia3_mac(&key, 7, 31, 1, &message, bits),
-                _ => unreachable!(),
-            };
-            assert_eq!(dispatched, direct);
+        let refused = Err(SecurityError::BitLengthExceedsData {
+            bits: 17,
+            octets: 2,
+        });
+        let (bearer, direction) = (Bearer::MAX, Direction::Downlink);
+        for algorithm in [
+            IntegrityAlgorithm::Null,
+            IntegrityAlgorithm::Snow3g,
+            IntegrityAlgorithm::Aes,
+            IntegrityAlgorithm::Zuc,
+        ] {
+            assert_eq!(
+                nia_mac_bits(&key, 7, bearer, direction, &message, 17, algorithm),
+                refused
+            );
+            assert!(nia_mac_bits(&key, 7, bearer, direction, &message, 16, algorithm).is_ok());
+            assert!(nia_mac_bits(&key, 7, bearer, direction, &[], 0, algorithm).is_ok());
         }
-
-        let panics = |bearer, direction, length, algo| {
-            std::panic::catch_unwind(|| {
-                nia_mac_bits(&key, 7, bearer, direction, &message, length, algo)
-            })
-            .is_err()
-        };
-        assert!(panics(32, 1, bits, 1));
-        assert!(panics(31, 2, bits, 1));
-        assert!(panics(31, 1, 17, 1));
-        assert!(panics(31, 1, bits, 4));
-        assert_eq!(nia_mac_bits(&key, 7, 31, 1, &[], 0, 0), 0);
+        assert_eq!(
+            nia1_mac_bits(&key, 7, bearer, direction, &message, 17),
+            refused
+        );
+        assert_eq!(
+            nia2_mac_bits(&key, 7, bearer, direction, &message, 17),
+            refused
+        );
+        assert_eq!(
+            nia3_mac_bits(&key, 7, bearer, direction, &message, 17),
+            refused
+        );
+        assert!(nia1_mac_bits(&key, 7, bearer, direction, &message, u64::MAX).is_err());
     }
 }

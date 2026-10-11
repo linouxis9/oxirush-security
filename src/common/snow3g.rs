@@ -253,22 +253,24 @@ impl Snow3G {
         Self::new(*k, v)
     }
 
-    /// Generate `n` keystream words.
-    pub fn generate(&mut self, n: usize) -> Vec<u32> {
+    /// The next keystream word.
+    pub fn next_word(&mut self) -> u32 {
         if !self.started {
             // TS 35.216 discards one word after initialization, once per state.
             let _ = self.clock_fsm();
             self.clock_lfsr_keystream();
             self.started = true;
         }
+        let word = self.clock_fsm() ^ self.lfsr[0];
+        self.clock_lfsr_keystream();
+        word
+    }
 
-        let mut ks = Vec::with_capacity(n);
-        for _ in 0..n {
-            let f = self.clock_fsm();
-            ks.push(f ^ self.lfsr[0]);
-            self.clock_lfsr_keystream();
+    /// Fill `words` with the next keystream words.
+    pub fn fill(&mut self, words: &mut [u32]) {
+        for word in words {
+            *word = self.next_word();
         }
-        ks
     }
 
     /// Clock the FSM, return F.
@@ -316,14 +318,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn split_generate_matches_single_call() {
+    fn split_fill_matches_single_call() {
         let key = [0x23; 16];
         let iv = [0x42; 16];
         let mut one = Snow3G::from_bytes(&key, &iv);
         let mut split = Snow3G::from_bytes(&key, &iv);
-        let expected = one.generate(8);
-        let mut actual = split.generate(3);
-        actual.extend(split.generate(5));
+        let mut expected = [0; 8];
+        one.fill(&mut expected);
+        let mut actual = [0; 8];
+        let (first, second) = actual.split_at_mut(3);
+        split.fill(first);
+        split.fill(second);
         assert_eq!(actual, expected);
     }
 
@@ -341,8 +346,10 @@ mod tests {
         ];
         let mut s1 = Snow3G::from_bytes(&key, &iv);
         let mut s2 = Snow3G::from_bytes(&key, &iv);
-        let ks1 = s1.generate(4);
-        let ks2 = s2.generate(4);
+        let mut ks1 = [0; 4];
+        s1.fill(&mut ks1);
+        let mut ks2 = [0; 4];
+        s2.fill(&mut ks2);
         assert_eq!(ks1, ks2);
         // Keystream should not be trivially zero
         assert!(ks1.iter().any(|&w| w != 0));
@@ -357,8 +364,10 @@ mod tests {
 
         let mut s1 = Snow3G::from_bytes(&key, &iv1);
         let mut s2 = Snow3G::from_bytes(&key, &iv2);
-        let ks1 = s1.generate(4);
-        let ks2 = s2.generate(4);
+        let mut ks1 = [0; 4];
+        s1.fill(&mut ks1);
+        let mut ks2 = [0; 4];
+        s2.fill(&mut ks2);
         assert_ne!(ks1, ks2);
     }
 
@@ -370,7 +379,8 @@ mod tests {
         let k = [0x2bd6459fu32, 0x82c5b300, 0x952c4910, 0x4881ff48];
         let iv = [0xea024714u32, 0xad5c4d84, 0xdf1f9b25, 0x1c0bf45f];
         let mut snow = Snow3G::new(k, iv);
-        let ks = snow.generate(2);
+        let mut ks = [0; 2];
+        snow.fill(&mut ks);
         assert_eq!(ks[0], 0xabee9704, "free5gc TC1: z[0] mismatch");
         assert_eq!(ks[1], 0x7ac31373, "free5gc TC1: z[1] mismatch");
     }
@@ -380,7 +390,8 @@ mod tests {
         let k = [0x8ce33e2cu32, 0xc3c0b5fc, 0x1f3de8a6, 0xdc66b1f3];
         let iv = [0xd3c5d592u32, 0x327fb11c, 0xde551988, 0xceb2f9b7];
         let mut snow = Snow3G::new(k, iv);
-        let ks = snow.generate(2);
+        let mut ks = [0; 2];
+        snow.fill(&mut ks);
         assert_eq!(ks[0], 0xeff8a342, "free5gc TC2: z[0] mismatch");
         assert_eq!(ks[1], 0xf751480f, "free5gc TC2: z[1] mismatch");
     }
@@ -392,7 +403,8 @@ mod tests {
         let k = [0x4035c668u32, 0x0af8c6d1, 0xa8ff8667, 0xb1714013];
         let iv = [0x62a54098u32, 0x1ba6f9b7, 0x4592b0e7, 0x8690f71b];
         let mut snow = Snow3G::new(k, iv);
-        let ks = snow.generate(2);
+        let mut ks = [0; 2];
+        snow.fill(&mut ks);
         assert_eq!(ks[0], 0xa8c874a9, "free5gc TC3: z[0] mismatch");
         assert_eq!(ks[1], 0x7ae7c4f8, "free5gc TC3: z[1] mismatch");
     }
@@ -402,7 +414,8 @@ mod tests {
         let k = [0x0ded7263u32, 0x109cf92e, 0x3352255a, 0x140e0f76];
         let iv = [0x6b68079au32, 0x41a7c4c9, 0x1befd79f, 0x7fdcc233];
         let mut snow = Snow3G::new(k, iv);
-        let ks = snow.generate(3);
+        let mut ks = [0; 3];
+        snow.fill(&mut ks);
         assert_eq!(ks[0], 0xd712c05c, "free5gc TC4: z[0] mismatch");
         assert_eq!(ks[1], 0xa937c2a6, "free5gc TC4: z[1] mismatch");
         assert_eq!(ks[2], 0xeb7eaae3, "free5gc TC4: z[2] mismatch");
@@ -426,7 +439,8 @@ mod tests {
         let k = [0x4881ff48u32, 0x952c4910, 0x82c5b300, 0x2bd6459f];
         let iv = [0x64000000u32, 0x72a4f20f, 0x64000000, 0x72a4f20f];
         let mut snow = Snow3G::new(k, iv);
-        let ks = snow.generate(4);
+        let mut ks = [0; 4];
+        snow.fill(&mut ks);
         // Keystream must be non-zero
         assert!(ks.iter().any(|&w| w != 0));
         // XOR plaintext[0..4] with ks[0] should give ciphertext[0..4]:

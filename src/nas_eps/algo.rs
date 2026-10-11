@@ -15,27 +15,10 @@
    limitations under the License.
 */
 
-//! EPS NAS algorithm selection from UE network capability EEA/EIA bits.
+//! EPS NAS algorithm selection from the EEA and EIA octets of the UE
+//! network capability (TS 24.301 §9.9.3.34).
 
-/// Select EIA2, EIA1, or EIA3 from the UE EIA capability octet.
-/// EIA0 is reserved for unauthenticated emergency operation.
-pub fn select_integrity_algo(eia_capability: u8) -> Option<u8> {
-    crate::common::algo::select_integrity_algo(eia_capability)
-}
-
-/// Select EEA2, EEA1, EEA3, or EEA0 from the UE EEA capability octet.
-pub fn select_ciphering_algo(eea_capability: u8) -> Option<u8> {
-    crate::common::algo::select_ciphering_algo(eea_capability)
-}
-
-/// Select the first EIA algorithm in the operator-configured preference list
-/// that the UE supports. Include EIA0 only for an applicable emergency policy.
-pub fn select_integrity_algo_with_preference(eia_capability: u8, preference: &[u8]) -> Option<u8> {
-    crate::common::algo::select_integrity_algo_with_preference(eia_capability, preference)
-}
-
-/// Select the first EEA algorithm in the operator-configured preference list
-/// that the UE supports.
-pub fn select_ciphering_algo_with_preference(eea_capability: u8, preference: &[u8]) -> Option<u8> {
-    crate::common::algo::select_ciphering_algo_with_preference(eea_capability, preference)
-}
+pub use crate::common::algo::{
+    select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
+    select_integrity_algo_with_preference,
+};

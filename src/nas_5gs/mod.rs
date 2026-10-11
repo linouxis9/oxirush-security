@@ -15,7 +15,8 @@
    limitations under the License.
 */
 
-//! 5GS key derivation, algorithm selection, and subscriber identity security.
+//! 5GS key derivation, NAS security, algorithm selection, and subscriber
+//! identity concealment per 3GPP TS 33.501.
 
 pub mod algo;
 pub mod guti;
@@ -23,7 +24,10 @@ pub mod kdf;
 pub mod security;
 pub mod suci;
 
-pub use crate::common::extract_128;
+pub use crate::common::{
+    AccessKeyCount, Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount,
+    SecurityError, extract_128,
+};
 pub use algo::{
     select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
     select_integrity_algo_with_preference,
@@ -31,14 +35,14 @@ pub use algo::{
 pub use guti::{build_guti_bytes, mobile_identity_type, parse_guti_tmsi, parse_s_tmsi};
 pub use kdf::{
     IabIpAddress, KamfMobilityDirection, TnapKeyUsage, compute_hres_star, compute_xres_star,
-    derive_as_key, derive_kamf, derive_kamf_prime, derive_kamf_prime_handover,
-    derive_kamf_prime_idle, derive_kasme_srvcc, derive_kausf, derive_kgnb, derive_kiab,
-    derive_kn3iwf, derive_kng_ran_star, derive_kng_ran_star_ng_enb, derive_kseaf, derive_ksn,
-    derive_mapped_kasme_handover, derive_mapped_kasme_idle, derive_nas_key, derive_nh,
-    derive_sor_mac_ausf, derive_sor_mac_ue, derive_tnap_usage_key, derive_upu_mac_ausf,
-    derive_upu_mac_ue,
+    derive_kamf, derive_kamf_prime, derive_kamf_prime_handover, derive_kamf_prime_idle,
+    derive_kasme_srvcc, derive_kausf, derive_kgnb, derive_kiab, derive_kn3iwf, derive_knas_enc,
+    derive_knas_int, derive_kng_ran_star, derive_kng_ran_star_ng_enb, derive_krrc_enc,
+    derive_krrc_int, derive_kseaf, derive_ksn, derive_kup_enc, derive_kup_int,
+    derive_mapped_kasme_handover, derive_mapped_kasme_idle, derive_nh, derive_sor_mac_ausf,
+    derive_sor_mac_ue, derive_tnap_usage_key, derive_upu_mac_ausf, derive_upu_mac_ue,
 };
-pub use security::{nas_cipher, nas_container_mac, nas_mac};
+pub use security::{NasConnection, nas_cipher, nas_container_mac, nas_mac};
 pub use suci::{
     NaiProtectionScheme, NaiSuci, SuciSchemeOutput, SupiType, conceal_network_specific_supi,
     deconceal_nai_suci, deconceal_network_specific_suci, encode_nai_suci, msin_to_bcd,

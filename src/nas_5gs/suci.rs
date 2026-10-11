@@ -48,6 +48,7 @@ const PROFILE_B_PUB_KEY_LEN: usize = 33; // compressed
 ///
 /// These values are the textual `type` field. TS 24.501 uses the opposite
 /// ordering for GCI and GLI in its separate three-bit NAS SUPI-format field.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum SupiType {
@@ -74,6 +75,7 @@ impl SupiType {
 }
 
 /// Typed protection-scheme output of a textual NAI SUCI.
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SuciSchemeOutput {
     /// Clear UTF-8 username used by the null scheme.
@@ -108,6 +110,7 @@ pub struct NaiSuci {
 }
 
 /// Protection choice for constructing a network-specific-identifier SUCI.
+#[non_exhaustive]
 pub enum NaiProtectionScheme<'a> {
     /// Null scheme: the username stays in clear.
     Null,
@@ -621,31 +624,19 @@ fn hmac_sha256_8(key: &[u8], data: &[u8]) -> [u8; 8] {
         .expect("SHA-256 output is 32 bytes, 8-byte prefix always valid")
 }
 
-/// MSIN decimal string → packed BCD bytes (low nibble first, right-padded with 0xF if odd length).
+/// Encode the decimal digits of an MSIN as packed BCD: the first digit of
+/// each pair in the low nibble, and the filler 0xF after an odd number of
+/// digits.
 ///
-/// # Panics
-///
-/// Panics if `msin` contains a non-ASCII decimal digit.
-pub fn msin_to_bcd(msin: &str) -> Vec<u8> {
-    assert!(
-        msin.as_bytes().iter().all(|b| b.is_ascii_digit()),
-        "MSIN must be ASCII digits"
-    );
-    let bytes = msin.as_bytes();
-    let len = bytes.len().div_ceil(2);
-    let mut out = Vec::with_capacity(len);
-    let mut i = 0;
-    while i < bytes.len() {
-        let lo = bytes[i] - b'0';
-        let hi = if i + 1 < bytes.len() {
-            bytes[i + 1] - b'0'
-        } else {
-            0xF
-        };
-        out.push(lo | (hi << 4));
-        i += 2;
+/// A character that is not a decimal digit is
+/// [`SecurityError::InvalidParameter`].
+pub fn msin_to_bcd(msin: &str) -> Result<Vec<u8>, SecurityError> {
+    if !msin.bytes().all(|character| character.is_ascii_digit()) {
+        return Err(SecurityError::InvalidParameter(
+            "MSIN must be decimal digits",
+        ));
     }
-    out
+    crate::plmn::tbcd_encode(msin)
 }
 
 /// Build the scheme output bytes for SUCI Profile A (X25519 ECIES).
@@ -1060,20 +1051,26 @@ mod tests {
     fn test_msin_to_bcd_even() {
         // "00007487" — 8 digits → 4 bytes; lo nibble first within each byte
         // byte0: lo=0,hi=0=0x00  byte1: lo=0,hi=0=0x00  byte2: lo=7,hi=4=0x47  byte3: lo=8,hi=7=0x78
-        assert_eq!(msin_to_bcd("00007487"), vec![0x00, 0x00, 0x47, 0x78]);
+        assert_eq!(
+            msin_to_bcd("00007487").unwrap(),
+            vec![0x00, 0x00, 0x47, 0x78]
+        );
     }
 
     #[test]
     fn test_msin_to_bcd_odd() {
         // "001002086" — 9 digits → 5 bytes (last nibble padded with 0xF)
-        assert_eq!(msin_to_bcd("001002086"), vec![0x00, 0x01, 0x20, 0x80, 0xF6]);
+        assert_eq!(
+            msin_to_bcd("001002086").unwrap(),
+            vec![0x00, 0x01, 0x20, 0x80, 0xF6]
+        );
     }
 
     #[test]
     fn test_msin_to_bcd_ten_digits() {
         // "0123456789" — 10 digits → 5 bytes
         assert_eq!(
-            msin_to_bcd("0123456789"),
+            msin_to_bcd("0123456789").unwrap(),
             vec![0x10, 0x32, 0x54, 0x76, 0x98]
         );
     }
@@ -1081,7 +1078,7 @@ mod tests {
     #[test]
     fn test_msin_to_bcd_all_zeros() {
         assert_eq!(
-            msin_to_bcd("0000000001"),
+            msin_to_bcd("0000000001").unwrap(),
             vec![0x00, 0x00, 0x00, 0x00, 0x10]
         );
     }
@@ -1092,7 +1089,7 @@ mod tests {
     fn test_profile_a_round_trip() {
         let pub_bytes: [u8; 32] = hex::decode(PROFILE_A_PUB).unwrap().try_into().unwrap();
         let priv_bytes: [u8; 32] = hex::decode(PROFILE_A_PRIV).unwrap().try_into().unwrap();
-        let msin_bcd = msin_to_bcd("0000000001");
+        let msin_bcd = msin_to_bcd("0000000001").unwrap();
         let scheme_output = suci_scheme_output_a(&msin_bcd, &pub_bytes).unwrap();
         assert_eq!(
             suci_decrypt_a(&scheme_output, &priv_bytes).unwrap(),
@@ -1114,7 +1111,7 @@ mod tests {
         )
         .unwrap();
         let plaintext = suci_decrypt_a(&scheme_output, &priv_bytes).unwrap();
-        assert_eq!(plaintext, msin_to_bcd("001002086"));
+        assert_eq!(plaintext, msin_to_bcd("001002086").unwrap());
     }
 
     // ── Profile B round-trip ─────────────────────────────────────────────────
@@ -1123,7 +1120,7 @@ mod tests {
     fn test_profile_b_round_trip() {
         let pub_bytes = hex::decode(PROFILE_B_PUB).unwrap();
         let priv_bytes = hex::decode(PROFILE_B_PRIV).unwrap();
-        let msin_bcd = msin_to_bcd("0000000001");
+        let msin_bcd = msin_to_bcd("0000000001").unwrap();
         let scheme_output = suci_scheme_output_b(&msin_bcd, &pub_bytes).unwrap();
         assert_eq!(
             suci_decrypt_b(&scheme_output, &priv_bytes).unwrap(),
@@ -1145,7 +1142,7 @@ mod tests {
         )
         .unwrap();
         let plaintext = suci_decrypt_b(&scheme_output, &priv_bytes).unwrap();
-        assert_eq!(plaintext, msin_to_bcd("001002086"));
+        assert_eq!(plaintext, msin_to_bcd("001002086").unwrap());
     }
 
     // ── Profile B known vector — compressed eph key (TestToSupi case 4) ──────
@@ -1162,7 +1159,7 @@ mod tests {
         .unwrap();
         // 33 eph + 5 ct + 8 mac = 46 bytes
         let plaintext = suci_decrypt_b(&scheme_output, &priv_bytes).unwrap();
-        assert_eq!(plaintext, msin_to_bcd("0123456789"));
+        assert_eq!(plaintext, msin_to_bcd("0123456789").unwrap());
     }
 
     // TS 33.514 §4.2.1.3 requires rejection of an uncompressed ephemeral
@@ -1228,7 +1225,7 @@ mod tests {
             "0123456789",
             "0000000001",
         ] {
-            let msin_bcd = msin_to_bcd(msin);
+            let msin_bcd = msin_to_bcd(msin).unwrap();
             let scheme_output = suci_scheme_output_b(&msin_bcd, &pub_bytes).unwrap();
             assert_eq!(
                 suci_decrypt_b(&scheme_output, &priv_bytes).unwrap(),
@@ -1251,7 +1248,7 @@ mod tests {
             "0123456789",
             "0000000001",
         ] {
-            let msin_bcd = msin_to_bcd(msin);
+            let msin_bcd = msin_to_bcd(msin).unwrap();
             let scheme_output = suci_scheme_output_a(&msin_bcd, &pub_bytes).unwrap();
             assert_eq!(
                 suci_decrypt_a(&scheme_output, &priv_bytes).unwrap(),
@@ -1268,10 +1265,10 @@ mod tests {
         let priv_bytes = hex::decode(PROFILE_A_PRIV).unwrap();
         let pub_bytes: [u8; 32] = hex::decode(PROFILE_A_PUB).unwrap().try_into().unwrap();
         // Build a full SUCI binary: type=SUCI(0x01), PLMN=208/93, RI=0000, scheme=1, key_id=1
-        let msin_bcd = msin_to_bcd("001002086");
+        let msin_bcd = msin_to_bcd("001002086").unwrap();
         let scheme_output = suci_scheme_output_a(&msin_bcd, &pub_bytes).unwrap();
         let mut suci = vec![0x01]; // SUPI format=IMSI, identity type=SUCI
-        suci.extend_from_slice(&crate::plmn::plmn_to_bytes("208", "93")); // PLMN
+        suci.extend_from_slice(&crate::plmn::plmn_to_bytes("208", "93").unwrap()); // PLMN
         suci.extend_from_slice(&[0x00, 0x00]); // routing indicator
         suci.push(0x01); // scheme_id = Profile A
         suci.push(0x01); // key_id
@@ -1290,10 +1287,10 @@ mod tests {
     fn test_suci_to_supi_profile_b_known_vector() {
         let priv_bytes = hex::decode(PROFILE_B_PRIV).unwrap();
         let pub_bytes = hex::decode(PROFILE_B_PUB).unwrap();
-        let msin_bcd = msin_to_bcd("001002086");
+        let msin_bcd = msin_to_bcd("001002086").unwrap();
         let scheme_output = suci_scheme_output_b(&msin_bcd, &pub_bytes).unwrap();
         let mut suci = vec![0x01];
-        suci.extend_from_slice(&crate::plmn::plmn_to_bytes("208", "93"));
+        suci.extend_from_slice(&crate::plmn::plmn_to_bytes("208", "93").unwrap());
         suci.extend_from_slice(&[0x00, 0x00]);
         suci.push(0x02); // scheme_id = Profile B
         suci.push(0x02); // key_id
@@ -1306,11 +1303,11 @@ mod tests {
     fn test_suci_to_supi_null_scheme() {
         // Null scheme: MSIN in cleartext BCD
         let mut suci = vec![0x01];
-        suci.extend_from_slice(&crate::plmn::plmn_to_bytes("208", "93"));
+        suci.extend_from_slice(&crate::plmn::plmn_to_bytes("208", "93").unwrap());
         suci.extend_from_slice(&[0x00, 0x00]);
         suci.push(0x00); // null scheme
         suci.push(0x00); // key_id
-        suci.extend_from_slice(&msin_to_bcd("0000000001"));
+        suci.extend_from_slice(&msin_to_bcd("0000000001").unwrap());
         let result = suci_to_supi(&suci, None);
         assert_eq!(result, Some("imsi-208930000000001".to_string()));
     }
@@ -1340,10 +1337,10 @@ mod tests {
     #[test]
     fn test_suci_to_supi_no_key_for_profile_a() {
         let pub_bytes: [u8; 32] = hex::decode(PROFILE_A_PUB).unwrap().try_into().unwrap();
-        let msin_bcd = msin_to_bcd("001002086");
+        let msin_bcd = msin_to_bcd("001002086").unwrap();
         let scheme_output = suci_scheme_output_a(&msin_bcd, &pub_bytes).unwrap();
         let mut suci = vec![0x01];
-        suci.extend_from_slice(&crate::plmn::plmn_to_bytes("208", "93"));
+        suci.extend_from_slice(&crate::plmn::plmn_to_bytes("208", "93").unwrap());
         suci.extend_from_slice(&[0x00, 0x00]);
         suci.push(0x01);
         suci.push(0x01);
@@ -1623,9 +1620,9 @@ mod tests {
     #[test]
     fn annex_c4_null_scheme_vectors() {
         // C.4.2.1: MSIN 001002086 of IMSI 274012001002086.
-        assert_eq!(hex::encode(msin_to_bcd("001002086")), "00012080f6");
+        assert_eq!(hex::encode(msin_to_bcd("001002086").unwrap()), "00012080f6");
         assert_eq!(
-            hex::encode(suci_conceal(&msin_to_bcd("001002086"), 0, &[]).unwrap()),
+            hex::encode(suci_conceal(&msin_to_bcd("001002086").unwrap(), 0, &[]).unwrap()),
             "00012080f6"
         );
         // C.4.2.2: the scheme output is the username of the NAI.

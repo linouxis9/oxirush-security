@@ -190,12 +190,20 @@ const MAC: &[Mac] = &[
 ];
 
 use oxirush_security::common::{nea, nia, snow3g::Snow3G, zuc::Zuc};
+use oxirush_security::{Bearer, Direction, IntegrityAlgorithm, SecurityError};
+
+fn bearer(value: u8) -> Bearer {
+    Bearer::new(value).unwrap()
+}
+fn direction(bit: u8) -> Direction {
+    Direction::try_from(bit).unwrap()
+}
 
 fn h(s: &str) -> Vec<u8> {
     hex::decode(s.split_whitespace().collect::<String>()).unwrap()
 }
 
-fn check_enc(v: &Enc, f: fn(&[u8; 16], u32, u8, u8, &mut [u8])) {
+fn check_enc(v: &Enc, f: fn(&[u8; 16], u32, Bearer, Direction, &mut [u8])) {
     let key: [u8; 16] = h(v.key).try_into().unwrap();
     let full = v.len / 8;
     let rem = v.len % 8;
@@ -203,7 +211,7 @@ fn check_enc(v: &Enc, f: fn(&[u8; 16], u32, u8, u8, &mut [u8])) {
     let ct = h(v.ct);
     let nbytes = full + (rem > 0) as usize;
     let mut data = pt[..nbytes].to_vec();
-    f(&key, v.count, v.bearer, v.dir, &mut data);
+    f(&key, v.count, bearer(v.bearer), direction(v.dir), &mut data);
     assert_eq!(
         hex::encode(&data[..full]),
         hex::encode(&ct[..full]),
@@ -222,7 +230,9 @@ fn check_enc(v: &Enc, f: fn(&[u8; 16], u32, u8, u8, &mut [u8])) {
     println!("{} OK ({} bits)", v.name, v.len);
 }
 
-fn check_enc_bits(v: &Enc, f: fn(&[u8; 16], u32, u8, u8, &mut [u8], u64)) {
+type CipherBits =
+    fn(&[u8; 16], u32, Bearer, Direction, &mut [u8], u64) -> Result<(), SecurityError>;
+fn check_enc_bits(v: &Enc, f: CipherBits) {
     let key: [u8; 16] = h(v.key).try_into().unwrap();
     let full = v.len / 8;
     let rem = v.len % 8;
@@ -230,7 +240,8 @@ fn check_enc_bits(v: &Enc, f: fn(&[u8; 16], u32, u8, u8, &mut [u8], u64)) {
     let ct = h(v.ct);
     let nbytes = full + (rem > 0) as usize;
     let mut data = pt[..nbytes].to_vec();
-    f(&key, v.count, v.bearer, v.dir, &mut data, v.len as u64);
+    let (bearer, dir) = (bearer(v.bearer), direction(v.dir));
+    f(&key, v.count, bearer, dir, &mut data, v.len as u64).unwrap();
     assert_eq!(&data[..full], &ct[..full], "{} full bytes", v.name);
     if rem > 0 {
         let defined = 0xffu8 << (8 - rem);
@@ -247,7 +258,7 @@ fn check_enc_bits(v: &Enc, f: fn(&[u8; 16], u32, u8, u8, &mut [u8], u64)) {
             v.name
         );
     }
-    f(&key, v.count, v.bearer, v.dir, &mut data, v.len as u64);
+    f(&key, v.count, bearer, dir, &mut data, v.len as u64).unwrap();
     assert_eq!(data, pt[..nbytes], "{} decrypt", v.name);
 }
 
@@ -268,6 +279,7 @@ fn eea2_sets_4_to_6() {
 fn eea3_sets_3_to_5() {
     for v in ENC.iter().filter(|v| v.name.starts_with("eea3")) {
         check_enc(v, nea::nea3_cipher);
+        check_enc_bits(v, nea::nea3_cipher_bits);
     }
 }
 #[test]
@@ -275,7 +287,8 @@ fn eia1_sets_6_7() {
     for v in MAC {
         let key: [u8; 16] = h(v.key).try_into().unwrap();
         let msg = h(v.msg);
-        let got = nia::nia1_mac(&key, v.count, v.bearer, v.dir, &msg, v.len as u64);
+        let (bearer, dir) = (bearer(v.bearer), direction(v.dir));
+        let got = nia::nia1_mac_bits(&key, v.count, bearer, dir, &msg, v.len as u64).unwrap();
         assert_eq!(got, v.mac, "{}", v.name);
         println!("{} OK mac={:08x}", v.name, got);
     }
@@ -287,15 +300,23 @@ fn eia2_set_7() {
     let key: [u8; 16] = h(v.key).try_into().unwrap();
     let msg = h(v.msg);
     assert_eq!(
-        nia::nia2_mac_bits(&key, v.count, v.bearer, v.dir, &msg, v.len as u64),
-        0xf4cc8fa3
+        nia::nia2_mac_bits(
+            &key,
+            v.count,
+            bearer(v.bearer),
+            direction(v.dir),
+            &msg,
+            v.len as u64
+        ),
+        Ok(0xf4cc8fa3)
     );
 }
 #[test]
 fn snow3g_set4_z2500() {
     let k = [0x0ded7263u32, 0x109cf92e, 0x3352255a, 0x140e0f76];
     let iv = [0x6b68079au32, 0x41a7c4c9, 0x1befd79f, 0x7fdcc233];
-    let z = Snow3G::new(k, iv).generate(2500);
+    let mut z = [0; 2500];
+    Snow3G::new(k, iv).fill(&mut z);
     assert_eq!(z[0], 0xd712c05c);
     assert_eq!(z[2499], 0x9c0db3aa);
 }
@@ -303,7 +324,8 @@ fn snow3g_set4_z2500() {
 fn zuc_set4_z2000() {
     let key = h("4d320bfad4c285bfd6b8bd00f39d8b41");
     let iv = h("52959daba0bf176ece2dc315049eb574");
-    let z = Zuc::new(&key.try_into().unwrap(), &iv.try_into().unwrap()).generate(2000);
+    let mut z = [0; 2000];
+    Zuc::new(&key.try_into().unwrap(), &iv.try_into().unwrap()).fill(&mut z);
     assert_eq!(z[0], 0xed4400e7);
     assert_eq!(z[1], 0x0633e5c5);
     assert_eq!(z[1999], 0x7a574cdb);
@@ -313,15 +335,25 @@ fn snow3g_uea2_intermediate_set1_state() {
     // Doc3 section 3.3: FSM state after init is R1=61DA9249; check z1/z2 only via public API
     let k = [0x2bd6459fu32, 0x82c5b300, 0x952c4910, 0x4881ff48];
     let iv = [0xea024714u32, 0xad5c4d84, 0xdf1f9b25, 0x1c0bf45f];
-    let z = Snow3G::new(k, iv).generate(2);
-    assert_eq!(z, vec![0xabee9704, 0x7ac31373]);
+    let mut snow = Snow3G::new(k, iv);
+    assert_eq!(
+        [snow.next_word(), snow.next_word()],
+        [0xabee9704, 0x7ac31373]
+    );
 }
 #[test]
 fn eia2_all_byte_aligned_sets_via_nia_mac() {
     // C.2.2 via nia_mac dispatch
     let key: [u8; 16] = h("d3c5d592327fb11c4035c6680af8c6d1").try_into().unwrap();
     assert_eq!(
-        nia::nia_mac(&key, 0x398a59b4, 0x1a, 1, &h("484583d5afe082ae"), 2),
+        nia::nia_mac(
+            &key,
+            0x398a59b4,
+            bearer(0x1a),
+            Direction::Downlink,
+            &h("484583d5afe082ae"),
+            IntegrityAlgorithm::EIA2
+        ),
         0xb93787e6
     );
 }
