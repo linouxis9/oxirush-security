@@ -624,11 +624,12 @@ mod interworking_tests {
     }
 
     #[test]
-    fn five_g_aka_key_chain_matches_independent_implementations() {
+    fn five_g_aka_key_chain_matches_another_implementation() {
         // CK, IK, RES, RAND, and SQN XOR AK are the MILENAGE outputs of
-        // TS 35.208 test set 1. TS 33.501 Annex A has no test data; the
-        // expected values were computed with free5GC util/ueauth and with
-        // CryptoMobile conv_501_A2 to A10, which agree.
+        // TS 35.208 test set 1. TS 33.501 Annex A has no test data: the
+        // expected values are those that `tests/five_g_aka_chain.py`
+        // derives with the HMAC-SHA-256 of Python's standard library over
+        // the S strings of Annex A.2 to A.10.
         let ck: [u8; 16] = hex::decode("b40ba9a3c58b2a05bbf0d987b21bf8cb")
             .unwrap()
             .try_into()

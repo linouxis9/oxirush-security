@@ -4,10 +4,26 @@
 [![Documentation](https://docs.rs/oxirush-security/badge.svg)](https://docs.rs/oxirush-security)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-The security functions of 5GS and EPS in Rust, per 3GPP TS 33.501 and
-TS 33.401: key derivation, NAS integrity and ciphering with SNOW 3G, AES and
-ZUC, and SUCI concealment. They are functions over octets. The crate stores no
-key, keeps no NAS COUNT and has no `unsafe` code.
+> This page describes the unreleased 0.3.0. crates.io has
+> [0.2.0](https://crates.io/crates/oxirush-security/0.2.0), whose functions
+> take integers where these take types: the [changelog](CHANGELOG.md) lists
+> each change. Until the release, depend on the repository:
+> `oxirush-security = { git = "https://github.com/linouxis9/oxirush-security" }`.
+
+The security functions of 5GS (the 5G System) and EPS (the Evolved Packet
+System of 4G) in Rust, per 3GPP TS 33.501 and TS 33.401: key derivation,
+integrity and ciphering of NAS (the Non-Access Stratum, the signalling
+between a device and the core network) with SNOW 3G, AES and ZUC, and the
+concealment of a subscriber identity as a SUCI. They are functions over
+octets. The crate stores no key, keeps no NAS COUNT, has no `unsafe` code,
+and no function panics on its arguments.
+
+It is one of the OxiRush crates for mobile core networks, with
+[oxirush-nas](https://github.com/linouxis9/oxirush-nas) (NAS messages),
+[oxirush-ngap](https://github.com/linouxis9/oxirush-ngap) (NGAP),
+[oxirush-s1ap](https://github.com/linouxis9/oxirush-s1ap) (S1AP),
+[oxirush-gtp-u](https://github.com/linouxis9/oxirush-gtp-u) (GTP-U) and
+[oxirush-sctp](https://github.com/linouxis9/oxirush-sctp) (SCTP).
 
 ```rust
 use oxirush_security::nas_5gs::{
@@ -15,11 +31,12 @@ use oxirush_security::nas_5gs::{
     derive_knas_int, nas_cipher, nas_mac,
 };
 
-// KAMF, as the 5G AKA example below derives it
+// KAMF, the key of the AMF, as the 5G AKA example below derives it
 let k_amf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
 let k_amf: [u8; 32] = hex::decode(k_amf).unwrap().try_into().unwrap();
 
-// The NAS keys of the algorithms that the network selected
+// The NAS keys of the algorithms that the network selected: 128-NEA2 to
+// cipher and 128-NIA2 for the message authentication code (MAC)
 let (nea2, nia2) = (CipheringAlgorithm::NEA2, IntegrityAlgorithm::NIA2);
 let k_nas_enc = derive_knas_enc(&k_amf, nea2);
 let k_nas_int = derive_knas_int(&k_amf, nia2);
@@ -45,11 +62,13 @@ this page it runs as a documentation test: it asserts what it computes and
 prints nothing.
 
 [Installation](#installation) ·
+[Terms](#terms) ·
 [What it implements](#what-it-implements) ·
 [Examples by task](#examples-by-task) ·
 [Inputs and errors](#inputs-and-errors) ·
 [Key material and timing](#key-material-and-timing) ·
 [Test evidence](#test-evidence) ·
+[Speed](#speed) ·
 [What it does not do](#what-it-does-not-do) ·
 [Modules](#modules-and-example-programs) ·
 [Specifications](#specifications)
@@ -80,6 +99,30 @@ oxirush-security = { version = "0.3", default-features = false }
 The minimum supported Rust version is 1.88. On 1.88 itself Cargo has to
 choose the dependencies by Rust version, as resolver 3 does, the default of
 edition 2024: `aes` 0.9.3 needs Rust 1.89 and 0.9.2 takes its place.
+
+## Terms
+
+| Term | Meaning |
+|------|---------|
+| UE, AMF, MME | The device (User Equipment), and the function of the core network that it talks NAS to: the AMF in 5GS, the MME in EPS |
+| gNB, eNB | The base station of 5GS and of EPS |
+| AKA | Authentication and Key Agreement. It gives the ciphering key CK, the integrity key IK, the response RES, and the sequence number SQN hidden under the anonymity key AK |
+| KAUSF, KSEAF, KAMF | The keys of the 5GS hierarchy, each derived from the one before: of the AUSF in the home network, of the SEAF in the serving network, of the AMF |
+| KNASenc, KNASint | The keys that cipher and authenticate NAS messages, derived from KAMF in 5GS and from KASME in EPS |
+| KASME | The key of EPS that CK and IK give, at the place of KAMF |
+| KgNB, KeNB, NH | The key of a base station, and the Next Hop key that replaces it at a handover |
+| ABBA | Anti-Bidding down Between Architectures: a parameter of the KAMF derivation, `0x0000` so far |
+| KDF | Key derivation function: HMAC-SHA-256 over a string S that TS 33.220 lays out |
+| NAS COUNT | The 24-bit counter of the NAS messages of one direction, which the algorithms take |
+| MAC | Message authentication code: the 32 bits that protect the integrity of a message |
+| NEA, NIA; EEA, EIA | The ciphering and integrity algorithms, as 5GS and as EPS name them. They are the same four of each |
+| SUPI, SUCI | The Subscription Permanent Identifier, an IMSI or a NAI, and its concealed form, the Subscription Concealed Identifier that a UE sends |
+| IMSI, MSIN | The International Mobile Subscriber Identity, and its last part, the subscriber number that a SUCI conceals |
+| NAI | Network Access Identifier, `username@realm` (RFC 7542) |
+| GCI, GLI | The Global Cable Identifier and the Global Line Identifier, two identities of wireline access that are written as NAIs |
+| PLMN, MCC, MNC | A Public Land Mobile Network, which its Mobile Country Code and its Mobile Network Code identify |
+| 5G-GUTI, 5G-S-TMSI | The temporary identity that an AMF gives a UE, and its short form |
+| TBCD | Telephony Binary Coded Decimal: two digits to an octet, the first in the low half |
 
 ## What it implements
 
@@ -156,7 +199,10 @@ assert!(constant_time_eq(&res_star_of_the_ue, &xres_star));
 # Ok::<(), oxirush_security::SecurityError>(())
 ```
 
-free5GC and CryptoMobile give the same values for these inputs.
+TS 33.501 has no test data for these functions. Another implementation
+gives the same values: `python3 tests/five_g_aka_chain.py` derives the chain
+with the HMAC-SHA-256 of Python's standard library, over the inputs that
+TS 33.501 Annex A lays out.
 
 ### NAS integrity and ciphering
 
@@ -171,10 +217,14 @@ use oxirush_security::{SecurityError, nia_mac_bits};
 
 // Selection from the EA and IA octets of a UE security capability:
 // here EA0, EA1 and EA2, and IA1 and IA2
-assert_eq!(select_ciphering_algo(0xe0), Some(CipheringAlgorithm::NEA2)); // NEA2 > NEA1 > NEA3 > NEA0
-assert_eq!(select_integrity_algo(0x60), Some(IntegrityAlgorithm::NIA2)); // NIA2 > NIA1 > NIA3, never NIA0
+assert_eq!(select_ciphering_algo(0xe0), Some(CipheringAlgorithm::NEA2));
+assert_eq!(select_integrity_algo(0x60), Some(IntegrityAlgorithm::NIA2));
+
+// The default order is NEA2 > NEA1 > NEA3 > NEA0, and NIA2 > NIA1 > NIA3
+// without NIA0. An operator gives its own
 let operator = [IntegrityAlgorithm::NIA1, IntegrityAlgorithm::NIA2];
-assert_eq!(select_integrity_algo_with_preference(0x60, &operator), Some(IntegrityAlgorithm::NIA1));
+let selected = select_integrity_algo_with_preference(0x60, &operator);
+assert_eq!(selected, Some(IntegrityAlgorithm::NIA1));
 
 // An algorithm identifier from a message is checked once: 4 to 7 are reserved
 let algorithm = IntegrityAlgorithm::try_from(2)?;
@@ -201,17 +251,19 @@ let key = hex::decode("2bd6459f82c5b300952c49104881ff48").unwrap().try_into().un
 let message = hex::decode("3332346263393840").unwrap();
 let (count, bearer, uplink, bits) = (0x38a6_f056, Bearer::new(0x18)?, Direction::Uplink, 58);
 
-let mac = nia_mac_bits(&key, count, bearer, uplink, &message, bits, IntegrityAlgorithm::EIA2)?;
+let eia2 = IntegrityAlgorithm::EIA2;
+let mac = nia_mac_bits(&key, count, bearer, uplink, &message, bits, eia2)?;
 assert_eq!(mac, 0x118c_6eb8);
 
 // A length that the message does not have is an error
-assert!(nia_mac_bits(&key, count, bearer, uplink, &message, 65, IntegrityAlgorithm::EIA2).is_err());
+assert!(nia_mac_bits(&key, count, bearer, uplink, &message, 65, eia2).is_err());
 # Ok::<(), SecurityError>(())
 ```
 
 ### EPS
 
-`nas_eps` fixes the NAS bearer to zero and accepts the 24-bit EPS NAS COUNT.
+`nas_eps` has the same functions for EPS. Its `nas_mac` and `nas_cipher`
+take no NAS connection: the BEARER of EPS NAS is zero.
 
 ```rust
 use oxirush_security::nas_eps::{
@@ -390,8 +442,36 @@ values, which do not carry the same weight.
 | Kind | What is tested against it |
 |------|---------------------------|
 | **3GPP** test data | 128-EEA1/2/3 and 128-EIA1/2/3 on the TS 33.401 Annex C, TS 35.217, TS 35.218 and TS 35.223 sets, including non-byte-aligned EEA1, EEA2, EEA3, EIA1, EIA2 and EIA3 inputs; the SNOW 3G and ZUC keystreams; SUCI on every TS 33.501 Annex C.4 data set. |
-| Values of **other implementations** | The 5G AKA chain from the TS 35.208 test set 1 MILENAGE outputs through KAUSF, XRES\*, HXRES\*, KSEAF, KAMF, the NAS keys, KgNB and NH, which free5GC and CryptoMobile both give; HASHMME on ATTACH REQUESTs and the values a network returned for them. |
+| Values of **other implementations** | The 5G AKA chain from the TS 35.208 test set 1 MILENAGE outputs through KAUSF, XRES\*, HXRES\*, KSEAF, KAMF, the NAS keys, KgNB and NH, which `tests/five_g_aka_chain.py` derives with the HMAC-SHA-256 of Python's standard library; HASHMME on ATTACH REQUESTs and the values a network returned for them. |
 | Values **calculated** in the tests | The other 5GS KDFs, the EPS and interworking KDFs, and the NAS container, short and re-establishment MACs are compared with HMAC-SHA-256 or the MAC over the parameter layout as the test writes it. The identity encodings and the algorithm selection are compared with what the test writes too. These tests keep a layout from changing unnoticed; they are not independent vectors. |
+
+CI also fuzzes what takes octets from a peer, a minute for each of four
+`cargo fuzz` targets under `fuzz/`: a SUCI, a scheme output and a NAI are
+read without a panic, what is concealed is deconcealed, an identity or a
+digit string that decodes encodes back to its octets, and every algorithm
+takes any message at any length in bits.
+
+## Speed
+
+`cargo bench --bench algorithms` times the algorithms and the key
+derivations. These are the fastest batches of three runs on one core of an
+AMD Ryzen 7 5700G with Rust 1.98.1, per call. The last two columns are
+0.2.0 in the same loop.
+
+| | 64 octets | 1500 octets | 0.2.0, 64 | 0.2.0, 1500 |
+|---|---|---|---|---|
+| 128-EEA1, 128-NEA1 (SNOW 3G) | 6.3 µs | 53.6 µs | 0.52 µs | 4.8 µs |
+| 128-EEA2, 128-NEA2 (AES-CTR) | 0.17 µs | 1.8 µs | 0.15 µs | 2.8 µs |
+| 128-EEA3, 128-NEA3 (ZUC) | 4.5 µs | 37.9 µs | 0.61 µs | 5.2 µs |
+| 128-EIA1, 128-NIA1 (SNOW 3G) | 5.3 µs | 14.3 µs | 0.78 µs | 8.9 µs |
+| 128-EIA2, 128-NIA2 (AES-CMAC) | 0.23 µs | 1.8 µs | 0.25 µs | 2.9 µs |
+| 128-EIA3, 128-NIA3 (ZUC) | 5.8 µs | 63.0 µs | 0.99 µs | 15.2 µs |
+
+SNOW 3G and ZUC are 4 to 12 times slower than in 0.2.0: each S-box lookup
+now reads the whole table, so that its memory accesses do not depend on the
+key. A key derivation, one HMAC-SHA-256, takes 0.21 µs (0.17 µs in 0.2.0).
+SUCI concealment takes 57 µs with Profile A and 289 µs with Profile B, and
+deconcealment 44 µs and 149 µs.
 
 ## What it does not do
 
@@ -407,9 +487,9 @@ values, which do not carry the same weight.
 
 | Module | Contents |
 |--------|----------|
-| [`nas_5gs`](src/nas_5gs/mod.rs) | TS 33.501 `kdf`, `security`, and `algo`; GUTI and SUCI |
+| [`nas_5gs`](src/nas_5gs/mod.rs) | TS 33.501 `kdf`, `security`, and `algo`; `guti`, and `suci` with the features of that name and `nai` |
 | [`nas_eps`](src/nas_eps/mod.rs) | TS 33.401 `kdf`, `security`, and `algo` |
-| [`common`](src/common/mod.rs) | HMAC KDF framing (TS 33.220), EEA/EIA cores, SNOW 3G, ZUC, algorithm selection, and PLMN utilities |
+| [`common`](src/common/mod.rs) | The algorithms with their own ranges, SNOW 3G and ZUC, the KDF framing of TS 33.220, the types of the inputs, algorithm selection, and the PLMN and TBCD encodings |
 
 The crate root has the functions of `nas_5gs` and of `common`. EPS functions
 are under `oxirush_security::nas_eps`.
@@ -437,18 +517,22 @@ Full API reference: **<https://docs.rs/oxirush-security>**
 
 ## Contributing
 
-Contributions welcome! Please:
+Contributions are welcome:
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Sign off your commits (`git commit -s`)
-4. Open a Pull Request
+1. Fork the repository.
+2. Create a branch for your change (`git checkout -b fix-kenb-star-earfcn`).
+3. Sign off your commits (`git commit -s`).
+4. Open a pull request.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md) and do not open
+a public issue.
 
 ### Developer Certificate of Origin (DCO)
 
-By contributing to this project, you agree to the [Developer Certificate of Origin (DCO)](https://developercertificate.org/). This means that you have the right to submit your contributions and you agree to license them according to the project's license.
-
-All commits should be signed-off with `git commit -s` to indicate your agreement to the DCO.
+By contributing to this project, you agree to the
+[Developer Certificate of Origin (DCO)](https://developercertificate.org/):
+you have the right to submit your contribution, and you license it under the
+licence of the project. Sign off every commit with `git commit -s` to say so.
 
 ## License
 

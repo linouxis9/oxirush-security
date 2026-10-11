@@ -192,11 +192,16 @@ and what a type cannot say is a `Result`. Every call below changes.
   the GF(2^64) and GF(2^128) multiplications and the ZUC reduction modulo
   2^31 - 1 have no branch on secret bits. Table lookups indexed by key or
   keystream bits, and those branches, exposed a timing risk. Compiled-code
-  timing has not been audited across supported targets. 128-EEA1 and 128-EEA3
-  take about 10 times longer (58 µs and 48 µs for a 1500-octet message on
-  a 2020s x86-64 core, release build), 128-EIA1 and 128-EIA3 are slower by
-  less on such a message and take 4 to 7 times longer on a 64-octet one, and
-  128-EEA2 and 128-EIA2 are unchanged.
+  timing has not been audited across supported targets. It costs time, which
+  `cargo bench --bench algorithms` measures; these are the fastest batches of
+  three runs on one core of an AMD Ryzen 7 5700G with Rust 1.98.1, and 0.2.0
+  in the same loop. On a 1500-octet message 128-EEA1 takes 53.6 µs and
+  128-EEA3 37.9 µs, where 0.2.0 took 4.8 µs and 5.2 µs; 128-EIA1 takes
+  14.3 µs and 128-EIA3 63.0 µs, where 0.2.0 took 8.9 µs and 15.2 µs. On a
+  64-octet message the four take 4.5 µs to 6.3 µs, where 0.2.0 took 0.52 µs
+  to 0.99 µs. 128-EEA2 and 128-EIA2 take 1.8 µs each on 1500 octets (2.8 µs
+  and 2.9 µs in 0.2.0), and 0.17 µs and 0.23 µs on 64 (0.15 µs and
+  0.25 µs).
 
 ### Added
 
@@ -217,6 +222,9 @@ and what a type cannot say is a `Result`. Every call below changes.
   `suci_round_trip` (what is concealed is deconcealed), `identity` (5G-GUTI,
   5G-S-TMSI, PLMN and TBCD, each encoded back to its octets) and
   `algorithms` (every algorithm at any length in bits).
+- `benches/algorithms.rs`, a benchmark of the algorithms, the key
+  derivations and SUCI, and a `SECURITY.md` that says how to report a
+  vulnerability.
 - `constant_time_eq` compares two octet strings through `subtle`, in a time
   that depends on their lengths and not on where they differ: RES* with
   XRES*, HRES* with HXRES*, or another value derived from a key with the one
@@ -228,8 +236,9 @@ and what a type cannot say is a `Result`. Every call below changes.
 - 128-EEA1 tests on the six UEA2 design conformance sets (TS 35.218), which
   TS 33.401 Annex C.3 reuses for 128-EEA1.
 - A 5G AKA key chain test from the TS 35.208 test set 1 MILENAGE outputs
-  through KAUSF, XRES*, HXRES*, KSEAF, KAMF, KNASenc, KNASint, KgNB, and NH,
-  checked against free5GC and CryptoMobile. KSEAF, KAMF, the 5GS NAS keys,
+  through KAUSF, XRES*, HXRES*, KSEAF, KAMF, KNASenc, KNASint, KgNB, and NH.
+  `tests/five_g_aka_chain.py` derives the same values with the HMAC-SHA-256
+  of Python's standard library. KSEAF, KAMF, the 5GS NAS keys,
   NH, and XRES* had no test before.
 - SUCI tests on every TS 33.501 Annex C.4 data set, including the null
   scheme and the ephemeral key, shared key, encryption key, ICB, MAC key,
