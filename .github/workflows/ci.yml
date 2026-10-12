@@ -270,9 +270,16 @@ jobs:
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: "--cfg docsrs -D warnings"
-      - run: cargo doc --no-deps --no-default-features
+      # A link to an item that a feature brings is broken without it
+      - name: Doc of each set of features
         env:
           RUSTDOCFLAGS: -D warnings
+        run: |
+          for features in "" alloc std suci nai; do
+            echo "::group::--no-default-features --features \"$features\""
+            cargo doc --no-deps --no-default-features --features "$features"
+            echo "::endgroup::"
+          done
 
   fmt:
     name: Format

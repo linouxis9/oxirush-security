@@ -561,8 +561,8 @@ impl Suci {
     ///
     /// The spare bits are ignored, and a SUPI format of 4 to 7 is read as
     /// an IMSI, as that clause has a receiver do. A SUCI in the NAI
-    /// format is read as [`from_nai`](Self::from_nai) reads it, with the
-    /// `nai` feature, and is [`SuciError::NaiNotSupported`] without it.
+    /// format is read as `Suci::from_nai` reads it, with the `nai`
+    /// feature, and is [`SuciError::NaiNotSupported`] without it.
     pub fn from_nas(identity: &[u8]) -> Result<Self, SuciError> {
         let Some((first, rest)) = identity.split_first() else {
             return Err(SuciError::Truncated);
