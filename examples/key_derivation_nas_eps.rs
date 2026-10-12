@@ -18,34 +18,39 @@
 //! Demonstrate the EPS key derivation chain per TS 33.401 Annex A:
 //! CK || IK -> KASME -> KNASint / KNASenc -> KeNB -> NH
 
-use oxirush_security::{common::plmn_to_bytes, nas_eps::*};
+use oxirush_security::nas_eps::{
+    derive_kasme, derive_kenb, derive_knas_enc, derive_knas_int, derive_nh,
+};
+use oxirush_security::{
+    Autn, CipheringAlgorithm, Ck, Ik, IntegrityAlgorithm, NasCount, Plmn, SecurityError,
+};
 
 fn main() -> Result<(), SecurityError> {
-    // Example key material; in practice CK and IK come from EPS AKA
-    let ck = [0x11; 16];
-    let ik = [0x22; 16];
-    let sn_id = plmn_to_bytes("208", "93")?;
-    let sqn_xor_ak = [0; 6];
+    // Example key material; in practice CK, IK and AUTN come from EPS AKA
+    let ck = Ck::new([0x11; 16]);
+    let ik = Ik::new([0x22; 16]);
+    let autn = Autn::new([0; 16]);
+    let serving_network = Plmn::new("208", "93")?;
 
     // CK || IK -> KASME
-    let k_asme = derive_kasme(&ck, &ik, &sn_id, &sqn_xor_ak);
-    println!("KASME: {}", hex::encode(k_asme));
+    let k_asme = derive_kasme(&ck, &ik, serving_network, &autn);
+    println!("KASME: {}", hex::encode(k_asme.as_octets()));
 
     // KASME -> KNASint, the 128-bit integrity key of the selected algorithm
     let k_nas_int = derive_knas_int(&k_asme, IntegrityAlgorithm::EIA2);
-    println!("KNASint (EIA2): {}", hex::encode(k_nas_int));
+    println!("KNASint (EIA2): {}", hex::encode(k_nas_int.as_octets()));
 
     // KASME -> KNASenc, the 128-bit ciphering key of the selected algorithm
     let k_nas_enc = derive_knas_enc(&k_asme, CipheringAlgorithm::EEA2);
-    println!("KNASenc (EEA2): {}", hex::encode(k_nas_enc));
+    println!("KNASenc (EEA2): {}", hex::encode(k_nas_enc.as_octets()));
 
     // KASME -> KeNB (for initial context setup), with the uplink NAS COUNT
     let k_enb = derive_kenb(&k_asme, NasCount::ZERO);
-    println!("KeNB: {}", hex::encode(k_enb));
+    println!("KeNB: {}", hex::encode(k_enb.as_octets()));
 
     // KeNB -> NH (for handover, NCC=1)
     let nh = derive_nh(&k_asme, &k_enb);
-    println!("NH (NCC=1): {}", hex::encode(nh));
+    println!("NH (NCC=1): {}", hex::encode(nh.as_octets()));
 
     Ok(())
 }

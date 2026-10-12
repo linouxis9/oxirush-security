@@ -19,16 +19,17 @@
 //! 128-NIA2 and 128-NIA3) per TS 33.501.
 //!
 //! `nas_mac` computes the 32-bit MAC of the same message with each
-//! algorithm.
+//! algorithm, and a keyed context gives the same.
 
-use oxirush_security::nas_5gs::*;
+use oxirush_security::nas_5gs::{KNasInt, NasConnection, nas_mac};
+use oxirush_security::{Direction, IntegrityAlgorithm, IntegrityContext, NasCount};
 
 fn main() {
     // Example 128-bit integrity key (KNASint)
-    let key: [u8; 16] = [
+    let key = KNasInt::new([
         0x2b, 0xd6, 0x45, 0x9f, 0x82, 0xc5, 0xb3, 0x00, 0x95, 0x2c, 0x49, 0x10, 0x48, 0x81, 0xff,
         0x48,
-    ];
+    ]);
 
     // The inputs of a NAS message: its 24-bit NAS COUNT, the NAS connection
     // (3GPP or non-3GPP access) and its direction
@@ -40,7 +41,8 @@ fn main() {
     let message = b"Hello 5G NAS integrity!";
 
     println!("=== NAS Integrity MAC computation ===\n");
-    println!("Key:       {}", hex::encode(key));
+    // A key shows its name and not its octets, unless they are asked for
+    println!("Key:       {key:?}, {}", hex::encode(key.as_octets()));
     println!("COUNT:     0x{:08x}", count.get());
     println!("Bearer:    {} (3GPP access)", u8::from(connection));
     println!("Direction: {} (uplink)", u8::from(direction));
@@ -49,26 +51,32 @@ fn main() {
     // One call for every algorithm
     let mac = |algorithm| nas_mac(&key, count, connection, direction, message, algorithm);
 
-    // NIA1 — SNOW 3G (128-EIA1)
-    let mac_nia1 = mac(IntegrityAlgorithm::NIA1);
-    println!("NIA1 (SNOW 3G)  MAC: 0x{mac_nia1:08x}");
+    let algorithms = [
+        IntegrityAlgorithm::NIA1, // SNOW 3G
+        IntegrityAlgorithm::NIA2, // AES-CMAC
+        IntegrityAlgorithm::NIA3, // ZUC
+        IntegrityAlgorithm::NIA0, // null integrity: the MAC is zero
+    ];
+    for algorithm in algorithms {
+        println!("{:<8} MAC: 0x{:08x}", algorithm.name_5gs(), mac(algorithm));
 
-    // NIA2 — AES-CMAC (128-EIA2)
-    let mac_nia2 = mac(IntegrityAlgorithm::NIA2);
-    println!("NIA2 (AES-CMAC) MAC: 0x{mac_nia2:08x}");
-
-    // NIA3 — ZUC (128-EIA3)
-    let mac_nia3 = mac(IntegrityAlgorithm::NIA3);
-    println!("NIA3 (ZUC)      MAC: 0x{mac_nia3:08x}");
-
-    // NIA0 — null integrity (always returns 0)
-    let mac_nia0 = mac(IntegrityAlgorithm::NIA0);
-    println!("NIA0 (null)     MAC: 0x{mac_nia0:08x}");
-    assert_eq!(mac_nia0, 0, "NIA0 must always return 0");
+        // A context keeps the key and what the algorithm computes from it
+        // alone, for the messages that follow
+        let context = IntegrityContext::new(&key, algorithm);
+        assert_eq!(
+            context.mac(count, connection, direction, message),
+            mac(algorithm)
+        );
+    }
+    assert_eq!(
+        mac(IntegrityAlgorithm::NIA0),
+        0,
+        "NIA0 must always return 0"
+    );
 
     // Each algorithm produces a different MAC for the same input
-    assert_ne!(mac_nia1, mac_nia2);
-    assert_ne!(mac_nia2, mac_nia3);
+    assert_ne!(mac(IntegrityAlgorithm::NIA1), mac(IntegrityAlgorithm::NIA2));
+    assert_ne!(mac(IntegrityAlgorithm::NIA2), mac(IntegrityAlgorithm::NIA3));
 
     println!("\nAll MACs computed successfully.");
 }

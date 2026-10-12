@@ -25,27 +25,17 @@
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SecurityError {
-    /// A SUCI home network key that does not have the length of its profile.
+    /// A key, or a value of an authentication, that does not have the
+    /// length of its type.
     InvalidKeyLength {
-        /// Length of a key of the profile, in octets.
+        /// Length of a value of the type, in octets.
         expected: usize,
-        /// Length of the key that was passed, in octets.
+        /// Length of the slice that was passed, in octets.
         got: usize,
     },
-    /// A SUCI ECIES operation that cannot be carried out: a key that the
-    /// profile does not accept, an empty scheme input, a scheme output that
-    /// is too short, a protection scheme other than the null scheme,
-    /// Profile A and Profile B, or a failure of the system's random number
-    /// generator. The text says which.
-    #[cfg(feature = "alloc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-    Ecies(alloc::string::String),
-    /// The MAC tag of a SUCI scheme output is not the one computed over its
-    /// ciphertext.
-    MacMismatch,
-    /// A parameter that the operation cannot take, such as a malformed SUCI
-    /// NAI, a home network private key that is missing or a string with a
-    /// character that its encoding does not have. The text says which.
+    /// A parameter that the operation cannot take, such as a string with a
+    /// character that its encoding does not have, or an identity with a
+    /// part that its format does not allow. The text says which.
     InvalidParameter(&'static str),
     /// A KDF parameter longer than its two-octet length field can express.
     InputTooLong {
@@ -75,6 +65,10 @@ pub enum SecurityError {
         /// Length of the buffer, in octets.
         octets: usize,
     },
+    /// A NAS COUNT after the largest, 2^24 - 1. A NAS COUNT protects one
+    /// message under its keys, so there is none to wrap around to: the
+    /// security context is to be replaced by a new one.
+    NasCountExhausted,
 }
 
 impl core::fmt::Display for SecurityError {
@@ -83,9 +77,6 @@ impl core::fmt::Display for SecurityError {
             Self::InvalidKeyLength { expected, got } => {
                 write!(f, "invalid key length: expected {expected}, got {got}")
             }
-            #[cfg(feature = "alloc")]
-            Self::Ecies(reason) => write!(f, "ECIES error: {reason}"),
-            Self::MacMismatch => f.write_str("MAC verification failed"),
             Self::InvalidParameter(reason) => write!(f, "invalid parameter: {reason}"),
             Self::InputTooLong { maximum, got } => {
                 write!(f, "input too long: maximum {maximum} octets, got {got}")
@@ -102,6 +93,9 @@ impl core::fmt::Display for SecurityError {
                 f,
                 "bit length {bits} exceeds the {octets} octets of the buffer"
             ),
+            Self::NasCountExhausted => {
+                f.write_str("no NAS COUNT is left after 16777215: a new security context is needed")
+            }
         }
     }
 }
@@ -112,7 +106,7 @@ impl core::error::Error for SecurityError {}
 mod tests {
     use super::*;
 
-    /// The texts, which 0.2.0 already had for its five variants.
+    /// The text of each variant.
     #[test]
     fn each_error_says_what_was_refused() {
         for (error, text) in [
@@ -123,15 +117,9 @@ mod tests {
                 },
                 "invalid key length: expected 32, got 31",
             ),
-            #[cfg(feature = "alloc")]
             (
-                SecurityError::Ecies("scheme output too short".into()),
-                "ECIES error: scheme output too short",
-            ),
-            (SecurityError::MacMismatch, "MAC verification failed"),
-            (
-                SecurityError::InvalidParameter("malformed SUCI NAI"),
-                "invalid parameter: malformed SUCI NAI",
+                SecurityError::InvalidParameter("MCC must be 3 decimal digits"),
+                "invalid parameter: MCC must be 3 decimal digits",
             ),
             (
                 SecurityError::InputTooLong {
@@ -158,6 +146,10 @@ mod tests {
                     octets: 2,
                 },
                 "bit length 17 exceeds the 2 octets of the buffer",
+            ),
+            (
+                SecurityError::NasCountExhausted,
+                "no NAS COUNT is left after 16777215: a new security context is needed",
             ),
         ] {
             assert_eq!(error.to_string(), text);

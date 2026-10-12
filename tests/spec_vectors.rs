@@ -294,10 +294,11 @@ const MAC_SETS_1_TO_5: &[Mac] = &[
     },
 ];
 
-use oxirush_security::common::{nea, nia, snow3g::Snow3G, zuc::Zuc};
+use oxirush_security::nas_eps::{KNasEnc, KNasInt};
 use oxirush_security::{
-    Bearer, CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob, SecurityError,
-    nea_cipher_batch, nia_mac_batch,
+    Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
+    IntegrityContext, MacJob, Snow3G, Zuc, nea_cipher, nea_cipher_batch, nea_cipher_bits, nia_mac,
+    nia_mac_batch, nia_mac_bits,
 };
 
 fn bearer(value: u8) -> Bearer {
@@ -311,15 +312,42 @@ fn h(s: &str) -> Vec<u8> {
     hex::decode(s.split_whitespace().collect::<String>()).unwrap()
 }
 
-fn check_enc(v: &Enc, f: fn(&[u8; 16], u32, Bearer, Direction, &mut [u8])) {
-    let key: [u8; 16] = h(v.key).try_into().unwrap();
+/// The test data gives a key as octets: a key type takes them with
+/// `from_slice`.
+fn ciphering_key(v: &Enc) -> KNasEnc {
+    KNasEnc::from_slice(&h(v.key)).unwrap()
+}
+fn integrity_key(v: &Mac) -> KNasInt {
+    KNasInt::from_slice(&h(v.key)).unwrap()
+}
+
+/// The algorithm of a set, from its name.
+fn ciphering(v: &Enc) -> CipheringAlgorithm {
+    match &v.name[..4] {
+        "eea1" => CipheringAlgorithm::EEA1,
+        "eea2" => CipheringAlgorithm::EEA2,
+        _ => CipheringAlgorithm::EEA3,
+    }
+}
+fn integrity(v: &Mac) -> IntegrityAlgorithm {
+    match &v.name[..4] {
+        "eia1" => IntegrityAlgorithm::EIA1,
+        _ => IntegrityAlgorithm::EIA3,
+    }
+}
+
+/// The set through the function of whole octets: the bits of the last
+/// octet that are not of the message are ciphered too, and not compared.
+fn check_enc(v: &Enc) {
+    let key = ciphering_key(v);
     let full = v.len / 8;
     let rem = v.len % 8;
     let pt = h(v.pt);
     let ct = h(v.ct);
     let nbytes = full + (rem > 0) as usize;
     let mut data = pt[..nbytes].to_vec();
-    f(&key, v.count, bearer(v.bearer), direction(v.dir), &mut data);
+    let (bearer, dir) = (bearer(v.bearer), direction(v.dir));
+    nea_cipher(&key, v.count, bearer, dir, &mut data, ciphering(v));
     assert_eq!(
         hex::encode(&data[..full]),
         hex::encode(&ct[..full]),
@@ -338,80 +366,110 @@ fn check_enc(v: &Enc, f: fn(&[u8; 16], u32, Bearer, Direction, &mut [u8])) {
     println!("{} OK ({} bits)", v.name, v.len);
 }
 
-type CipherBits =
-    fn(&[u8; 16], u32, Bearer, Direction, &mut [u8], u64) -> Result<(), SecurityError>;
-fn check_enc_bits(v: &Enc, f: CipherBits) {
-    let key: [u8; 16] = h(v.key).try_into().unwrap();
+/// The set through the function of bits, and through a keyed context.
+fn check_enc_bits(v: &Enc) {
+    let key = ciphering_key(v);
+    let context = CipheringContext::new(&key, ciphering(v));
+    let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
+    check_cipher(v, "function", |data| {
+        nea_cipher_bits(&key, v.count, bearer, dir, data, bits, ciphering(v)).unwrap()
+    });
+    check_cipher(v, "context", |data| {
+        context
+            .cipher_bits(v.count, bearer, dir, data, bits)
+            .unwrap()
+    });
+}
+
+/// The set through one way of ciphering its bits: the ciphertext, the
+/// bits of the last octet that are not of the message, and the plaintext
+/// again.
+fn check_cipher(v: &Enc, way: &str, cipher: impl Fn(&mut [u8])) {
     let full = v.len / 8;
     let rem = v.len % 8;
     let pt = h(v.pt);
     let ct = h(v.ct);
     let nbytes = full + (rem > 0) as usize;
     let mut data = pt[..nbytes].to_vec();
-    let (bearer, dir) = (bearer(v.bearer), direction(v.dir));
-    f(&key, v.count, bearer, dir, &mut data, v.len as u64).unwrap();
-    assert_eq!(&data[..full], &ct[..full], "{} full bytes", v.name);
+    cipher(&mut data);
+    assert_eq!(&data[..full], &ct[..full], "{} full bytes, {way}", v.name);
     if rem > 0 {
         let defined = 0xffu8 << (8 - rem);
         assert_eq!(
             data[full] & defined,
             ct[full] & defined,
-            "{} partial byte",
+            "{} partial byte, {way}",
             v.name
         );
         assert_eq!(
             data[full] & !defined,
             pt[full] & !defined,
-            "{} unused bits",
+            "{} unused bits, {way}",
             v.name
         );
     }
-    f(&key, v.count, bearer, dir, &mut data, v.len as u64).unwrap();
-    assert_eq!(data, pt[..nbytes], "{} decrypt", v.name);
+    cipher(&mut data);
+    assert_eq!(data, pt[..nbytes], "{} decrypt, {way}", v.name);
 }
 
 #[test]
 fn eea1_uea2_design_conformance_sets_1_to_6() {
     // TS 33.401 Annex C.3 maps the UEA2 test data one-to-one onto 128-EEA1.
     for v in ENC.iter().filter(|v| v.name.starts_with("eea1")) {
-        check_enc_bits(v, nea::nea1_cipher_bits);
+        check_enc_bits(v);
     }
 }
 #[test]
 fn eea2_sets_4_to_6() {
     for v in ENC.iter().filter(|v| v.name.starts_with("eea2")) {
-        check_enc_bits(v, nea::nea2_cipher_bits);
+        check_enc_bits(v);
     }
 }
 #[test]
 fn eea3_sets_3_to_5() {
     for v in ENC.iter().filter(|v| v.name.starts_with("eea3")) {
-        check_enc(v, nea::nea3_cipher);
-        check_enc_bits(v, nea::nea3_cipher_bits);
+        check_enc(v);
+        check_enc_bits(v);
     }
 }
 #[test]
 fn eia1_sets_6_7() {
     for v in MAC {
-        let key: [u8; 16] = h(v.key).try_into().unwrap();
+        let key = integrity_key(v);
         let msg = h(v.msg);
-        let (bearer, dir) = (bearer(v.bearer), direction(v.dir));
-        let got = nia::nia1_mac_bits(&key, v.count, bearer, dir, &msg, v.len as u64).unwrap();
+        let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
+        let got = nia_mac_bits(&key, v.count, bearer, dir, &msg, bits, integrity(v)).unwrap();
         assert_eq!(got, v.mac, "{}", v.name);
         println!("{} OK mac={:08x}", v.name, got);
     }
 }
+/// Sets 1 to 7 of 128-EIA1 and sets 1 to 5 of 128-EIA3 through a keyed
+/// context.
+#[test]
+fn the_mac_sets_through_a_context() {
+    for v in MAC.iter().chain(MAC_SETS_1_TO_5) {
+        let context = IntegrityContext::new(&integrity_key(v), integrity(v));
+        let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
+        assert_eq!(
+            context.mac_bits(v.count, bearer, dir, &h(v.msg), bits),
+            Ok(v.mac),
+            "{}",
+            v.name
+        );
+    }
+}
 /// Every ciphering set above in one batch, where the sets of 128-EEA1 and
 /// of 128-EEA3 share four generators: each has its length in bits, and its
-/// generator takes the next set when it has its keystream.
+/// generator takes the next set when it has its keystream. Every other
+/// set comes from a keyed context.
 #[test]
 fn the_ciphering_sets_in_one_batch() {
-    let algorithm = |name: &str| match &name[..4] {
-        "eea1" => CipheringAlgorithm::Snow3g,
-        "eea2" => CipheringAlgorithm::Aes,
-        _ => CipheringAlgorithm::Zuc,
-    };
-    let keys: Vec<[u8; 16]> = ENC.iter().map(|v| h(v.key).try_into().unwrap()).collect();
+    let keys: Vec<KNasEnc> = ENC.iter().map(ciphering_key).collect();
+    let contexts: Vec<CipheringContext> = ENC
+        .iter()
+        .zip(&keys)
+        .map(|(v, key)| CipheringContext::new(key, ciphering(v)))
+        .collect();
     let plain: Vec<Vec<u8>> = ENC
         .iter()
         .map(|v| h(v.pt)[..v.len.div_ceil(8)].to_vec())
@@ -419,11 +477,17 @@ fn the_ciphering_sets_in_one_batch() {
     let mut data = plain.clone();
     let mut jobs: Vec<CipherJob<'_>> = ENC
         .iter()
-        .zip(&keys)
         .zip(&mut data)
-        .map(|((v, key), data)| {
+        .enumerate()
+        .map(|(index, (v, data))| {
             let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
-            CipherJob::bits(key, v.count, bearer, dir, data, bits, algorithm(v.name)).unwrap()
+            if index % 2 == 0 {
+                let key = &keys[index];
+                CipherJob::bits(key, v.count, bearer, dir, data, bits, ciphering(v)).unwrap()
+            } else {
+                let context = &contexts[index];
+                context.job_bits(v.count, bearer, dir, data, bits).unwrap()
+            }
         })
         .collect();
     nea_cipher_batch(&mut jobs);
@@ -453,51 +517,70 @@ fn the_ciphering_sets_in_one_batch() {
 
 /// The MAC sets in one batch: sets 1 to 7 of 128-EIA1 and sets 1 to 5 of
 /// 128-EIA3, each twice so that the generators of both have a message to
-/// take when one is done, and 128-EIA2 set 7.
+/// take when one is done, the second time from a keyed context, and
+/// 128-EIA2 set 7 both ways.
 #[test]
 fn the_mac_sets_in_one_batch() {
     let sets: Vec<&Mac> = MAC.iter().chain(MAC_SETS_1_TO_5).collect();
-    let algorithm = |set: &Mac| match &set.name[..4] {
-        "eia1" => IntegrityAlgorithm::Snow3g,
-        _ => IntegrityAlgorithm::Zuc,
-    };
-    let keys: Vec<[u8; 16]> = sets.iter().map(|v| h(v.key).try_into().unwrap()).collect();
+    let keys: Vec<KNasInt> = sets.iter().map(|v| integrity_key(v)).collect();
+    let contexts: Vec<IntegrityContext> = sets
+        .iter()
+        .zip(&keys)
+        .map(|(v, key)| IntegrityContext::new(key, integrity(v)))
+        .collect();
     let messages: Vec<Vec<u8>> = sets.iter().map(|v| h(v.msg)).collect();
     let job = |index: usize, algorithm| {
         let (v, key, message) = (sets[index], &keys[index], &messages[index]);
         let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
         MacJob::bits(key, v.count, bearer, dir, message, bits, algorithm).unwrap()
     };
-    let mut jobs: Vec<MacJob<'_>> = (0..2 * sets.len())
-        .map(|index| job(index % sets.len(), algorithm(sets[index % sets.len()])))
+    let mut jobs: Vec<MacJob<'_>> = (0..sets.len())
+        .map(|index| job(index, integrity(sets[index])))
         .collect();
+    jobs.extend((0..sets.len()).map(|index| {
+        let (v, message) = (sets[index], &messages[index]);
+        let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
+        contexts[index]
+            .job_bits(v.count, bearer, dir, message, bits)
+            .unwrap()
+    }));
     // TS 33.401 Annex C.2.7 reuses the inputs of 128-EIA1 test set 6
     let set_6 = sets.iter().position(|v| v.name == "eia1_6").unwrap();
-    jobs.push(job(set_6, IntegrityAlgorithm::Aes));
+    jobs.push(job(set_6, IntegrityAlgorithm::EIA2));
+    let context = IntegrityContext::new(&keys[set_6], IntegrityAlgorithm::EIA2);
+    let (v, message) = (sets[set_6], &messages[set_6]);
+    let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
+    jobs.push(
+        context
+            .job_bits(v.count, bearer, dir, message, bits)
+            .unwrap(),
+    );
     nia_mac_batch(&mut jobs);
 
     for (index, job) in jobs[..2 * sets.len()].iter().enumerate() {
         let v = sets[index % sets.len()];
         assert_eq!(job.mac(), Some(v.mac), "{}", v.name);
     }
-    assert_eq!(jobs.last().unwrap().mac(), Some(0xf4cc8fa3));
+    for job in &jobs[2 * sets.len()..] {
+        assert_eq!(job.mac(), Some(0xf4cc8fa3));
+    }
 }
 
 #[test]
 fn eia2_set_7() {
     // TS 33.401 Annex C.2.7 reuses the inputs of 128-EIA1 test set 6.
     let v = MAC.iter().find(|v| v.name == "eia1_6").unwrap();
-    let key: [u8; 16] = h(v.key).try_into().unwrap();
+    let key = integrity_key(v);
     let msg = h(v.msg);
+    let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
+    let algorithm = IntegrityAlgorithm::EIA2;
     assert_eq!(
-        nia::nia2_mac_bits(
-            &key,
-            v.count,
-            bearer(v.bearer),
-            direction(v.dir),
-            &msg,
-            v.len as u64
-        ),
+        nia_mac_bits(&key, v.count, bearer, dir, &msg, bits, algorithm),
+        Ok(0xf4cc8fa3)
+    );
+    let context = IntegrityContext::new(&key, algorithm);
+    assert_eq!(
+        context.mac_bits(v.count, bearer, dir, &msg, bits),
         Ok(0xf4cc8fa3)
     );
 }
@@ -534,16 +617,23 @@ fn snow3g_uea2_intermediate_set1_state() {
 #[test]
 fn eia2_all_byte_aligned_sets_via_nia_mac() {
     // C.2.2 via nia_mac dispatch
-    let key: [u8; 16] = h("d3c5d592327fb11c4035c6680af8c6d1").try_into().unwrap();
+    let key = KNasInt::from_slice(&h("d3c5d592327fb11c4035c6680af8c6d1")).unwrap();
+    let message = h("484583d5afe082ae");
+    let (count, bearer, algorithm) = (0x398a59b4, bearer(0x1a), IntegrityAlgorithm::EIA2);
     assert_eq!(
-        nia::nia_mac(
+        nia_mac(
             &key,
-            0x398a59b4,
-            bearer(0x1a),
+            count,
+            bearer,
             Direction::Downlink,
-            &h("484583d5afe082ae"),
-            IntegrityAlgorithm::EIA2
+            &message,
+            algorithm
         ),
+        0xb93787e6
+    );
+    let context = IntegrityContext::new(&key, algorithm);
+    assert_eq!(
+        context.mac(count, bearer, Direction::Downlink, &message),
         0xb93787e6
     );
 }

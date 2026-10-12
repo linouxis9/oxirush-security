@@ -23,6 +23,7 @@ that it runs on itself. The three must give the same:
 | Ciphering at 170 lengths, in octets and in bits | 128-EEA1, 128-EEA3, and the key expansion and counter mode of AES |
 | Integrity at 170 lengths, in octets and in bits | The carry-less products of 128-EIA1 and 128-EIA3, and the CBC-MAC of AES |
 | Batches of 1 to 9 messages | Four generators side by side, and one to eight CBC-MAC chains |
+| Keyed contexts at 170 lengths, alone and in batches | The counter mode and the CBC-MAC of AES with the round keys and the subkeys of a context |
 
 The program must also say that its vector code is the one that runs:
 `Implementation::Vector128` from the instructions that the build enables,

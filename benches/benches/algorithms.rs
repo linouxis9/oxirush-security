@@ -27,7 +27,9 @@
 //!
 //! A benchmark is `group/algorithm/octets`: one call on a message of that
 //! many octets, a short NAS message (64) or one that fills an IP packet
-//! (1500). With `--profile-time`, criterion runs the benchmark for that many
+//! (1500). `cipher` and `mac` are the functions that take a key, and
+//! `cipher-context` and `mac-context` the keyed contexts, which have the
+//! round keys of AES and the subkeys of CMAC from one message to the next. With `--profile-time`, criterion runs the benchmark for that many
 //! seconds under pprof, which samples the program a thousand times a second
 //! and writes `profile.pb`, a profile that `go tool pprof` reads (`-top`,
 //! `-list REGEX`, `-peek REGEX`). With `PROFILE=flamegraph` in the
@@ -35,11 +37,12 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use oxirush_security::nas_5gs::{
-    derive_kamf, derive_kausf, derive_knas_int, derive_kseaf, suci_decrypt_a, suci_decrypt_b,
-    suci_scheme_output_a, suci_scheme_output_b,
+    HomeNetworkPrivateKey, HomeNetworkPublicKey, KNasEnc, KNasInt, Protection, Suci, Supi,
+    derive_kamf, derive_kausf, derive_knas_int, derive_kseaf,
 };
 use oxirush_security::{
-    Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, nea_cipher, nia_mac,
+    Autn, Bearer, CipheringAlgorithm, CipheringContext, Ck, Direction, Ik, IntegrityAlgorithm,
+    IntegrityContext, Plmn, nea_cipher, nia_mac,
 };
 use oxirush_security_benches::{PROFILE_A, PROFILE_B, message};
 use pprof::criterion::{Output, PProfProfiler};
@@ -51,73 +54,79 @@ const COUNT: u32 = 0x0000_1234;
 const SIZES: [usize; 2] = [64, 1500];
 
 fn ciphers(criterion: &mut Criterion) {
-    let mut group = criterion.benchmark_group("cipher");
-    for (name, algorithm) in [
-        ("128-EEA1", CipheringAlgorithm::Snow3g),
-        ("128-EEA2", CipheringAlgorithm::Aes),
-        ("128-EEA3", CipheringAlgorithm::Zuc),
-    ] {
-        for octets in SIZES {
-            let mut data = message(octets);
-            group.throughput(Throughput::Bytes(octets as u64));
-            group.bench_function(BenchmarkId::new(name, octets), |bencher| {
-                bencher.iter(|| {
-                    nea_cipher(
-                        black_box(&KEY),
-                        COUNT,
-                        Bearer::ZERO,
-                        Direction::Uplink,
-                        black_box(&mut data),
-                        algorithm,
-                    )
-                })
-            });
+    let key = KNasEnc::new(KEY);
+    for form in ["cipher", "cipher-context"] {
+        let mut group = criterion.benchmark_group(form);
+        for (name, algorithm) in [
+            ("128-EEA1", CipheringAlgorithm::Snow3g),
+            ("128-EEA2", CipheringAlgorithm::Aes),
+            ("128-EEA3", CipheringAlgorithm::Zuc),
+        ] {
+            let context = CipheringContext::new(&key, algorithm);
+            for octets in SIZES {
+                let mut data = message(octets);
+                group.throughput(Throughput::Bytes(octets as u64));
+                let (bearer, uplink) = (Bearer::ZERO, Direction::Uplink);
+                group.bench_function(BenchmarkId::new(name, octets), |bencher| match form {
+                    "cipher" => bencher.iter(|| {
+                        let data = black_box(&mut data);
+                        nea_cipher(black_box(&key), COUNT, bearer, uplink, data, algorithm)
+                    }),
+                    _ => bencher.iter(|| {
+                        black_box(&context).cipher(COUNT, bearer, uplink, black_box(&mut data))
+                    }),
+                });
+            }
         }
+        group.finish();
     }
-    group.finish();
 }
 
 fn macs(criterion: &mut Criterion) {
-    let mut group = criterion.benchmark_group("mac");
-    for (name, algorithm) in [
-        ("128-EIA1", IntegrityAlgorithm::Snow3g),
-        ("128-EIA2", IntegrityAlgorithm::Aes),
-        ("128-EIA3", IntegrityAlgorithm::Zuc),
-    ] {
-        for octets in SIZES {
-            let data = message(octets);
-            group.throughput(Throughput::Bytes(octets as u64));
-            group.bench_function(BenchmarkId::new(name, octets), |bencher| {
-                bencher.iter(|| {
-                    nia_mac(
-                        black_box(&KEY),
-                        COUNT,
-                        Bearer::ZERO,
-                        Direction::Uplink,
-                        black_box(&data),
-                        algorithm,
-                    )
-                })
-            });
+    let key = KNasInt::new(KEY);
+    for form in ["mac", "mac-context"] {
+        let mut group = criterion.benchmark_group(form);
+        for (name, algorithm) in [
+            ("128-EIA1", IntegrityAlgorithm::Snow3g),
+            ("128-EIA2", IntegrityAlgorithm::Aes),
+            ("128-EIA3", IntegrityAlgorithm::Zuc),
+        ] {
+            let context = IntegrityContext::new(&key, algorithm);
+            for octets in SIZES {
+                let data = message(octets);
+                group.throughput(Throughput::Bytes(octets as u64));
+                let (bearer, uplink) = (Bearer::ZERO, Direction::Uplink);
+                group.bench_function(BenchmarkId::new(name, octets), |bencher| match form {
+                    "mac" => bencher.iter(|| {
+                        let data = black_box(&data);
+                        nia_mac(black_box(&key), COUNT, bearer, uplink, data, algorithm)
+                    }),
+                    _ => bencher
+                        .iter(|| black_box(&context).mac(COUNT, bearer, uplink, black_box(&data))),
+                });
+            }
         }
+        group.finish();
     }
-    group.finish();
 }
 
-/// Each is one HMAC-SHA-256.
+/// Each is one HMAC-SHA-256. The keys that a derivation returns are wiped
+/// when they are dropped, which the times include.
 fn key_derivations(criterion: &mut Criterion) {
-    let (ck, ik, sqn_xor_ak) = ([0x11; 16], [0x22; 16], [0x33; 6]);
+    let (ck, ik) = (Ck::new([0x11; 16]), Ik::new([0x22; 16]));
+    let autn = Autn::new([0x33; 16]);
     let sn_name = b"5G:mnc093.mcc208.3gppnetwork.org";
-    let k_ausf = derive_kausf(&ck, &ik, sn_name, &sqn_xor_ak).expect("a short name");
+    let supi = Supi::imsi("208930000000001").expect("an IMSI");
+    let k_ausf = derive_kausf(&ck, &ik, sn_name, &autn).expect("a short name");
     let k_seaf = derive_kseaf(&k_ausf, sn_name).expect("a short name");
-    let k_amf = derive_kamf(&k_seaf, "208930000000001", &[0, 0]).expect("a short SUPI");
+    let k_amf = derive_kamf(&k_seaf, &supi, &[0, 0]).expect("an ABBA of two octets");
 
     let mut group = criterion.benchmark_group("kdf");
     group.bench_function("KAUSF", |bencher| {
-        bencher.iter(|| derive_kausf(black_box(&ck), &ik, sn_name, &sqn_xor_ak))
+        bencher.iter(|| derive_kausf(black_box(&ck), &ik, sn_name, &autn))
     });
     group.bench_function("KAMF", |bencher| {
-        bencher.iter(|| derive_kamf(black_box(&k_seaf), "208930000000001", &[0, 0]))
+        bencher.iter(|| derive_kamf(black_box(&k_seaf), &supi, &[0, 0]))
     });
     group.bench_function("KNASint", |bencher| {
         bencher.iter(|| derive_knas_int(black_box(&k_amf), IntegrityAlgorithm::NIA2))
@@ -125,25 +134,35 @@ fn key_derivations(criterion: &mut Criterion) {
     group.finish();
 }
 
-/// Concealment and deconcealment of a five-octet MSIN.
+/// Concealment and de-concealment of an IMSI whose MSIN has nine digits,
+/// five octets in BCD: `Suci::conceal_imsi`, and `Suci::deconceal` of a
+/// SUCI that is read already.
 fn suci(criterion: &mut Criterion) {
-    let msin = [0x00, 0x01, 0x20, 0x80, 0xf6];
+    let plmn = Plmn::new("274", "012").expect("an MCC and an MNC");
     let ((private_a, public_a), (private_b, public_b)) = (PROFILE_A, PROFILE_B);
-    let output_a = suci_scheme_output_a(&msin, &public_a).expect("Profile A conceals");
-    let output_b = suci_scheme_output_b(&msin, &public_b).expect("Profile B conceals");
+    let private_a = HomeNetworkPrivateKey::profile_a(&private_a);
+    let public_a = HomeNetworkPublicKey::profile_a(&public_a);
+    let private_b = HomeNetworkPrivateKey::profile_b(&private_b).expect("a key of Profile B");
+    let public_b = HomeNetworkPublicKey::profile_b(&public_b).expect("a key of Profile B");
+    let conceal = |key| {
+        let protection = Protection::Ecies { key_id: 1, key };
+        Suci::conceal_imsi(plmn, black_box("001002086"), "0", protection)
+    };
+    let suci_a = conceal(&public_a).expect("Profile A conceals");
+    let suci_b = conceal(&public_b).expect("Profile B conceals");
 
     let mut group = criterion.benchmark_group("suci");
     group.bench_function("profile-a/conceal", |bencher| {
-        bencher.iter(|| suci_scheme_output_a(black_box(&msin), &public_a))
+        bencher.iter(|| conceal(&public_a))
     });
     group.bench_function("profile-a/deconceal", |bencher| {
-        bencher.iter(|| suci_decrypt_a(black_box(&output_a), &private_a))
+        bencher.iter(|| black_box(&suci_a).deconceal(Some(&private_a)))
     });
     group.bench_function("profile-b/conceal", |bencher| {
-        bencher.iter(|| suci_scheme_output_b(black_box(&msin), &public_b))
+        bencher.iter(|| conceal(&public_b))
     });
     group.bench_function("profile-b/deconceal", |bencher| {
-        bencher.iter(|| suci_decrypt_b(black_box(&output_b), &private_b))
+        bencher.iter(|| black_box(&suci_b).deconceal(Some(&private_b)))
     });
     group.finish();
 }

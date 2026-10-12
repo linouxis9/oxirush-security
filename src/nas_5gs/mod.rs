@@ -15,45 +15,42 @@
    limitations under the License.
 */
 
-//! 5GS key derivation, NAS security, algorithm selection, and subscriber
-//! identity concealment per 3GPP TS 33.501.
+//! 5GS: the keys of TS 33.501 and their derivations, NAS integrity and
+//! ciphering, the SUPI, the SUCI and the 5G-GUTI.
+//!
+//! The algorithms, their inputs and what else EPS has too are at the
+//! [crate root](crate). Nothing here has the name of an item of
+//! [`nas_eps`](crate::nas_eps) by accident: a key of one system does not
+//! compile where the other's is expected.
 
-pub mod algo;
-pub mod guti;
-pub mod kdf;
-pub mod security;
+mod guti;
+mod kdf;
+mod keys;
+mod security;
 #[cfg(feature = "suci")]
-#[cfg_attr(docsrs, doc(cfg(feature = "suci")))]
-pub mod suci;
+mod suci;
+mod supi;
 
-pub use crate::common::{
-    AccessKeyCount, Bearer, CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob,
-    NasCount, SecurityError, extract_128, nea_cipher_batch, nia_mac_batch,
-};
-pub use algo::{
-    select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
-    select_integrity_algo_with_preference,
-};
-pub use guti::{build_guti_bytes, mobile_identity_type, parse_guti_tmsi, parse_s_tmsi};
+pub use guti::{Guti, MobileIdentityType, STmsi};
 pub use kdf::{
-    IabIpAddress, KamfMobilityDirection, TnapKeyUsage, compute_hres_star, compute_xres_star,
-    derive_kamf, derive_kamf_prime, derive_kamf_prime_handover, derive_kamf_prime_idle,
-    derive_kasme_srvcc, derive_kausf, derive_kgnb, derive_kiab, derive_kn3iwf, derive_knas_enc,
-    derive_knas_int, derive_kng_ran_star, derive_kng_ran_star_ng_enb, derive_krrc_enc,
-    derive_krrc_int, derive_kseaf, derive_ksn, derive_kup_enc, derive_kup_int,
+    IabIpAddress, KamfMobilityDirection, TnapKeyUsage, compute_hres_star, compute_hxres_star,
+    compute_res_star, compute_xres_star, derive_kamf, derive_kamf_prime,
+    derive_kamf_prime_handover, derive_kamf_prime_idle, derive_kasme_srvcc, derive_kausf,
+    derive_kgnb, derive_kiab, derive_kn3iwf, derive_knas_enc, derive_knas_int, derive_kng_ran_star,
+    derive_kng_ran_star_ng_enb, derive_krrc_enc, derive_krrc_int, derive_kseaf, derive_ksn,
+    derive_kup_enc, derive_kup_int, derive_mapped_kamf_handover, derive_mapped_kamf_idle,
     derive_mapped_kasme_handover, derive_mapped_kasme_idle, derive_nh, derive_sor_mac_ausf,
     derive_sor_mac_ue, derive_tnap_usage_key, derive_upu_mac_ausf, derive_upu_mac_ue,
 };
-pub use security::{NasConnection, cipher_job, mac_job, nas_cipher, nas_container_mac, nas_mac};
-#[cfg(feature = "nai")]
-#[cfg_attr(docsrs, doc(cfg(feature = "nai")))]
-pub use suci::{
-    NaiProtectionScheme, NaiSuci, SuciSchemeOutput, SupiType, conceal_network_specific_supi,
-    deconceal_nai_suci, deconceal_network_specific_suci, encode_nai_suci, parse_nai_suci,
+pub use keys::{
+    AccessKey, HresStar, HxresStar, KAmf, KAusf, KGnb, KIab, KN3iwf, KNasEnc, KNasInt, KRrcEnc,
+    KRrcInt, KSeaf, KSn, KTnap, KUpEnc, KUpInt, Nh, NodeKey, ResStar, XresStar,
 };
+pub use security::{NasConnection, cipher_job, mac_job, nas_cipher, nas_container_mac, nas_mac};
 #[cfg(feature = "suci")]
 #[cfg_attr(docsrs, doc(cfg(feature = "suci")))]
 pub use suci::{
-    msin_to_bcd, suci_conceal, suci_decrypt_a, suci_decrypt_b, suci_scheme_output_a,
-    suci_scheme_output_b, suci_to_string, suci_to_supi,
+    HomeNetwork, HomeNetworkPrivateKey, HomeNetworkPublicKey, NaiError, Protection,
+    ProtectionScheme, SchemeOutput, Suci, SuciError,
 };
+pub use supi::{Supi, SupiType};

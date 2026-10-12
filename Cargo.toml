@@ -18,16 +18,17 @@ default = ["std", "suci", "nai"]
 # Apple's, it is what asks the processor for its instructions when the
 # program runs. Without it the crate is `no_std`.
 std = ["alloc"]
-# An allocator: the functions that return a `Vec` or a `String` (`build_s`,
-# `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes`) and `SecurityError::Ecies`.
-# The algorithms and the key derivations need none.
+# An allocator: what returns a `Vec` or a `String` (`kdf::build_s`,
+# `tbcd_encode`, `tbcd_decode`) and `Supi::into_owned`. The algorithms, the
+# keys and their derivations need none.
 alloc = ["zeroize/alloc"]
 # SUCI concealment and deconcealment with the null scheme, Profile A (X25519)
 # and Profile B (P-256), TS 33.501 Annex C. Concealment draws a key with
 # `getrandom`, which needs a source of random numbers for the target.
 suci = ["alloc", "dep:x25519-dalek", "dep:p256", "dep:getrandom"]
-# SUCI and SUPI in the NAI format, TS 23.003 clause 28.7.3: network specific
-# identifiers, GCI and GLI. It brings Unicode normalization and IDNA.
+# The SUCI in the NAI format, TS 23.003 clause 28.7.3, and the SUCI of a SUPI
+# that is a NAI: a network specific identifier, a GCI or a GLI. It brings
+# Unicode normalization and IDNA.
 nai = ["suci", "dep:unicode-normalization", "dep:idna", "dep:base64", "dep:hex"]
 
 [dependencies]

@@ -2,7 +2,8 @@
 //! ciphering twice gives the data back, the bits after the length are left
 //! alone or ignored, and a length that the buffer does not hold is an error.
 //! On a processor with the vector instructions, they give what the scalar
-//! code gives, and in a batch each message has what it has alone.
+//! code gives, in a batch each message has what it has alone, and a keyed
+//! context gives what the function with the key gives.
 //!
 //! The comparison turns the vector paths off through the crate's hooks:
 //! `RUSTFLAGS="--cfg oxirush_security_hooks" cargo fuzz run algorithms`.
@@ -10,9 +11,11 @@
 
 use libfuzzer_sys::fuzz_target;
 use oxirush_security::hooks::{narrow, scalar};
+use oxirush_security::nas_5gs::{KNasEnc, KNasInt};
 use oxirush_security::{
-    Bearer, CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob, nea_cipher,
-    nea_cipher_batch, nea_cipher_bits, nia_mac, nia_mac_batch, nia_mac_bits,
+    Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
+    IntegrityContext, MacJob, nea_cipher, nea_cipher_batch, nea_cipher_bits, nia_mac,
+    nia_mac_batch, nia_mac_bits,
 };
 
 fuzz_target!(|bytes: &[u8]| {
@@ -21,7 +24,8 @@ fuzz_target!(|bytes: &[u8]| {
     let Some((head, message)) = bytes.split_at_checked(24) else {
         return;
     };
-    let key: [u8; 16] = head[..16].try_into().expect("16 octets");
+    let octets: [u8; 16] = head[..16].try_into().expect("16 octets");
+    let (key, enc) = (KNasInt::new(octets), KNasEnc::new(octets));
     let count = u32::from_be_bytes(head[16..20].try_into().expect("4 octets"));
     let bearer = Bearer::new(head[20] & 0x1f).expect("five bits");
     let direction = Direction::try_from(head[21] & 1).expect("one bit");
@@ -36,11 +40,28 @@ fuzz_target!(|bytes: &[u8]| {
     let scalar_mac = scalar(|| nia_mac(&key, count, bearer, direction, message, integrity));
     assert_eq!(mac, scalar_mac);
     let mut data = message.to_vec();
-    nea_cipher(&key, count, bearer, direction, &mut data, ciphering);
+    nea_cipher(&enc, count, bearer, direction, &mut data, ciphering);
     let mut scalar_data = message.to_vec();
-    scalar(|| nea_cipher(&key, count, bearer, direction, &mut scalar_data, ciphering));
+    scalar(|| nea_cipher(&enc, count, bearer, direction, &mut scalar_data, ciphering));
     assert_eq!(data, scalar_data);
-    nea_cipher(&key, count, bearer, direction, &mut data, ciphering);
+
+    // A keyed context, made on the vector instructions and without them
+    let contexts = || {
+        (
+            IntegrityContext::new(&key, integrity),
+            CipheringContext::new(&enc, ciphering),
+        )
+    };
+    for (integrity_context, ciphering_context) in [contexts(), scalar(contexts)] {
+        assert_eq!(
+            integrity_context.mac(count, bearer, direction, message),
+            mac
+        );
+        let mut context_data = message.to_vec();
+        ciphering_context.cipher(count, bearer, direction, &mut context_data);
+        assert_eq!(context_data, data);
+    }
+    nea_cipher(&enc, count, bearer, direction, &mut data, ciphering);
     assert_eq!(data, message);
 
     // The message next to others, of other keys, lengths and algorithms, or
@@ -53,8 +74,19 @@ fuzz_target!(|bytes: &[u8]| {
     };
     let integrity_of = |index| IntegrityAlgorithm::try_from(algorithm_of(index)).expect("0 to 3");
     let ciphering_of = |index| CipheringAlgorithm::try_from(algorithm_of(index)).expect("0 to 3");
-    let keys: Vec<[u8; 16]> = (0..others)
-        .map(|index| std::array::from_fn(|octet| key[octet] ^ index as u8))
+    let key_of = |index: usize| std::array::from_fn(|octet| octets[octet] ^ index as u8);
+    let keys: Vec<KNasInt> = (0..others)
+        .map(|index| KNasInt::new(key_of(index)))
+        .collect();
+    let encs: Vec<KNasEnc> = (0..others)
+        .map(|index| KNasEnc::new(key_of(index)))
+        .collect();
+    // Every other message of a batch comes from a keyed context
+    let integrity_contexts: Vec<IntegrityContext> = (0..others)
+        .map(|index| IntegrityContext::new(&keys[index], integrity_of(index)))
+        .collect();
+    let ciphering_contexts: Vec<CipheringContext> = (0..others)
+        .map(|index| CipheringContext::new(&encs[index], ciphering_of(index)))
         .collect();
     let messages: Vec<&[u8]> = (0..others)
         .map(|index| {
@@ -64,19 +96,28 @@ fuzz_target!(|bytes: &[u8]| {
         .collect();
     let expected: Vec<(Vec<u8>, u32)> = (0..others)
         .map(|index| {
-            let (key, integrity, ciphering) =
-                (&keys[index], integrity_of(index), ciphering_of(index));
-            let mac = nia_mac(key, count, bearer, direction, messages[index], integrity);
+            let (integrity, ciphering) = (integrity_of(index), ciphering_of(index));
+            let mac = nia_mac(
+                &keys[index],
+                count,
+                bearer,
+                direction,
+                messages[index],
+                integrity,
+            );
             let mut data = messages[index].to_vec();
-            nea_cipher(key, count, bearer, direction, &mut data, ciphering);
+            nea_cipher(&encs[index], count, bearer, direction, &mut data, ciphering);
             (data, mac)
         })
         .collect();
     let in_a_batch = || {
         let mut macs: Vec<MacJob<'_>> = (0..others)
-            .map(|index| {
-                let (key, integrity) = (&keys[index], integrity_of(index));
-                MacJob::new(key, count, bearer, direction, messages[index], integrity)
+            .map(|index| match index % 2 {
+                0 => {
+                    let (key, integrity) = (&keys[index], integrity_of(index));
+                    MacJob::new(key, count, bearer, direction, messages[index], integrity)
+                }
+                _ => integrity_contexts[index].job(count, bearer, direction, messages[index]),
             })
             .collect();
         nia_mac_batch(&mut macs);
@@ -84,9 +125,12 @@ fuzz_target!(|bytes: &[u8]| {
         let mut jobs: Vec<CipherJob<'_>> = data
             .iter_mut()
             .enumerate()
-            .map(|(index, data)| {
-                let (key, ciphering) = (&keys[index], ciphering_of(index));
-                CipherJob::new(key, count, bearer, direction, data, ciphering)
+            .map(|(index, data)| match index % 2 {
+                0 => {
+                    let (key, ciphering) = (&encs[index], ciphering_of(index));
+                    CipherJob::new(key, count, bearer, direction, data, ciphering)
+                }
+                _ => ciphering_contexts[index].job(count, bearer, direction, data),
             })
             .collect();
         nea_cipher_batch(&mut jobs);
@@ -102,7 +146,7 @@ fuzz_target!(|bytes: &[u8]| {
 
     // A length in bits
     let mac_bits = nia_mac_bits(&key, count, bearer, direction, message, bits, integrity);
-    let ciphered = nea_cipher_bits(&key, count, bearer, direction, &mut data, bits, ciphering);
+    let ciphered = nea_cipher_bits(&enc, count, bearer, direction, &mut data, bits, ciphering);
     if bits > available {
         assert!(mac_bits.is_err() && ciphered.is_err());
         assert_eq!(data, message);
@@ -110,6 +154,16 @@ fuzz_target!(|bytes: &[u8]| {
     }
     let mac_bits = mac_bits.expect("the length is within the message");
     ciphered.expect("the length is within the data");
+    let (integrity_context, ciphering_context) = contexts();
+    assert_eq!(
+        integrity_context.mac_bits(count, bearer, direction, message, bits),
+        Ok(mac_bits)
+    );
+    let mut context_data = message.to_vec();
+    ciphering_context
+        .cipher_bits(count, bearer, direction, &mut context_data, bits)
+        .expect("the length is within the data");
+    assert_eq!(context_data, data);
     scalar(|| {
         assert_eq!(
             nia_mac_bits(&key, count, bearer, direction, message, bits, integrity),
@@ -117,7 +171,7 @@ fuzz_target!(|bytes: &[u8]| {
         );
         let mut scalar_data = message.to_vec();
         nea_cipher_bits(
-            &key,
+            &enc,
             count,
             bearer,
             direction,
@@ -139,7 +193,7 @@ fuzz_target!(|bytes: &[u8]| {
         let unused = 0xffu8 >> (bits % 8);
         assert_eq!(data[octets - 1] & unused, message[octets - 1] & unused);
     }
-    nea_cipher_bits(&key, count, bearer, direction, &mut data, bits, ciphering)
+    nea_cipher_bits(&enc, count, bearer, direction, &mut data, bits, ciphering)
         .expect("the length is within the data");
     assert_eq!(data, message);
 

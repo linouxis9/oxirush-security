@@ -20,20 +20,20 @@
 //!
 //! ```rust
 //! use oxirush_security::nas_5gs::{
-//!     CipheringAlgorithm, Direction, IntegrityAlgorithm, NasConnection, NasCount, derive_knas_enc,
-//!     derive_knas_int, nas_cipher, nas_mac,
+//!     KAmf, NasConnection, derive_knas_enc, derive_knas_int, nas_cipher, nas_mac,
 //! };
+//! use oxirush_security::{CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
 //!
 //! // KAMF, the key of the AMF
 //! let k_amf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
-//! let k_amf: [u8; 32] = hex::decode(k_amf).unwrap().try_into().unwrap();
+//! let k_amf = KAmf::from_slice(&hex::decode(k_amf).unwrap()).unwrap();
 //!
 //! // The NAS keys of the algorithms that the AMF selected
 //! let (nea2, nia2) = (CipheringAlgorithm::NEA2, IntegrityAlgorithm::NIA2);
 //! let k_nas_enc = derive_knas_enc(&k_amf, nea2);
 //! let k_nas_int = derive_knas_int(&k_amf, nia2);
-//! println!("KNASenc {}", hex::encode(k_nas_enc));
-//! println!("KNASint {}", hex::encode(k_nas_int));
+//! println!("KNASenc {}", hex::encode(k_nas_enc.as_octets()));
+//! println!("KNASint {}", hex::encode(k_nas_int.as_octets()));
 //!
 //! // An uplink REGISTRATION COMPLETE on 3GPP access with NAS COUNT 0: cipher
 //! // it, then compute the MAC over the sequence number and the ciphertext
@@ -51,10 +51,12 @@
 //! ciphered b57dd5, MAC 83e4d009
 //! ```
 //!
-//! The functions take octets. The crate stores no key and keeps no NAS
-//! COUNT: the caller passes both for each message. A receiver computes the
-//! MAC first, then deciphers with the same call (TS 24.501 §4.4.3). No
-//! function panics on its arguments.
+//! A key has a type of its own, which is wiped when it is dropped: KNASenc
+//! does not compile where KNASint is expected. The crate stores no key and
+//! keeps no NAS COUNT: the caller passes both for each message, and
+//! [`NasCount`] gives the next one and the one of a received message. A
+//! receiver computes the MAC first, then deciphers with the same call
+//! (TS 24.501 §4.4.3). No function panics on its arguments.
 //!
 //! The [README](https://github.com/linouxis9/oxirush-security#readme) has
 //! an example for each task: the keys of a 5G AKA run and of a handover,
@@ -63,16 +65,18 @@
 //!
 //! # Where things are
 //!
-//! | Module | Contents |
-//! |--------|----------|
-//! | [`nas_5gs`] | TS 33.501: key derivation, NAS integrity and ciphering, algorithm selection, 5G-GUTI, and SUCI concealment |
-//! | [`nas_eps`] | TS 33.401: key derivation, NAS integrity and ciphering with BEARER 0, the short MAC of a SERVICE REQUEST, HASHMME |
-//! | [`common`] | What both share: the algorithms with their own ranges ([`nia_mac`], [`nea_cipher`]), SNOW 3G and ZUC, the KDF of TS 33.220, the types of the inputs, PLMN and TBCD |
+//! | Where | Contents |
+//! |-------|----------|
+//! | The crate root | What 5GS and EPS share: the algorithms, their inputs, the keyed contexts, the batches, CK, IK, RAND and AUTN, the PLMN and TBCD |
+//! | [`nas_5gs`] | TS 33.501: the keys and their derivations, NAS integrity and ciphering, the SUPI, the SUCI and the 5G-GUTI |
+//! | [`nas_eps`] | TS 33.401: the keys and their derivations, NAS integrity and ciphering, the short MAC of a SERVICE REQUEST, HASHMME |
+//! | [`kdf`] | The KDF of TS 33.220, for a derivation that the crate does not have |
 //!
-//! The crate root has the functions of [`nas_5gs`] and of [`common`]. The
-//! functions of EPS are under [`nas_eps`], with the same names where the two
-//! systems have the same thing: [`nas_eps::nas_mac`],
-//! [`nas_eps::derive_knas_int`].
+//! An item has one path. The two systems have keys and functions of the
+//! same name, [`nas_5gs::KNasInt`] and [`nas_eps::KNasInt`],
+//! [`nas_5gs::derive_knas_int`] and [`nas_eps::derive_knas_int`]: the
+//! module says which one a program means, and the type of the key that a
+//! function takes refuses the other.
 //!
 //! # What it implements
 //!
@@ -81,60 +85,58 @@
 //!
 //! | What | Functions | Specification | Reference values |
 //! |------|-----------|---------------|------------------|
-//! | NAS ciphering | `nas_cipher`; the algorithms `nea_cipher`, `nea1_cipher`, `nea2_cipher`, `nea3_cipher` and their `*_bits` forms | NEA0 (null), NEA1 (SNOW 3G, 128-EEA1), NEA2 (AES-128-CTR, 128-EEA2), NEA3 (ZUC, 128-EEA3): TS 33.401 Annex B.1 | 3GPP |
-//! | NAS integrity | `nas_mac`; the algorithms `nia_mac`, `nia1_mac`, `nia2_mac`, `nia3_mac` and their `*_bits` forms | NIA1 (SNOW 3G, 128-EIA1), NIA2 (AES-CMAC, 128-EIA2), NIA3 (ZUC, 128-EIA3): TS 33.401 Annex B.2 | 3GPP |
-//! | Several messages at once | `nea_cipher_batch` and `nia_mac_batch` on a [`CipherJob`] or a [`MacJob`] for each message, which holds its key, COUNT, BEARER, DIRECTION and algorithm; `cipher_job` and `mac_job` make the job of a NAS message | The algorithms above | 3GPP, and the functions of one message |
-//! | Keystream generators | `Snow3G`, `Zuc` | TS 35.216, TS 35.222 | 3GPP |
-//! | 5G AKA | `derive_kausf`, `compute_xres_star`, `compute_hres_star`, `derive_kseaf`, `derive_kamf`, `derive_knas_enc`, `derive_knas_int`, `derive_kgnb`, `derive_nh` | TS 33.501 Annex A.2 and A.4 to A.10 | other implementations |
+//! | NAS ciphering | `nas_cipher` of each system | NEA0 and EEA0, 128-NEA1 and 128-EEA1 (SNOW 3G), 128-NEA2 and 128-EEA2 (AES-CTR), 128-NEA3 and 128-EEA3 (ZUC): TS 33.401 Annex B.1 | 3GPP |
+//! | NAS integrity | `nas_mac` of each system | 128-NIA1 and 128-EIA1 (SNOW 3G), 128-NIA2 and 128-EIA2 (AES-CMAC), 128-NIA3 and 128-EIA3 (ZUC): TS 33.401 Annex B.2 | 3GPP |
+//! | The algorithms themselves | [`nea_cipher`], [`nia_mac`] and their `*_bits` forms, with any COUNT, BEARER and length in bits | The same | 3GPP |
+//! | A key kept between messages | [`CipheringContext`], [`IntegrityContext`] | The same | 3GPP |
+//! | Several messages at once | [`nea_cipher_batch`], [`nia_mac_batch`] on a [`CipherJob`] or a [`MacJob`] for each message | The same | 3GPP |
+//! | Keystream generators | [`Snow3G`], [`Zuc`] | TS 35.216, TS 35.222 | 3GPP |
+//! | 5G AKA | `derive_kausf`, `compute_res_star`, `compute_xres_star`, `compute_hres_star`, `compute_hxres_star`, `derive_kseaf`, `derive_kamf`, `derive_knas_enc`, `derive_knas_int`, `derive_kgnb`, `derive_nh` | TS 33.501 Annex A.2 and A.4 to A.10 | other implementations |
 //! | Other 5GS derivations | KAMF', KN3IWF, KNG-RAN\*, KSN, the RRC and UP keys, the SoR and UPU MACs, the TNAP usage keys, KIAB | TS 33.501 Annex A | calculated |
-//! | EPS derivations | KASME, KNASint and KNASenc, KeNB, NH, KeNB\*, the AS keys, the NAS token, the CK'/IK' mapping, SRVCC, S-KeNB, LWIP-PSK, S-KWT, K_n | TS 33.401 Annex A | calculated |
+//! | EPS derivations | KASME, KNASint and KNASenc, KeNB, NH, KeNB\*, the AS keys, the NAS token, the CK'/IK' mapping, SRVCC, S-KeNB, S-KgNB, LWIP-PSK, S-KWT, K_n | TS 33.401 Annex A | calculated |
 //! | HASHMME | `nas_eps::compute_hash_mme` | TS 33.401 Annex I.2 | other implementations |
 //! | 5GS/EPS key mapping | Idle mobility and connected handover in both directions, and KASME_SRVCC | TS 33.501 Annexes A.14, A.15 and A.21 | calculated |
-//! | Other NAS MACs | `nas_container_mac`; `nas_eps::re_establishment_nas_mac` for UL_NAS_MAC and XDL_NAS_MAC; `nas_eps::service_request_short_mac` | TS 33.501 §6.9.2.3.3; TS 33.401 §7.4.4; TS 24.301 §9.9.3.28 | calculated |
-//! | SUCI | IMSI and NAI identities with the null scheme, Profile A (X25519 ECIES) and Profile B (P-256 ECIES), and proprietary outputs kept as they are | TS 33.501 Annex C | 3GPP |
-//! | 5G-GUTI, 5G-S-TMSI | `build_guti_bytes`, `parse_guti_tmsi`, `parse_s_tmsi` | TS 24.501 §9.11.3.4 | calculated |
-//! | PLMN and TBCD | `plmn_to_bytes`, `plmn_from_bytes`, `tbcd_encode`, `tbcd_decode` | TS 24.501 §9.11.3.4, TS 29.002 | calculated |
-//! | Algorithm selection | `select_integrity_algo`, `select_ciphering_algo` with NIA2 > NIA1 > NIA3 (never NIA0) and NEA2 > NEA1 > NEA3 > NEA0, the default order; their `*_with_preference` forms with an operator's order | TS 33.401 §7.2.4.3.1, TS 33.501 §6.7.1 | calculated |
+//! | Other NAS MACs | `nas_5gs::nas_container_mac`; `nas_eps::re_establishment_nas_mac`; `nas_eps::service_request_short_mac` | TS 33.501 §6.9.2.3.3; TS 33.401 §7.4.4; TS 24.301 §9.9.3.28 | calculated |
+//! | SUPI and SUCI | `nas_5gs::Supi`; `nas_5gs::Suci` with the null scheme, Profile A (X25519) and Profile B (secp256r1), for an IMSI and for a NAI | TS 33.501 Annex C, TS 23.003 §2.2A, §2.2B and §28.7.3 | 3GPP |
+//! | 5G-GUTI, 5G-S-TMSI | `nas_5gs::Guti`, `nas_5gs::STmsi` | TS 24.501 §9.11.3.4 | calculated |
+//! | PLMN and TBCD | [`Plmn`], `tbcd_encode`, `tbcd_decode` | TS 24.501 §9.11.3.4, TS 29.002 | calculated |
+//! | Algorithm selection | [`select_integrity_algo`], [`select_ciphering_algo`] and their `*_with_preference` forms | TS 33.401 §7.2.4.3.1, TS 33.501 §6.7.1 | calculated |
 //!
-//! EPS and 5GS share the 128-bit EEA/EIA algorithm cores, and the
-//! whole-octet NAS wrappers delegate to them. The `*_bits` functions take a
-//! length in bits: they preserve the unused low bits of the final octet
-//! when ciphering and ignore them for integrity.
+//! The default order of the selection is NIA2, NIA1, NIA3, never NIA0, and
+//! NEA2, NEA1, NEA3, NEA0.
 //!
-//! Concealment draws a fresh ephemeral key, so two SUCI outputs for one MSIN
-//! differ. Profile B always applies point compression (TS 33.501
-//! Annex C.3.4), and deconcealment rejects an uncompressed ephemeral point,
-//! as TS 33.514 §4.2.1.3 requires.
+//! The functions of whole octets cannot fail. The `*_bits` forms take a
+//! length in bits: they keep the unused low bits of the last octet when
+//! they cipher and ignore them for a MAC.
+//!
+//! Concealment draws a fresh ephemeral key, so two SUCIs of one SUPI
+//! differ. Profile B always compresses the point (TS 33.501 Annex C.3.4),
+//! and de-concealment refuses an uncompressed ephemeral point, as
+//! TS 33.514 §4.2.1.3 requires.
 //!
 //! # Inputs and errors
 //!
 //! A value that a specification bounds has a type that holds only the
-//! values in range: [`IntegrityAlgorithm`], [`CipheringAlgorithm`],
-//! [`Direction`], [`NasCount`], [`AccessKeyCount`], [`NasConnection`] and
-//! [`Bearer`]. A number from a peer or from a configuration enters through
-//! `TryFrom` or `new`, which return a [`SecurityError`], and the functions
-//! that take these types cannot fail. What a type cannot say is a `Result`
-//! or an `Option`.
+//! values in range. A number from a peer or from a configuration enters
+//! through `TryFrom`, `new` or `from_octets`, which return a
+//! [`SecurityError`], and the functions that take these types have nothing
+//! left to refuse.
 //!
 //! | Input | Type or check |
 //! |-------|---------------|
-//! | Algorithm of a MAC, a cipher or a key | `IntegrityAlgorithm` and `CipheringAlgorithm`: the four of each that 5GS and EPS share, under both names (`NIA2` and `EIA2`). `try_from(u8)` reads an identifier and refuses 4 and above; `u8::from` gives it back |
-//! | NAS COUNT | `NasCount`, 24 bits: `new`, `try_from(u32)` or `from_parts(overflow, sequence_number)` |
-//! | COUNT of the KgNB and KeNB derivations | A `NasCount`, or `AccessKeyCount::Handover` for the 2^32 - 1 of a handover |
-//! | NAS connection of 5GS | `NasConnection::ThreeGpp` (identifier 1) or `Non3Gpp` (2) |
-//! | DIRECTION | `Direction::Uplink` or `Downlink` |
-//! | COUNT and BEARER of the algorithms themselves | Any `u32`, and `Bearer`, 5 bits |
+//! | Key, RAND, AUTN, RES\*, XRES\* | A type for each, such as [`nas_5gs::KAmf`] or [`Ck`]: `new` takes the octets, `from_slice` a slice, `as_octets` gives them back. Wiped on drop, not `Copy`, and `{:?}` shows the name alone |
+//! | Algorithm | [`IntegrityAlgorithm`] and [`CipheringAlgorithm`], under both names (`NIA2` and `EIA2`). `try_from(u8)` refuses 4 and above |
+//! | NAS COUNT | [`NasCount`], 24 bits. `next` and `estimate` refuse to wrap around |
+//! | COUNT of the KgNB and KeNB derivations | A `NasCount`, or [`AccessKeyCount::Handover`] for the 2^32 - 1 of a handover |
+//! | NAS connection of 5GS | [`nas_5gs::NasConnection`]: `ThreeGpp` (identifier 1) or `Non3Gpp` (2) |
+//! | DIRECTION | [`Direction`]: `Uplink` or `Downlink` |
+//! | COUNT and BEARER of the algorithms themselves | Any `u32`, and [`Bearer`], 5 bits |
 //! | Length in bits | `Err(BitLengthExceedsData)` when the buffer is shorter |
 //! | PCI, ARFCN, AMF Set ID, AMF Pointer, cell identity | `Err(OutOfRange)` above the largest value |
-//! | MCC, MNC, MSIN and TBCD string | `Err(InvalidParameter)` for a wrong length or character |
+//! | PLMN, TBCD string, 5G-GUTI, 5G-S-TMSI | [`Plmn`], `nas_5gs::Guti`, `nas_5gs::STmsi`: `Err(InvalidParameter)` for a length, a digit or a first octet that the format does not have |
+//! | SUPI | `nas_5gs::Supi`: an IMSI or a NAI, from its identity or from the text of a service based interface |
+//! | SUCI from a peer | `nas_5gs::Suci`: a `nas_5gs::SuciError` that says what could not be read, or which step of the de-concealment failed |
 //! | KDF parameter of variable length | `Err(InputTooLong)` above 65535 octets |
-//! | SUCI, 5G-GUTI and 5G-S-TMSI from a peer | `None` or an `Err` for what cannot be read or deconcealed |
-//!
-//! [`nas_mac`] and [`nas_cipher`] are the functions of NAS. They exist in
-//! [`nas_5gs`] and in [`nas_eps`], and the crate root re-exports those of
-//! [`nas_5gs`]. The functions named after an algorithm ([`nia_mac`],
-//! [`nea_cipher`], [`nia2_mac`] and the others of [`common`]) take what the
-//! algorithm takes.
 //!
 //! # Key material and timing
 //!
@@ -150,7 +152,7 @@
 //! | Comparison | [`constant_time_eq`] compares RES\* with XRES\*, or HRES\* with HXRES\*, through `subtle`: its time depends on the lengths and not on where the values differ. |
 //! | Not measured | No timing was measured, and no other target or compiler was read. The AArch64 form is the code of the x86-64 one on other instructions: it runs on an emulated AArch64 processor, where it gives what its scalar code and the x86-64 code give, and CI runs the tests on an AArch64 machine. |
 //!
-//! The `unsafe` code of the crate is in one module, `common::simd`, and of
+//! The `unsafe` code of the crate is in one private module, `common::simd`, and of
 //! one kind: the calls of the code that is compiled for the vector
 //! instructions, once the processor is seen to have them. That code takes
 //! and returns values, never a pointer.
@@ -234,11 +236,11 @@
 //!
 //! | Feature | Adds | Needs |
 //! |---------|------|-------|
-//! | none | The algorithms, NAS integrity and ciphering, every key derivation, the selection of the algorithms, the types of the inputs, 5G-GUTI and `plmn_to_bytes` | `core` alone: no allocator. 14 crates in its tree, and no procedural macro |
-//! | `alloc` | What returns a `Vec` or a `String`: `build_s`, `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes`; and `SecurityError::Ecies`, which has a text | An allocator |
+//! | none | The algorithms, the keyed contexts and the batches, the keys and every derivation, NAS integrity and ciphering, the selection of the algorithms, the types of the inputs, the SUPI, the 5G-GUTI and the PLMN | `core` alone: no allocator. 14 crates in its tree, and no procedural macro |
+//! | `alloc` | What returns a `Vec` or a `String`: `kdf::build_s`, `tbcd_encode`, `tbcd_decode`, `Supi::into_owned` | An allocator |
 //! | `std` | On an AArch64 system other than Linux, Android and Apple's: the choice of the code on the vector and AES instructions when the program runs. Nothing else | The standard library. It brings `alloc` |
-//! | `suci` | `nas_5gs::suci`: SUCI concealment and deconcealment with the null scheme, Profile A (X25519) and Profile B (P-256) | `alloc`, which it brings, and a source of random numbers that `getrandom` has for the target: concealment draws a key. 41 crates |
-//! | `nai` | The SUCI and SUPI of the NAI format: network specific identifiers, GCI and GLI | `suci`, which it brings, with Unicode normalization and IDNA. 71 crates |
+//! | `suci` | `nas_5gs::Suci`: the SUCI of an IMSI in a mobile identity, concealed and de-concealed with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, which it brings, and a source of random numbers that `getrandom` has for the target: concealment draws a key. 41 crates |
+//! | `nai` | The SUCI in the NAI format, and the SUCI of a SUPI that is a NAI: a network specific identifier, a GCI or a GLI | `suci`, which it brings, with Unicode normalization and IDNA. 71 crates |
 //!
 //! Without `std` the crate is `no_std`. The key derivations give the
 //! hasher their parameters part after part: the string S of TS 33.220 is
@@ -280,7 +282,7 @@ extern crate alloc;
 #[cfg(all(feature = "std", not(test)))]
 extern crate std;
 
-pub mod common;
+mod common;
 pub mod nas_5gs;
 pub mod nas_eps;
 
@@ -290,48 +292,43 @@ pub mod nas_eps;
 #[doc = include_str!("../README.md")]
 struct Readme;
 
-// The crate root has the 5GS functions and the shared ones. `nas_mac` and
-// `nas_cipher` are those of `nas_5gs`, which take a NAS COUNT and a NAS
-// connection; the algorithms with their own ranges are `nia_mac` and
-// `nea_cipher`.
-pub use common::{
-    AccessKeyCount, Bearer, CipherJob, CipheringAlgorithm, Code, Direction, Implementation,
-    IntegrityAlgorithm, MacJob, NasCount, SecurityError, constant_time_eq, extract_128,
-    implementation, nea_cipher, nea_cipher_batch, nea_cipher_bits, nea1_cipher, nea1_cipher_bits,
-    nea2_cipher, nea2_cipher_bits, nea3_cipher, nea3_cipher_bits, nia_mac, nia_mac_batch,
-    nia_mac_bits, nia1_mac, nia1_mac_bits, nia2_mac, nia2_mac_bits, nia3_mac, nia3_mac_bits,
-    plmn_to_bytes,
-};
-pub use common::{batch, error, input, nea, nia, plmn, snow3g, zuc};
-#[cfg(feature = "alloc")]
-#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-pub use common::{plmn_from_bytes, tbcd_decode, tbcd_encode};
-#[cfg(feature = "suci")]
-#[cfg_attr(docsrs, doc(cfg(feature = "suci")))]
-pub use nas_5gs::suci;
-pub use nas_5gs::{
-    IabIpAddress, KamfMobilityDirection, NasConnection, TnapKeyUsage, build_guti_bytes,
-    compute_hres_star, compute_xres_star, derive_kamf, derive_kamf_prime,
-    derive_kamf_prime_handover, derive_kamf_prime_idle, derive_kausf, derive_kgnb, derive_kiab,
-    derive_knas_enc, derive_knas_int, derive_kseaf, derive_ksn, derive_nh, derive_sor_mac_ausf,
-    derive_sor_mac_ue, derive_tnap_usage_key, derive_upu_mac_ausf, derive_upu_mac_ue,
-    mobile_identity_type, nas_cipher, nas_mac, parse_guti_tmsi, parse_s_tmsi,
+/// The key derivation function of TS 33.220 Annex B.2, of which every
+/// derivation of [`nas_5gs`] and of [`nas_eps`] is a use: for a
+/// derivation that the crate does not have.
+pub mod kdf {
+    #[cfg(feature = "alloc")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+    pub use crate::common::kdf::build_s;
+    pub use crate::common::kdf::{extract_128, kdf};
+    /// The wrapper of the keys that this module returns, which wipes
+    /// them when they are dropped: `Zeroizing` of the `zeroize` crate.
+    pub use zeroize::Zeroizing;
+}
+
+// The crate root has what 5GS and EPS share, and nothing that one of them
+// has under the same name with another meaning: the keys of a hierarchy
+// and their derivations are in the module of their system.
+pub use common::algo::{
     select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
     select_integrity_algo_with_preference,
 };
-#[cfg(feature = "nai")]
-#[cfg_attr(docsrs, doc(cfg(feature = "nai")))]
-pub use nas_5gs::{
-    NaiProtectionScheme, NaiSuci, SuciSchemeOutput, SupiType, conceal_network_specific_supi,
-    deconceal_nai_suci, deconceal_network_specific_suci, encode_nai_suci, parse_nai_suci,
+pub use common::batch::{CipherJob, MacJob, nea_cipher_batch, nia_mac_batch};
+pub use common::code::{Code, Implementation, implementation};
+pub use common::context::{CipheringContext, IntegrityContext};
+pub use common::ct::constant_time_eq;
+pub use common::error::SecurityError;
+pub use common::input::{
+    AccessKeyCount, Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount,
 };
-pub use nas_5gs::{algo, guti, kdf};
-#[cfg(feature = "suci")]
-#[cfg_attr(docsrs, doc(cfg(feature = "suci")))]
-pub use nas_5gs::{
-    msin_to_bcd, suci_conceal, suci_decrypt_a, suci_decrypt_b, suci_scheme_output_a,
-    suci_scheme_output_b, suci_to_string, suci_to_supi,
-};
+pub use common::keys::{Autn, CipheringKey, Ck, Ik, IntegrityKey, Rand};
+pub use common::nea::{nea_cipher, nea_cipher_bits};
+pub use common::nia::{nia_mac, nia_mac_bits};
+pub use common::plmn::Plmn;
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+pub use common::plmn::{tbcd_decode, tbcd_encode};
+pub use common::snow3g::Snow3G;
+pub use common::zuc::Zuc;
 
 /// What the crate's fuzz targets and its emulated AArch64 program drive
 /// beside the public functions. A build with `--cfg oxirush_security_hooks`

@@ -18,21 +18,19 @@
 //! EPS NAS integrity and ciphering (TS 33.401 §8.1 and §8.2): the
 //! algorithms with BEARER 0 and a 24-bit NAS COUNT.
 
+use super::keys::{KNasEnc, KNasInt};
 use crate::common::batch::{CipherJob, MacJob};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
-pub use crate::common::{
-    nea_cipher, nea_cipher_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits,
-    nea3_cipher, nea3_cipher_bits, nia_mac, nia_mac_bits, nia1_mac, nia1_mac_bits, nia2_mac,
-    nia2_mac_bits, nia3_mac, nia3_mac_bits,
-};
+use crate::common::nea::nea_cipher;
+use crate::common::nia::{nia_mac, nia_mac_bits};
 
 /// Compute the MAC of an EPS NAS message, with BEARER 0.
 ///
 /// `message` is what the MAC covers: the sequence number octet, then the
 /// NAS message, ciphered when it is to be.
 pub fn nas_mac(
-    key: &[u8; 16],
+    key: &KNasInt,
     count: NasCount,
     direction: Direction,
     message: &[u8],
@@ -50,7 +48,7 @@ pub fn nas_mac(
 
 /// Cipher or decipher an EPS NAS message in place, with BEARER 0.
 pub fn nas_cipher(
-    key: &[u8; 16],
+    key: &KNasEnc,
     count: NasCount,
     direction: Direction,
     data: &mut [u8],
@@ -63,7 +61,7 @@ pub fn nas_cipher(
 /// [`nas_cipher`] takes, as a job of
 /// [`nea_cipher_batch`](crate::nea_cipher_batch).
 pub fn cipher_job<'a>(
-    key: &'a [u8; 16],
+    key: &'a KNasEnc,
     count: NasCount,
     direction: Direction,
     data: &'a mut [u8],
@@ -75,7 +73,7 @@ pub fn cipher_job<'a>(
 /// An EPS NAS message whose MAC is computed with those of others: what
 /// [`nas_mac`] takes, as a job of [`nia_mac_batch`](crate::nia_mac_batch).
 pub fn mac_job<'a>(
-    key: &'a [u8; 16],
+    key: &'a KNasInt,
     count: NasCount,
     direction: Direction,
     message: &'a [u8],
@@ -108,7 +106,7 @@ pub fn mac_job<'a>(
 ///
 /// A `target_cell_id` above 28 bits is [`SecurityError::OutOfRange`].
 pub fn re_establishment_nas_mac(
-    key: &[u8; 16],
+    key: &KNasInt,
     ul_count: NasCount,
     target_cell_id: u32,
     algorithm: IntegrityAlgorithm,
@@ -140,7 +138,7 @@ pub fn re_establishment_nas_mac(
 /// 5-bit NAS sequence number. The first octet is 0xC7, security header type
 /// 12 with the protocol discriminator of EMM.
 pub fn service_request_short_mac(
-    key: &[u8; 16],
+    key: &KNasInt,
     count: NasCount,
     direction: Direction,
     ksi_and_sequence_number: u8,
@@ -161,7 +159,7 @@ pub fn service_request_short_mac(
 ///
 /// Another `first_octet` is [`SecurityError::InvalidParameter`].
 pub fn service_request_short_mac_with_header(
-    key: &[u8; 16],
+    key: &KNasInt,
     count: NasCount,
     direction: Direction,
     first_octet: u8,
@@ -188,7 +186,7 @@ mod tests {
 
     #[test]
     fn re_establishment_mac_authenticates_the_28_bit_cell_id() {
-        let key = [0x33; 16];
+        let key = KNasInt::new([0x33; 16]);
         assert_eq!(
             re_establishment_nas_mac(
                 &key,
@@ -214,7 +212,7 @@ mod tests {
 
     #[test]
     fn eps_nas_uses_the_algorithms_with_bearer_zero() {
-        let key = [0x23; 16];
+        let (int, enc) = (KNasInt::new([0x23; 16]), KNasEnc::new([0x23; 16]));
         let mut payload = b"EPS NAS security".to_vec();
         let (count, uplink) = (NasCount::from_parts(0, 10), Direction::Uplink);
         for (integrity, ciphering) in [
@@ -223,17 +221,17 @@ mod tests {
             (IntegrityAlgorithm::EIA2, CipheringAlgorithm::EEA2),
             (IntegrityAlgorithm::EIA3, CipheringAlgorithm::EEA3),
         ] {
-            let mac = nas_mac(&key, count, uplink, &payload, integrity);
+            let mac = nas_mac(&int, count, uplink, &payload, integrity);
             assert_eq!(
                 mac,
-                nia_mac(&key, 10, Bearer::ZERO, uplink, &payload, integrity)
+                nia_mac(&int, 10, Bearer::ZERO, uplink, &payload, integrity)
             );
             let original = payload.clone();
-            nas_cipher(&key, count, uplink, &mut payload, ciphering);
+            nas_cipher(&enc, count, uplink, &mut payload, ciphering);
             let mut expected = original.clone();
-            nea_cipher(&key, 10, Bearer::ZERO, uplink, &mut expected, ciphering);
+            nea_cipher(&enc, 10, Bearer::ZERO, uplink, &mut expected, ciphering);
             assert_eq!(payload, expected);
-            nas_cipher(&key, count, uplink, &mut payload, ciphering);
+            nas_cipher(&enc, count, uplink, &mut payload, ciphering);
             assert_eq!(payload, original);
         }
     }
@@ -242,7 +240,7 @@ mod tests {
     /// of the MAC over octets 1 and 2 of the SERVICE REQUEST.
     #[test]
     fn the_short_mac_covers_the_first_two_octets() {
-        let key = [0x23; 16];
+        let key = KNasInt::new([0x23; 16]);
         let (count, uplink) = (NasCount::from_parts(0, 10), Direction::Uplink);
         let over = |octets: [u8; 2]| {
             nia_mac(

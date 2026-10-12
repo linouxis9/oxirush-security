@@ -15,123 +15,171 @@
    limitations under the License.
 */
 
-//! PLMN and TBCD encoding/decoding utilities per 3GPP TS 24.301 and TS 24.501.
+//! The PLMN identity and the TBCD strings of TS 24.501 and TS 24.301.
 
 use crate::common::error::SecurityError;
 #[cfg(feature = "alloc")]
-use alloc::{format, string::String, vec::Vec};
+use alloc::{string::String, vec::Vec};
+use core::fmt;
 
-/// Encode an MCC and an MNC as the three octets of a PLMN identity
-/// (TS 24.501 §9.11.3.4, TS 24.301 §9.9.3.12).
+/// A PLMN identity: a Mobile Country Code of three decimal digits and a
+/// Mobile Network Code of two or three (TS 23.003 §2.2).
 ///
-/// An `mcc` that is not three decimal digits, or an `mnc` that is not two
-/// or three, is [`SecurityError::InvalidParameter`].
-pub fn plmn_to_bytes(mcc: &str, mnc: &str) -> Result<[u8; 3], SecurityError> {
-    let digits = |text: &str, value: &mut [u8]| {
-        let text = text.as_bytes();
-        let decimal = text.len() == value.len() && text.iter().all(u8::is_ascii_digit);
-        for (digit, character) in value.iter_mut().zip(text) {
-            *digit = character.wrapping_sub(b'0');
-        }
-        decimal
-    };
-    let mut mcc_digits = [0u8; 3];
-    if !digits(mcc, &mut mcc_digits) {
-        return Err(SecurityError::InvalidParameter(
-            "MCC must be 3 decimal digits",
-        ));
-    }
-    // A two-digit MNC has the filler 0xF in the place of a third digit
-    let mut mnc_digits = [0, 0, 0x0f];
-    let mnc_length = if mnc.len() == 2 { 2 } else { 3 };
-    if !digits(mnc, &mut mnc_digits[..mnc_length]) {
-        return Err(SecurityError::InvalidParameter(
-            "MNC must be 2 or 3 decimal digits",
-        ));
-    }
-    Ok([
-        (mcc_digits[1] << 4) | mcc_digits[0],
-        (mnc_digits[2] << 4) | mcc_digits[2],
-        (mnc_digits[1] << 4) | mnc_digits[0],
-    ])
-}
-
-/// Decode PLMN bytes back to (MCC, MNC) strings.
-#[cfg(feature = "alloc")]
-#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-pub fn plmn_from_bytes(bytes: &[u8]) -> Option<(String, String)> {
-    if bytes.len() < 3 {
-        return None;
-    }
-    let mcc0 = bytes[0] & 0x0F;
-    let mcc1 = (bytes[0] >> 4) & 0x0F;
-    let mcc2 = bytes[1] & 0x0F;
-    let mnc_hi = (bytes[1] >> 4) & 0x0F;
-    let mnc0 = bytes[2] & 0x0F;
-    let mnc1 = (bytes[2] >> 4) & 0x0F;
-
-    if [mcc0, mcc1, mcc2, mnc0, mnc1]
-        .iter()
-        .any(|digit| *digit > 9)
-        || (mnc_hi > 9 && mnc_hi != 0x0f)
-    {
-        return None;
-    }
-
-    let mcc = format!("{mcc0}{mcc1}{mcc2}");
-    let mnc = if mnc_hi == 0xF {
-        format!("{mnc0}{mnc1}")
-    } else {
-        format!("{mnc0}{mnc1}{mnc_hi}")
-    };
-    Some((mcc, mnc))
-}
-
-/// Decode a TBCD-STRING (TS 29.002): the low nibble of each octet, then the
-/// high nibble, up to the first 0xF filler.
+/// ```
+/// use oxirush_security::Plmn;
 ///
-/// 0 to 9 decode as digits and 0xA to 0xE as "*", "#", "a", "b" and "c".
-/// Use [`try_tbcd_decode`] for a decimal value, such as an IMSI, that must
-/// have only a final filler.
-#[cfg(feature = "alloc")]
-#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-pub fn tbcd_decode(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .flat_map(|octet| [octet & 0x0f, octet >> 4])
-        .take_while(|&nibble| nibble != 0x0f)
-        .map(|nibble| char::from(b"0123456789*#abc"[usize::from(nibble)]))
-        .collect()
+/// let plmn = Plmn::new("208", "93")?;
+/// // The three octets of TS 24.501 §9.11.3.4 and TS 24.301 §9.9.3.12
+/// assert_eq!(plmn.to_octets(), [0x02, 0xf8, 0x39]);
+/// assert_eq!(Plmn::from_octets(&[0x02, 0xf8, 0x39])?, plmn);
+/// assert_eq!((plmn.mcc(), plmn.mnc()), ("208", "93"));
+/// assert_eq!(plmn.to_string(), "208-93");
+/// # Ok::<(), oxirush_security::SecurityError>(())
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Plmn {
+    /// The digits of the MCC, then those of the MNC, as characters.
+    digits: [u8; 6],
+    /// The digits of the MNC: two or three.
+    mnc_digits: u8,
 }
 
-/// Decode decimal TBCD with only a final high-nibble filler permitted.
+impl Plmn {
+    /// The PLMN of an MCC and an MNC.
+    ///
+    /// An `mcc` that is not three decimal digits, or an `mnc` that is
+    /// not two or three, is [`SecurityError::InvalidParameter`].
+    pub fn new(mcc: &str, mnc: &str) -> Result<Self, SecurityError> {
+        let decimal = |text: &str| text.bytes().all(|character| character.is_ascii_digit());
+        if mcc.len() != 3 || !decimal(mcc) {
+            return Err(SecurityError::InvalidParameter(
+                "MCC must be 3 decimal digits",
+            ));
+        }
+        if !(2..=3).contains(&mnc.len()) || !decimal(mnc) {
+            return Err(SecurityError::InvalidParameter(
+                "MNC must be 2 or 3 decimal digits",
+            ));
+        }
+        let mut digits = [b'0'; 6];
+        digits[..3].copy_from_slice(mcc.as_bytes());
+        digits[3..3 + mnc.len()].copy_from_slice(mnc.as_bytes());
+        Ok(Self {
+            digits,
+            mnc_digits: mnc.len() as u8,
+        })
+    }
+
+    /// The PLMN of the three octets of a NAS message (TS 24.501 §9.11.3.4,
+    /// TS 24.301 §9.9.3.12).
+    ///
+    /// A digit above 9, or a third MNC digit that is neither a digit nor
+    /// the filler 0xF, is [`SecurityError::InvalidParameter`].
+    pub fn from_octets(octets: &[u8; 3]) -> Result<Self, SecurityError> {
+        let [mcc_1, mcc_2] = [octets[0] & 0x0f, octets[0] >> 4];
+        let [mcc_3, mnc_3] = [octets[1] & 0x0f, octets[1] >> 4];
+        let [mnc_1, mnc_2] = [octets[2] & 0x0f, octets[2] >> 4];
+        let five = [mcc_1, mcc_2, mcc_3, mnc_1, mnc_2];
+        if five.iter().any(|digit| *digit > 9) || (mnc_3 > 9 && mnc_3 != 0x0f) {
+            return Err(SecurityError::InvalidParameter(
+                "a PLMN identity has decimal digits, and the filler in the third MNC digit alone",
+            ));
+        }
+        let mut digits = [b'0'; 6];
+        for (character, digit) in digits.iter_mut().zip(five) {
+            *character = b'0' + digit;
+        }
+        let mnc_digits = if mnc_3 == 0x0f { 2 } else { 3 };
+        if mnc_digits == 3 {
+            digits[5] = b'0' + mnc_3;
+        }
+        Ok(Self { digits, mnc_digits })
+    }
+
+    /// The three octets of a NAS message. A two-digit MNC has the filler
+    /// 0xF in the place of its third digit.
+    pub fn to_octets(self) -> [u8; 3] {
+        let digit = |index: usize| self.digits[index] - b'0';
+        let mnc_3 = if self.mnc_digits == 3 { digit(5) } else { 0x0f };
+        [
+            (digit(1) << 4) | digit(0),
+            (mnc_3 << 4) | digit(2),
+            (digit(4) << 4) | digit(3),
+        ]
+    }
+
+    /// The Mobile Country Code, three digits.
+    pub fn mcc(&self) -> &str {
+        core::str::from_utf8(&self.digits[..3]).expect("decimal digits")
+    }
+
+    /// The Mobile Network Code, two or three digits.
+    pub fn mnc(&self) -> &str {
+        let digits = &self.digits[3..3 + usize::from(self.mnc_digits)];
+        core::str::from_utf8(digits).expect("decimal digits")
+    }
+}
+
+/// The MCC, a hyphen and the MNC: `208-93`.
+impl fmt::Display for Plmn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}-{}", self.mcc(), self.mnc())
+    }
+}
+
+impl fmt::Debug for Plmn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Plmn({self})")
+    }
+}
+
+/// The characters of a TBCD-STRING, by the value of their four bits.
+#[cfg(feature = "alloc")]
+const TBCD_CHARACTERS: &[u8; 15] = b"0123456789*#abc";
+
+/// Decode a TBCD-STRING (TS 29.002): the low four bits of each octet, then
+/// the high four.
+///
+/// 0 to 9 are digits, and 0xA to 0xE are "*", "#", "a", "b" and "c". The
+/// filler 0xF is the high four bits of the last octet of a string with an
+/// odd number of characters: anywhere else it is
+/// [`SecurityError::InvalidParameter`].
 #[cfg(feature = "alloc")]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-pub fn try_tbcd_decode(bytes: &[u8]) -> Option<String> {
-    let mut digits = String::with_capacity(bytes.len() * 2);
-    for (index, byte) in bytes.iter().copied().enumerate() {
-        let low = byte & 0x0f;
-        let high = byte >> 4;
-        if low > 9 {
-            return None;
+pub fn tbcd_decode(octets: &[u8]) -> Result<String, SecurityError> {
+    let mut characters = String::with_capacity(2 * octets.len());
+    for (index, octet) in octets.iter().enumerate() {
+        let (low, high) = (octet & 0x0f, octet >> 4);
+        let last = index + 1 == octets.len();
+        if low == 0x0f || (high == 0x0f && !last) {
+            return Err(SecurityError::InvalidParameter(
+                "a TBCD string has its filler at its end alone",
+            ));
         }
-        digits.push(char::from(b'0' + low));
-        if high == 0x0f && index + 1 == bytes.len() {
-            continue;
+        characters.push(char::from(TBCD_CHARACTERS[usize::from(low)]));
+        if high != 0x0f {
+            characters.push(char::from(TBCD_CHARACTERS[usize::from(high)]));
         }
-        if high > 9 {
-            return None;
-        }
-        digits.push(char::from(b'0' + high));
     }
-    Some(digits)
+    Ok(characters)
+}
+
+/// Decode a TBCD-STRING of decimal digits, such as an MSIN: `None` for a
+/// character that is not a digit and for a filler that is not at the end.
+#[cfg(feature = "suci")]
+pub(crate) fn decimal_tbcd_decode(octets: &[u8]) -> Option<String> {
+    let digits = tbcd_decode(octets).ok()?;
+    digits
+        .bytes()
+        .all(|character| character.is_ascii_digit())
+        .then_some(digits)
 }
 
 /// Encode a TBCD-STRING (TS 29.002), the reverse of [`tbcd_decode`].
 ///
-/// The first character of each pair goes to the low nibble. An odd number
-/// of characters leaves the filler 0xF in the high nibble of the last
-/// octet.
+/// The first character of each pair goes to the low four bits. An odd
+/// number of characters leaves the filler 0xF in the high four bits of the
+/// last octet.
 ///
 /// A character other than a decimal digit, "*", "#", "a", "b" or "c" is
 /// [`SecurityError::InvalidParameter`].
@@ -142,7 +190,7 @@ pub fn tbcd_encode(value: &str) -> Result<Vec<u8>, SecurityError> {
     for pair in value.as_bytes().chunks(2) {
         let mut octet = 0xf0;
         for (index, character) in pair.iter().enumerate() {
-            let nibble = b"0123456789*#abc"
+            let nibble = TBCD_CHARACTERS
                 .iter()
                 .position(|known| known == character)
                 .ok_or(SecurityError::InvalidParameter(
@@ -163,126 +211,110 @@ pub fn tbcd_encode(value: &str) -> Result<Vec<u8>, SecurityError> {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "alloc")]
     #[test]
-    fn plmn_2digit_mnc_roundtrip() {
-        let bytes = plmn_to_bytes("208", "93").unwrap();
-        assert_eq!(bytes, [0x02, 0xF8, 0x39]);
-        let (mcc, mnc) = plmn_from_bytes(&bytes).unwrap();
-        assert_eq!(mcc, "208");
-        assert_eq!(mnc, "93");
-    }
-
-    #[cfg(feature = "alloc")]
-    #[test]
-    fn plmn_3digit_mnc_roundtrip() {
-        let bytes = plmn_to_bytes("999", "070").unwrap();
-        let (mcc, mnc) = plmn_from_bytes(&bytes).unwrap();
-        assert_eq!(mcc, "999");
-        assert_eq!(mnc, "070");
-    }
-
-    /// TS 24.501 Figure 9.11.3.4.1: MCC digit 2 and MCC digit 1 in the
-    /// first octet, MNC digit 3 and MCC digit 3 in the second, MNC digit 2
-    /// and MNC digit 1 in the third.
-    #[test]
-    fn plmn_octets_follow_the_figure_of_ts_24_501() {
-        assert_eq!(plmn_to_bytes("123", "456"), Ok([0x21, 0x63, 0x54]));
-        assert_eq!(plmn_to_bytes("310", "410"), Ok([0x13, 0x00, 0x14]));
-        assert_eq!(plmn_to_bytes("123", "45"), Ok([0x21, 0xf3, 0x54]));
+    fn a_plmn_is_its_three_octets() {
+        // TS 24.501 Figure 9.11.3.4.1: MCC digit 2 | MCC digit 1, MNC digit
+        // 3 | MCC digit 3, MNC digit 2 | MNC digit 1
+        for (mcc, mnc, octets) in [
+            ("208", "93", [0x02, 0xf8, 0x39]),
+            ("310", "410", [0x13, 0x00, 0x14]),
+            ("123", "456", [0x21, 0x63, 0x54]),
+            ("001", "01", [0x00, 0xf1, 0x10]),
+        ] {
+            let plmn = Plmn::new(mcc, mnc).unwrap();
+            assert_eq!(plmn.to_octets(), octets, "{mcc} {mnc}");
+            assert_eq!(Plmn::from_octets(&octets), Ok(plmn));
+            assert_eq!((plmn.mcc(), plmn.mnc()), (mcc, mnc));
+        }
+        let plmn = Plmn::new("208", "93").unwrap();
+        assert_eq!(plmn.to_string(), "208-93");
+        assert_eq!(format!("{plmn:?}"), "Plmn(208-93)");
+        // A two-digit MNC is not the three-digit one with a zero
+        assert_ne!(Plmn::new("208", "093").unwrap(), plmn);
     }
 
     #[test]
     fn a_plmn_that_is_not_decimal_digits_is_an_error() {
-        for (mcc, mnc) in [
-            ("20", "93"),
-            ("2080", "93"),
-            ("2a8", "93"),
-            ("208", "9"),
-            ("208", "9300"),
-            ("208", "9x"),
-            ("208", "9\u{e9}"),
-            ("208", ""),
-            ("", "93"),
-            ("20\u{e9}", "93"),
-            ("208", "\u{663}\u{663}"),
+        let mcc = Err(SecurityError::InvalidParameter(
+            "MCC must be 3 decimal digits",
+        ));
+        let mnc = Err(SecurityError::InvalidParameter(
+            "MNC must be 2 or 3 decimal digits",
+        ));
+        assert_eq!(Plmn::new("20", "93"), mcc);
+        assert_eq!(Plmn::new("2080", "93"), mcc);
+        assert_eq!(Plmn::new("2o8", "93"), mcc);
+        assert_eq!(Plmn::new("２08", "93"), mcc);
+        assert_eq!(Plmn::new("208", "9"), mnc);
+        assert_eq!(Plmn::new("208", "9345"), mnc);
+        assert_eq!(Plmn::new("208", "9x"), mnc);
+        assert_eq!(Plmn::new("208", ""), mnc);
+    }
+
+    #[test]
+    fn octets_that_are_not_a_plmn_are_refused() {
+        for octets in [
+            [0xff, 0xff, 0xff],
+            [0x0a, 0xf8, 0x39],
+            [0xa2, 0xf8, 0x39],
+            [0x02, 0xfa, 0x39],
+            [0x02, 0xa8, 0x39],
+            [0x02, 0xf8, 0x3f],
+            [0x02, 0xf8, 0xf9],
         ] {
-            assert!(
-                matches!(
-                    plmn_to_bytes(mcc, mnc),
-                    Err(SecurityError::InvalidParameter(_))
-                ),
-                "{mcc}-{mnc}"
-            );
+            assert!(Plmn::from_octets(&octets).is_err(), "{octets:02x?}");
         }
     }
 
     #[cfg(feature = "alloc")]
     #[test]
-    fn plmn_from_bytes_too_short() {
-        assert!(plmn_from_bytes(&[0x02, 0xF8]).is_none());
+    fn tbcd_is_two_characters_to_an_octet() {
+        assert_eq!(tbcd_decode(&[0x21, 0x43, 0x65]).unwrap(), "123456");
+        assert_eq!(tbcd_decode(&[0x21, 0x43, 0xf5]).unwrap(), "12345");
+        assert_eq!(tbcd_decode(&[]).unwrap(), "");
+        assert_eq!(tbcd_encode("123456").unwrap(), [0x21, 0x43, 0x65]);
+        assert_eq!(tbcd_encode("12345").unwrap(), [0x21, 0x43, 0xf5]);
+        assert_eq!(tbcd_encode("").unwrap(), []);
+        // Every character, and back
+        let all = "0123456789*#abc";
+        assert_eq!(tbcd_decode(&tbcd_encode(all).unwrap()).unwrap(), all);
+        assert_eq!(tbcd_decode(&[0xba, 0xdc, 0xfe]).unwrap(), "*#abc");
     }
 
     #[cfg(feature = "alloc")]
     #[test]
-    fn tbcd_decode_even() {
-        assert_eq!(tbcd_decode(&[0x21, 0x43]), "1234");
+    fn a_filler_that_is_not_at_the_end_is_refused() {
+        let error = Err(SecurityError::InvalidParameter(
+            "a TBCD string has its filler at its end alone",
+        ));
+        // In the middle, which once ended the string without a word
+        assert_eq!(tbcd_decode(&[0x21, 0xf3, 0x54]), error);
+        assert_eq!(tbcd_decode(&[0x21, 0x3f, 0x54]), error);
+        // In the low four bits of the last octet
+        assert_eq!(tbcd_decode(&[0x21, 0x4f]), error);
+        assert_eq!(tbcd_decode(&[0xff]), error);
     }
 
-    #[cfg(feature = "alloc")]
+    /// An MSIN has decimal digits alone.
+    #[cfg(feature = "suci")]
     #[test]
-    fn tbcd_decode_odd() {
-        assert_eq!(tbcd_decode(&[0x21, 0xF3]), "123");
-    }
-
-    /// The TBCD-STRING of TS 29.002 codes 1010 to 1110 as "*", "#", "a",
-    /// "b" and "c", and 1111 as the filler that ends the digits.
-    #[cfg(feature = "alloc")]
-    #[test]
-    fn tbcd_decode_keeps_non_decimal_characters_and_stops_at_the_filler() {
-        assert_eq!(tbcd_decode(&[0xa1, 0xcb, 0xed]), "1*#abc");
-        assert_eq!(tbcd_decode(&[0x21, 0xf3, 0x54]), "123");
-        assert_eq!(tbcd_decode(&[0xf1, 0x32]), "1");
-    }
-
-    /// What `tbcd_decode` returns for a peer's octets goes back through
-    /// `tbcd_encode`.
-    #[cfg(feature = "alloc")]
-    #[test]
-    fn tbcd_round_trips_every_character() {
-        let octets = [0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe];
-        assert_eq!(tbcd_decode(&octets), "0123456789*#abc");
-        assert_eq!(tbcd_encode("0123456789*#abc").unwrap(), octets);
-    }
-
-    #[cfg(feature = "alloc")]
-    #[test]
-    fn tbcd_encode_even() {
-        assert_eq!(tbcd_encode("1234"), Ok(vec![0x21, 0x43]));
-    }
-
-    #[cfg(feature = "alloc")]
-    #[test]
-    fn tbcd_encode_odd() {
-        assert_eq!(tbcd_encode("123"), Ok(vec![0x21, 0xF3]));
-        assert_eq!(tbcd_encode(""), Ok(vec![]));
+    fn a_string_of_decimal_digits_has_no_other_character() {
+        assert_eq!(decimal_tbcd_decode(&[0x21, 0xf3]).as_deref(), Some("123"));
+        assert_eq!(decimal_tbcd_decode(&[0x21, 0xa3]), None);
+        assert_eq!(decimal_tbcd_decode(&[0x21, 0xf3, 0x54]), None);
     }
 
     #[cfg(feature = "alloc")]
     #[test]
     fn tbcd_encode_refuses_other_characters() {
-        for value in ["12d4", "12 4", "A", "1\u{e9}"] {
-            assert!(
-                matches!(tbcd_encode(value), Err(SecurityError::InvalidParameter(_))),
-                "{value}"
+        for text in ["12x", "d", "1 2", "１"] {
+            assert_eq!(
+                tbcd_encode(text),
+                Err(SecurityError::InvalidParameter(
+                    "a TBCD string has digits, *, #, a, b and c only"
+                )),
+                "{text:?}"
             );
         }
-    }
-
-    #[cfg(feature = "alloc")]
-    #[test]
-    fn tbcd_roundtrip() {
-        let encoded = tbcd_encode("9876543210").unwrap();
-        assert_eq!(tbcd_decode(&encoded), "9876543210");
     }
 }

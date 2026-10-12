@@ -21,19 +21,19 @@
 //!
 //! The cases reach every function of the vector code: the SNOW 3G and ZUC
 //! generators of one message and of four, the key expansion of AES, its
-//! counter mode and its CBC-MAC for one message and for several, and the
+//! counter mode and its CBC-MAC for one message and for several, with the
+//! key of each message or with the round keys of a context, and the
 //! carry-less products of 128-EIA1 and 128-EIA3.
 
-use oxirush_security::snow3g::Snow3G;
-use oxirush_security::zuc::Zuc;
+use oxirush_security::nas_5gs::{KNasEnc, KNasInt};
 use oxirush_security::{
-    Bearer, CipherJob, CipheringAlgorithm, Direction, Implementation, IntegrityAlgorithm, MacJob,
-    implementation, nea_cipher, nea_cipher_batch, nea_cipher_bits, nia_mac, nia_mac_batch,
-    nia_mac_bits,
+    Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, Implementation,
+    IntegrityAlgorithm, IntegrityContext, MacJob, Snow3G, Zuc, implementation, nea_cipher,
+    nea_cipher_batch, nea_cipher_bits, nia_mac, nia_mac_batch, nia_mac_bits,
 };
 
 /// The cases, by their names.
-pub const CASES: [&str; 7] = [
+pub const CASES: [&str; 8] = [
     "the implementation that runs",
     "known answers of the six algorithms (3GPP test sets)",
     "SNOW 3G keystream, 200 keys",
@@ -41,6 +41,7 @@ pub const CASES: [&str; 7] = [
     "128-EEA1, 128-EEA2 and 128-EEA3 at 170 lengths, in octets and in bits",
     "128-EIA1, 128-EIA2 and 128-EIA3 at 170 lengths, in octets and in bits",
     "batches of 1 to 9 messages of mixed algorithms and lengths",
+    "keyed contexts at 170 lengths, alone and in batches",
 ];
 
 /// What case 0 gives for each implementation.
@@ -64,6 +65,7 @@ pub fn run(case: u64) -> u64 {
         4 => ciphers(),
         5 => macs(),
         6 => batches(),
+        7 => contexts(),
         _ => 0,
     }
 }
@@ -169,7 +171,7 @@ fn zuc_keystream() -> u64 {
 fn ciphers() -> u64 {
     let (mut random, mut digest) = (Random(0x2545_f491_4f6c_dd1d), Digest::new());
     for length in lengths() {
-        let key: [u8; 16] = random.octets();
+        let key = KNasEnc::new(random.octets());
         let (count, bearer, direction) =
             (random.next() as u32, random.bearer(), random.direction());
         let message: [u8; LONGEST] = random.octets();
@@ -200,7 +202,7 @@ fn ciphers() -> u64 {
 fn macs() -> u64 {
     let (mut random, mut digest) = (Random(0x6a09_e667_f3bc_c908), Digest::new());
     for length in lengths() {
-        let key: [u8; 16] = random.octets();
+        let key = KNasInt::new(random.octets());
         let (count, bearer, direction) =
             (random.next() as u32, random.bearer(), random.direction());
         let message: [u8; LONGEST] = random.octets();
@@ -222,7 +224,82 @@ const BATCH: usize = 9;
 const IN_BATCH: usize = 300;
 
 fn batches() -> u64 {
-    let (mut random, mut digest) = (Random(0x510e_527f_ade6_82d1), Digest::new());
+    batches_of(0x510e_527f_ade6_82d1, false)
+}
+
+/// The messages of each length through a keyed context, then the batches
+/// with a context for every other message: the digests are those of the
+/// functions that take a key, which the host compares too.
+fn contexts() -> u64 {
+    let (mut random, mut digest) = (Random(0xbb67_ae85_84ca_a73b), Digest::new());
+    for length in lengths() {
+        let key: [u8; 16] = random.octets();
+        let (count, bearer, direction) =
+            (random.next() as u32, random.bearer(), random.direction());
+        let message: [u8; LONGEST] = random.octets();
+        let bits = (8 * length as u64).saturating_sub(random.next() % 8);
+        for (ciphering, integrity) in CIPHERING.into_iter().zip(INTEGRITY) {
+            let context = IntegrityContext::new(&KNasInt::new(key), integrity);
+            let mac = context.mac(count, bearer, direction, &message[..length]);
+            digest.word(mac);
+            match context.mac_bits(count, bearer, direction, &message[..length], bits) {
+                Ok(mac) => digest.word(mac),
+                Err(_) => return u64::MAX,
+            }
+            // The functions that take the key give the same
+            let key = KNasInt::new(key);
+            if nia_mac(
+                &key,
+                count,
+                bearer,
+                direction,
+                &message[..length],
+                integrity,
+            ) != mac
+            {
+                return u64::MAX - 1;
+            }
+
+            let enc = KNasEnc::new(*key.as_octets());
+            let context = CipheringContext::new(&enc, ciphering);
+            let mut data = message;
+            context.cipher(count, bearer, direction, &mut data[..length]);
+            digest.octets(&data[..length]);
+            let mut expected = message;
+            nea_cipher(
+                &enc,
+                count,
+                bearer,
+                direction,
+                &mut expected[..length],
+                ciphering,
+            );
+            if data[..length] != expected[..length] {
+                return u64::MAX - 2;
+            }
+            let mut data = message;
+            let ciphered = &mut data[..length];
+            if context
+                .cipher_bits(count, bearer, direction, ciphered, bits)
+                .is_err()
+            {
+                return u64::MAX;
+            }
+            digest.octets(&data[..length]);
+        }
+    }
+    digest.octets(&batches_of(0x3c6e_f372_fe94_f82b, true).to_be_bytes());
+    // Without the contexts, the batches of the same messages give the same
+    if batches_of(0x3c6e_f372_fe94_f82b, true) != batches_of(0x3c6e_f372_fe94_f82b, false) {
+        return u64::MAX - 3;
+    }
+    digest.0
+}
+
+/// Batches of messages that `seed` gives. With `keyed`, every other
+/// message comes from a keyed context.
+fn batches_of(seed: u64, keyed: bool) -> u64 {
+    let (mut random, mut digest) = (Random(seed), Digest::new());
     for round in 0..60 {
         let size = 1 + round % BATCH;
         let keys: [[u8; 16]; BATCH] = core::array::from_fn(|_| random.octets());
@@ -238,34 +315,47 @@ fn batches() -> u64 {
         let lengths: [usize; BATCH] =
             core::array::from_fn(|_| (random.next() % (IN_BATCH as u64 + 1)) as usize);
         let mut data: [[u8; IN_BATCH]; BATCH] = core::array::from_fn(|_| random.octets());
+        let of_context = |index: usize| keyed && index % 2 == 1;
 
+        let integrity_keys = keys.map(KNasInt::new);
+        let integrity_contexts: [IntegrityContext; BATCH] = core::array::from_fn(|index| {
+            IntegrityContext::new(&integrity_keys[index], INTEGRITY[algorithms[index]])
+        });
         let mut messages = data.iter().zip(lengths).enumerate();
         let mut jobs: [MacJob<'_>; BATCH] = core::array::from_fn(|_| {
             let (index, (data, length)) = messages.next().unwrap_or((0, (&data[0], 0)));
-            let (key, algorithm) = (&keys[index], INTEGRITY[algorithms[index]]);
+            let (key, algorithm) = (&integrity_keys[index], INTEGRITY[algorithms[index]]);
             let (count, bearer, direction) = (counts[index], bearers[index], directions[index]);
-            MacJob::new(key, count, bearer, direction, &data[..length], algorithm)
+            match of_context(index) {
+                true => integrity_contexts[index].job(count, bearer, direction, &data[..length]),
+                false => MacJob::new(key, count, bearer, direction, &data[..length], algorithm),
+            }
         });
         nia_mac_batch(&mut jobs[..size]);
         for job in &jobs[..size] {
             digest.word(job.mac().unwrap_or(0));
         }
 
+        let ciphering_keys = keys.map(KNasEnc::new);
+        let ciphering_contexts: [CipheringContext; BATCH] = core::array::from_fn(|index| {
+            CipheringContext::new(&ciphering_keys[index], CIPHERING[algorithms[index]])
+        });
         let mut messages = data.iter_mut().zip(lengths).enumerate();
         let mut jobs: [Option<CipherJob<'_>>; BATCH] = core::array::from_fn(|_| {
             let (index, (data, length)) = messages.next()?;
-            let (key, algorithm) = (&keys[index], CIPHERING[algorithms[index]]);
+            let (key, algorithm) = (&ciphering_keys[index], CIPHERING[algorithms[index]]);
             let (count, bearer, direction) = (counts[index], bearers[index], directions[index]);
             let data = &mut data[..length];
-            Some(CipherJob::new(
-                key, count, bearer, direction, data, algorithm,
-            ))
+            Some(match of_context(index) {
+                true => ciphering_contexts[index].job(count, bearer, direction, data),
+                false => CipherJob::new(key, count, bearer, direction, data, algorithm),
+            })
         });
         // The jobs of the batch, side by side in one slice
         let mut batch: [CipherJob<'_>; BATCH] = jobs.each_mut().map(|job| match job.take() {
             Some(job) => job,
             None => CipherJob::new(
-                &keys[0],
+                &ciphering_keys[0],
                 0,
                 Bearer::ZERO,
                 Direction::Uplink,
@@ -438,6 +528,7 @@ fn known_answers() -> u64 {
         let mut data = [0u8; 100];
         let data = &mut data[..plaintext.len()];
         data.copy_from_slice(plaintext);
+        let key = KNasEnc::new(key);
         let ciphered = nea_cipher_bits(&key, count, bearer, direction, data, bits, algorithm);
         if ciphered.is_err() || data != ciphertext {
             return number;
@@ -448,6 +539,7 @@ fn known_answers() -> u64 {
         let Ok(bearer) = Bearer::new(bearer) else {
             return number;
         };
+        let key = KNasInt::new(key);
         if nia_mac_bits(&key, count, bearer, direction, message, bits, algorithm) != Ok(mac) {
             return number;
         }

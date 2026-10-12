@@ -18,13 +18,19 @@
 //! Shared 3GPP TS 33.220 Annex B.2 HMAC-SHA-256 KDF framing.
 
 use crate::common::error::SecurityError;
+use zeroize::Zeroizing;
 
 /// Longest KDF parameter: its length field L has two octets.
 const MAXIMUM_PARAMETER: usize = u16::MAX as usize;
 
-/// Generic KDF: HMAC-SHA-256(key, S). The HMAC state is wiped on return.
-pub fn kdf(key: &[u8], s: &[u8]) -> [u8; 32] {
-    super::sha256::hmac_sha256(key, s)
+/// The KDF of TS 33.220 Annex B.2: HMAC-SHA-256(key, S), where S is what
+/// [`build_s`] lays out.
+///
+/// The 256 bits are a key, of a kind that the crate does not know: they
+/// are wiped when the value is dropped, and `*` gives the array. The HMAC
+/// state is wiped on return.
+pub fn kdf(key: &[u8], s: &[u8]) -> Zeroizing<[u8; 32]> {
+    Zeroizing::new(super::sha256::hmac_sha256(key, s))
 }
 
 /// Build the S parameter: FC || (P_i || L_i)*.
@@ -83,13 +89,20 @@ pub(crate) fn derive(key: &[u8], fc: u8, params: &[&[u8]]) -> [u8; 32] {
 /// significant bits of the 256 derived.
 pub(crate) fn derive_algorithm_key(key: &[u8; 32], fc: u8, algo_type: u8, algo_id: u8) -> [u8; 16] {
     let mut full = derive(key, fc, &[&[algo_type], &[algo_id]]);
-    let algorithm_key = extract_128(&full);
+    let algorithm_key = low_128(&full);
     zeroize::Zeroize::zeroize(&mut full);
     algorithm_key
 }
 
-/// Extract the least significant 128 bits of a KDF output.
-pub fn extract_128(full: &[u8; 32]) -> [u8; 16] {
+/// The 128 least significant bits of the 256 of a KDF output, which is
+/// how the algorithm keys are taken from it (TS 33.501 Annex A.8,
+/// TS 33.401 Annex A.7). They are wiped when the value is dropped.
+pub fn extract_128(full: &[u8; 32]) -> Zeroizing<[u8; 16]> {
+    Zeroizing::new(low_128(full))
+}
+
+/// The 128 least significant bits of 256.
+pub(crate) fn low_128(full: &[u8; 32]) -> [u8; 16] {
     let mut key = [0; 16];
     key.copy_from_slice(&full[16..]);
     key
@@ -127,7 +140,7 @@ mod tests {
         ];
         for (fc, params) in (0x10..).zip(sets) {
             let s = build_s(fc, params).unwrap();
-            assert_eq!(derive(&key, fc, params), kdf(&key, &s), "FC {fc:#x}");
+            assert_eq!(derive(&key, fc, params), *kdf(&key, &s), "FC {fc:#x}");
         }
     }
 

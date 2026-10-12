@@ -15,74 +15,103 @@
    limitations under the License.
 */
 
-//! Demonstrate SUCI concealment per TS 33.501 Annex C.4.
+//! Demonstrate SUCI concealment per TS 33.501 Annex C.
 //!
 //! Shows:
-//! - Null scheme (cleartext MSIN in BCD)
-//! - Profile A (X25519 ECIES) — IMSI and textual NAI round-trips
+//! - the null scheme, which leaves the MSIN in clear;
+//! - Profile A (X25519 ECIES) for an IMSI, as a mobile identity of NAS;
+//! - Profile B (secp256r1 ECIES) for a network specific identifier, in the
+//!   NAI format.
 
-use oxirush_security::nas_5gs::*;
-use x25519_dalek::{PublicKey, StaticSecret};
+use oxirush_security::Plmn;
+use oxirush_security::nas_5gs::{
+    HomeNetworkPrivateKey, Protection, SchemeOutput, Suci, SuciError, Supi,
+};
 
-fn main() {
-    // The MSIN to conceal
+fn main() -> Result<(), SuciError> {
+    println!("=== SUCI concealment (TS 33.501 Annex C) ===\n");
+    let plmn = Plmn::new("208", "93").expect("an MCC and an MNC");
     let msin = "0000000001";
-    println!("=== SUCI Concealment (TS 33.501 Annex C.4) ===\n");
-    println!("MSIN: {msin}");
+    println!("IMSI: {} {} {msin}", plmn.mcc(), plmn.mnc());
 
     // ── Null scheme ──────────────────────────────────────────────────────
-    let msin_bcd = msin_to_bcd(msin).expect("an MSIN of decimal digits");
-    println!(
-        "\n--- Null scheme (0x00) ---\nMSIN BCD: {}",
-        hex::encode(&msin_bcd)
-    );
-    println!("(MSIN transmitted in cleartext)");
+    let suci = Suci::conceal_imsi(plmn, msin, "0", Protection::Null)?;
+    println!("\n--- Null scheme ---\n{suci}");
+    println!("mobile identity: {}", hex::encode(suci.to_nas()?));
+    println!("(the MSIN is in clear)");
 
     // ── Profile A (X25519) ───────────────────────────────────────────────
     println!("\n--- Profile A (X25519 ECIES) ---");
 
-    // Generate a home network key pair (normally provisioned by the operator)
+    // A key pair of the home network, which an operator provisions: the
+    // private key stays in its SIDF, and the UEs have the public key with
+    // its identifier
     let mut seed = [0u8; 32];
     getrandom::fill(&mut seed).expect("the system random number generator");
-    let home_priv_key = StaticSecret::from(seed);
-    let home_pub_key = PublicKey::from(&home_priv_key);
+    let private_a = HomeNetworkPrivateKey::profile_a(&seed);
+    let public_a = private_a.public_key();
     println!(
-        "Home network public key:  {}",
-        hex::encode(home_pub_key.as_bytes())
+        "home network public key: {}",
+        hex::encode(public_a.to_octets())
     );
 
-    // UE side: conceal MSIN
-    let scheme_output =
-        suci_scheme_output_a(&msin_bcd, home_pub_key.as_bytes()).expect("Profile A conceal failed");
-    let ephemeral_pub = &scheme_output[..32];
-    let encrypted = &scheme_output[32..];
-    println!("Ephemeral public key:      {}", hex::encode(ephemeral_pub));
-    println!("Ciphertext + MAC:          {}", hex::encode(encrypted));
-
-    // Home network side: deconceal MSIN
-    let recovered =
-        suci_decrypt_a(&scheme_output, home_priv_key.as_bytes()).expect("Profile A decrypt failed");
-    println!("Recovered MSIN BCD:        {}", hex::encode(&recovered));
-
-    assert_eq!(msin_bcd, recovered, "MSIN mismatch after deconceal!");
-    println!("\nProfile A IMSI round-trip: OK");
-
-    // Network-specific SUPIs use the TS 23.003 textual NAI form.
-    // UE side: conceal the identifier and write the SUCI as a NAI
-    let scheme = NaiProtectionScheme::ProfileA {
-        home_network_public_key_id: 1,
-        home_network_public_key: home_pub_key.as_bytes(),
+    // UE: conceal the MSIN
+    let protection = Protection::Ecies {
+        key_id: 1,
+        key: &public_a,
     };
-    let nai = conceal_network_specific_supi("sensor-17@example.net", "0", scheme)
-        .expect("NAI conceal failed");
-    let encoded_nai = encode_nai_suci(&nai).expect("NAI encoding failed");
+    let suci = Suci::conceal_imsi(plmn, msin, "0", protection)?;
+    if let SchemeOutput::Ecies {
+        ephemeral_public_key,
+        ciphertext,
+        mac_tag,
+    } = suci.scheme_output()
+    {
+        println!(
+            "ephemeral public key:    {}",
+            hex::encode(ephemeral_public_key)
+        );
+        println!("ciphertext:              {}", hex::encode(ciphertext));
+        println!("MAC tag:                 {}", hex::encode(mac_tag));
+    }
+    let identity = suci.to_nas()?;
 
-    // Home network side: parse the NAI and deconceal the identifier
-    let parsed_nai = parse_nai_suci(&encoded_nai).expect("NAI parsing failed");
-    let recovered_nai =
-        deconceal_network_specific_suci(&parsed_nai, Some(home_priv_key.as_bytes()))
-            .expect("NAI deconceal failed");
+    // SIDF: read the mobile identity, choose the key, de-conceal
+    let received = Suci::from_nas(&identity)?;
+    println!(
+        "received: {:?}, key {}, routing indicator {}",
+        received.protection_scheme(),
+        received.home_network_public_key_id(),
+        received.routing_indicator(),
+    );
+    let supi = received.deconceal(Some(&private_a))?;
+    println!("SUPI: {supi}");
+    assert_eq!(supi.identity(), "208930000000001");
 
-    assert_eq!(recovered_nai, "sensor-17@example.net");
-    println!("Profile A NAI round-trip:  OK");
+    // ── Profile B, a network specific identifier ─────────────────────────
+    println!("\n--- Profile B (secp256r1 ECIES), NAI format ---");
+    getrandom::fill(&mut seed).expect("the system random number generator");
+    let private_b = HomeNetworkPrivateKey::profile_b(&seed)?;
+    let public_b = private_b.public_key();
+
+    // UE: the username is concealed, and the realm is not
+    let supi = Supi::network_specific("sensor-17@example.net").expect("a NAI");
+    let protection = Protection::Ecies {
+        key_id: 2,
+        key: &public_b,
+    };
+    let nai = Suci::conceal_nai(&supi, "0", protection)?.to_nai();
+    println!("{nai}");
+
+    // SIDF: a key of the other profile is refused, and its own de-conceals
+    let received = Suci::from_nai(&nai)?;
+    println!(
+        "with the key of Profile A: {:?}",
+        received.deconceal(Some(&private_a))
+    );
+    let recovered = received.deconceal(Some(&private_b))?;
+    println!("SUPI: {recovered}");
+    assert_eq!(recovered, supi);
+
+    Ok(())
 }

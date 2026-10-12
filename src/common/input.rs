@@ -23,6 +23,7 @@
 //! The functions that take these types then have nothing left to refuse.
 
 use crate::common::error::SecurityError;
+use core::fmt;
 
 /// An integrity algorithm of 5GS or EPS.
 ///
@@ -32,6 +33,8 @@ use crate::common::error::SecurityError;
 /// the constants give each variant the two names of the specifications.
 ///
 /// `TryFrom<u8>` reads an identifier and `u8::from` gives it back.
+/// [`name_5gs`](Self::name_5gs) and [`name_eps`](Self::name_eps) give the
+/// name that a log of one system writes, and `{}` both.
 ///
 /// ```
 /// use oxirush_security::{IntegrityAlgorithm, SecurityError};
@@ -41,6 +44,9 @@ use crate::common::error::SecurityError;
 /// assert_eq!(algorithm, IntegrityAlgorithm::NIA2);
 /// assert_eq!(algorithm, IntegrityAlgorithm::EIA2);
 /// assert_eq!(u8::from(algorithm), 2);
+/// assert_eq!(algorithm.name_5gs(), "128-NIA2");
+/// assert_eq!(algorithm.name_eps(), "128-EIA2");
+/// assert_eq!(algorithm.to_string(), "128-NIA2/128-EIA2");
 ///
 /// // 4 to 7 are reserved
 /// assert_eq!(IntegrityAlgorithm::try_from(4), Err(SecurityError::UnsupportedAlgorithm(4)));
@@ -79,6 +85,35 @@ impl IntegrityAlgorithm {
     pub const EIA2: Self = Self::Aes;
     /// 128-EIA3 of EPS.
     pub const EIA3: Self = Self::Zuc;
+
+    /// Its name in 5GS: `NIA0`, `128-NIA1`, `128-NIA2` or `128-NIA3`
+    /// (TS 33.501 §5.11.1.2).
+    pub const fn name_5gs(self) -> &'static str {
+        match self {
+            Self::Null => "NIA0",
+            Self::Snow3g => "128-NIA1",
+            Self::Aes => "128-NIA2",
+            Self::Zuc => "128-NIA3",
+        }
+    }
+
+    /// Its name in EPS: `EIA0`, `128-EIA1`, `128-EIA2` or `128-EIA3`
+    /// (TS 33.401 §5.1.4.2).
+    pub const fn name_eps(self) -> &'static str {
+        match self {
+            Self::Null => "EIA0",
+            Self::Snow3g => "128-EIA1",
+            Self::Aes => "128-EIA2",
+            Self::Zuc => "128-EIA3",
+        }
+    }
+}
+
+/// The names of both systems, such as `128-NIA2/128-EIA2`.
+impl fmt::Display for IntegrityAlgorithm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.name_5gs(), self.name_eps())
+    }
 }
 
 impl TryFrom<u8> for IntegrityAlgorithm {
@@ -109,6 +144,8 @@ impl From<IntegrityAlgorithm> for u8 {
 /// the constants give each variant the two names of the specifications.
 ///
 /// `TryFrom<u8>` reads an identifier and `u8::from` gives it back.
+/// [`name_5gs`](Self::name_5gs) and [`name_eps`](Self::name_eps) give the
+/// name that a log of one system writes, and `{}` both.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -140,6 +177,35 @@ impl CipheringAlgorithm {
     pub const EEA2: Self = Self::Aes;
     /// 128-EEA3 of EPS.
     pub const EEA3: Self = Self::Zuc;
+
+    /// Its name in 5GS: `NEA0`, `128-NEA1`, `128-NEA2` or `128-NEA3`
+    /// (TS 33.501 §5.11.1.1).
+    pub const fn name_5gs(self) -> &'static str {
+        match self {
+            Self::Null => "NEA0",
+            Self::Snow3g => "128-NEA1",
+            Self::Aes => "128-NEA2",
+            Self::Zuc => "128-NEA3",
+        }
+    }
+
+    /// Its name in EPS: `EEA0`, `128-EEA1`, `128-EEA2` or `128-EEA3`
+    /// (TS 33.401 §5.1.3.2).
+    pub const fn name_eps(self) -> &'static str {
+        match self {
+            Self::Null => "EEA0",
+            Self::Snow3g => "128-EEA1",
+            Self::Aes => "128-EEA2",
+            Self::Zuc => "128-EEA3",
+        }
+    }
+}
+
+/// The names of both systems, such as `128-NEA2/128-EEA2`.
+impl fmt::Display for CipheringAlgorithm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.name_5gs(), self.name_eps())
+    }
 }
 
 impl TryFrom<u8> for CipheringAlgorithm {
@@ -248,22 +314,37 @@ impl From<Bearer> for u8 {
 /// followed by the 8-bit NAS sequence number (TS 24.501 §4.4.3.1,
 /// TS 24.301 §4.4.3.1).
 ///
-/// The crate keeps no NAS COUNT: this is the value that a caller passes for
-/// one message, checked once. The algorithms take it padded with eight zero
-/// bits to 32, as those clauses require.
+/// The crate keeps no NAS COUNT: a security context of the caller has one
+/// for each direction, and this type gives what the two sides do with it.
+/// The sender takes [`next`](Self::next) after each message, and a
+/// receiver has the COUNT of a message from the sequence number that the
+/// message carries with [`estimate`](Self::estimate). A COUNT protects one
+/// message: neither gives the same one twice, and both refuse to wrap
+/// around. A security context whose integrity algorithm is the null one
+/// is the exception, and has [`wrapping_next`](Self::wrapping_next) and
+/// [`wrapping_estimate`](Self::wrapping_estimate) (TS 24.501 §4.4.3.5,
+/// TS 24.301 §4.4.3.5). The algorithms take the COUNT padded with eight
+/// zero bits to 32, as those clauses require.
+///
+/// A context keeps an `Option<NasCount>` for each direction, `None` once
+/// the COUNTs are exhausted: `count.next().ok()`.
 ///
 /// ```
 /// use oxirush_security::{NasCount, SecurityError};
 ///
-/// // From the overflow counter that the receiver estimates and the
-/// // sequence number of the message
-/// let count = NasCount::from_parts(0x0001, 0x2a);
-/// assert_eq!(count.get(), 0x0000_012a);
-/// assert_eq!((count.overflow(), count.sequence_number()), (0x0001, 0x2a));
+/// // A sender: the COUNT of this message, then the one after it
+/// let uplink = NasCount::new(0x0000_01ff)?;
+/// assert_eq!(uplink.next()?, NasCount::from_parts(0x0002, 0x00));
+/// assert_eq!(NasCount::MAX.next(), Err(SecurityError::NasCountExhausted));
 ///
-/// // From a stored value
-/// assert_eq!(NasCount::new(0x0000_012a)?, count);
-/// assert!(NasCount::new(1 << 24).is_err());
+/// // A receiver: the lowest COUNT that it still accepts is 0x1fe, and a
+/// // message comes with the sequence number 0x01
+/// let lowest = NasCount::new(0x0000_01fe)?;
+/// let received = lowest.estimate(0x01)?;
+/// assert_eq!(received, NasCount::from_parts(0x0002, 0x01));
+/// // Once the MAC of the message is verified with it
+/// let lowest = received.next()?;
+/// assert_eq!(lowest.get(), 0x0000_0202);
 /// # Ok::<(), SecurityError>(())
 /// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -307,6 +388,121 @@ impl NasCount {
     /// that a security protected NAS message carries.
     pub const fn sequence_number(self) -> u8 {
         self.0 as u8
+    }
+
+    /// The NAS COUNT after this one: that of the next message of a
+    /// sender, and the lowest that a receiver accepts after the message
+    /// of this one.
+    ///
+    /// After 2^24 - 1 there is none, and the result is
+    /// [`SecurityError::NasCountExhausted`]: a COUNT is not used twice
+    /// with the same keys, so the network activates fresh NAS keys before
+    /// one wraps around, and a node that has none left releases the NAS
+    /// signalling connection instead of sending (TS 24.501 §4.4.3.5,
+    /// TS 24.301 §4.4.3.5).
+    pub const fn next(self) -> Result<Self, SecurityError> {
+        if self.0 < Self::MAX.0 {
+            Ok(Self(self.0 + 1))
+        } else {
+            Err(SecurityError::NasCountExhausted)
+        }
+    }
+
+    /// The NAS COUNT after this one in a security context whose integrity
+    /// algorithm is the null one, 5G-IA0 or EIA0: zero after 2^24 - 1.
+    /// Such a context keeps no key that a COUNT could be used twice with,
+    /// and "the UE and the AMF shall allow NAS COUNT wrap around"
+    /// (TS 24.501 §4.4.3.5, and TS 24.301 §4.4.3.5 for EPS). With any
+    /// other algorithm, [`next`](Self::next).
+    pub const fn wrapping_next(self) -> Self {
+        Self((self.0 + 1) & Self::MAX.0)
+    }
+
+    /// The NAS COUNT of a received message, from the NAS sequence number
+    /// that it carries (TS 24.501 §4.4.3.1, TS 24.301 §4.4.3.1).
+    ///
+    /// `self` is the lowest NAS COUNT that the receiver still accepts:
+    /// one more than the largest that it has verified, or zero in a new
+    /// security context. The estimate is the smallest NAS COUNT from
+    /// there on that ends with the sequence number, so a sequence number
+    /// below the expected one means that the overflow counter went up by
+    /// one. A message that is replayed gets a COUNT other than the one it
+    /// was protected with, and its MAC is then wrong.
+    ///
+    /// The caller verifies the MAC with the estimate and, only when it is
+    /// right, keeps [`next`](Self::next) of the estimate as the lowest
+    /// that it accepts. An estimate above 2^24 - 1 is
+    /// [`SecurityError::NasCountExhausted`].
+    pub const fn estimate(self, sequence_number: u8) -> Result<Self, SecurityError> {
+        self.estimate_from_low_bits(sequence_number, 8)
+    }
+
+    /// The NAS COUNT of which a message carries only the `bits` least
+    /// significant bits, estimated as [`estimate`](Self::estimate) does:
+    ///
+    /// - 5 for the short sequence number of an EPS SERVICE REQUEST, of
+    ///   which "the receiver shall estimate the remaining 3 most
+    ///   significant bits" (TS 24.301 §4.4.3.1 and §9.9.3.19);
+    /// - 4 for the downlink NAS COUNT of a handover from E-UTRAN to UTRAN
+    ///   or GERAN (TS 24.301 §9.9.2.6, TS 33.401 §9.2.1) and of SRVCC
+    ///   from 5GS (TS 33.501 Annex J);
+    /// - 8 for the downlink NAS COUNT of a handover from 5GS to EPS
+    ///   (TS 33.501 §8.3.2), which is [`estimate`](Self::estimate).
+    ///
+    /// The bits of `low_bits` above `bits` are ignored. A `bits` that is
+    /// not 1 to 8 is [`SecurityError::OutOfRange`].
+    pub const fn estimate_from_low_bits(
+        self,
+        low_bits: u8,
+        bits: u32,
+    ) -> Result<Self, SecurityError> {
+        match self.ahead(low_bits, bits) {
+            Ok(estimate) if estimate <= Self::MAX.0 => Ok(Self(estimate)),
+            Ok(_) => Err(SecurityError::NasCountExhausted),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// [`estimate`](Self::estimate) in a security context whose integrity
+    /// algorithm is the null one, where the NAS COUNT wraps around: after
+    /// 2^24 - 1 the estimate goes on from zero (TS 24.501 §4.4.3.5,
+    /// TS 24.301 §4.4.3.5).
+    pub const fn wrapping_estimate(self, sequence_number: u8) -> Self {
+        match self.ahead(sequence_number, 8) {
+            Ok(estimate) => Self(estimate & Self::MAX.0),
+            // Eight bits are within the range
+            Err(_) => self,
+        }
+    }
+
+    /// [`estimate_from_low_bits`](Self::estimate_from_low_bits) in a
+    /// security context whose integrity algorithm is the null one, where
+    /// the NAS COUNT wraps around. A `bits` that is not 1 to 8 is
+    /// [`SecurityError::OutOfRange`].
+    pub const fn wrapping_estimate_from_low_bits(
+        self,
+        low_bits: u8,
+        bits: u32,
+    ) -> Result<Self, SecurityError> {
+        match self.ahead(low_bits, bits) {
+            Ok(estimate) => Ok(Self(estimate & Self::MAX.0)),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// The smallest number from this COUNT on whose `bits` low bits are
+    /// those of `low_bits`: at most 2^24 + 254.
+    const fn ahead(self, low_bits: u8, bits: u32) -> Result<u32, SecurityError> {
+        if bits == 0 || bits > 8 {
+            return Err(SecurityError::OutOfRange {
+                field: "bits of a NAS sequence number",
+                maximum: 8,
+                got: bits as u64,
+            });
+        }
+        let mask = (1u32 << bits) - 1;
+        let ahead = (low_bits as u32 & mask).wrapping_sub(self.0 & mask) & mask;
+        Ok(self.0 + ahead)
     }
 }
 
@@ -399,6 +595,178 @@ pub(crate) fn octets_of(bit_length: u64, available: usize) -> Result<usize, Secu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TS 33.501 §5.11.1 and TS 33.401 §5.1.3.2 and §5.1.4.2: the names
+    /// of the algorithms in each system.
+    #[test]
+    fn an_algorithm_has_the_name_of_each_system() {
+        let integrity = [
+            (IntegrityAlgorithm::Null, "NIA0", "EIA0"),
+            (IntegrityAlgorithm::Snow3g, "128-NIA1", "128-EIA1"),
+            (IntegrityAlgorithm::Aes, "128-NIA2", "128-EIA2"),
+            (IntegrityAlgorithm::Zuc, "128-NIA3", "128-EIA3"),
+        ];
+        for (algorithm, name_5gs, name_eps) in integrity {
+            assert_eq!(algorithm.name_5gs(), name_5gs);
+            assert_eq!(algorithm.name_eps(), name_eps);
+            assert_eq!(algorithm.to_string(), format!("{name_5gs}/{name_eps}"));
+        }
+        let ciphering = [
+            (CipheringAlgorithm::Null, "NEA0", "EEA0"),
+            (CipheringAlgorithm::Snow3g, "128-NEA1", "128-EEA1"),
+            (CipheringAlgorithm::Aes, "128-NEA2", "128-EEA2"),
+            (CipheringAlgorithm::Zuc, "128-NEA3", "128-EEA3"),
+        ];
+        for (algorithm, name_5gs, name_eps) in ciphering {
+            assert_eq!(algorithm.name_5gs(), name_5gs);
+            assert_eq!(algorithm.name_eps(), name_eps);
+            assert_eq!(algorithm.to_string(), format!("{name_5gs}/{name_eps}"));
+        }
+    }
+
+    /// TS 24.501 §4.4.3.1 and TS 24.301 §4.4.3.1: the sender increases
+    /// the NAS COUNT by one after each message, and the overflow counter
+    /// with it when the sequence number wraps around.
+    #[test]
+    fn a_sender_has_the_next_nas_count_until_the_last() {
+        let count = |value| NasCount::new(value).unwrap();
+        assert_eq!(NasCount::ZERO.next(), Ok(count(1)));
+        assert_eq!(count(0xff).next(), Ok(NasCount::from_parts(1, 0)));
+        assert_eq!(count(0x00ff_fffe).next(), Ok(NasCount::MAX));
+        // No COUNT is used twice: there is none after the last
+        assert_eq!(NasCount::MAX.next(), Err(SecurityError::NasCountExhausted));
+        // A context keeps `None` from there on
+        assert_eq!(NasCount::MAX.next().ok(), None);
+    }
+
+    /// TS 24.501 §4.4.3.5 and TS 24.301 §4.4.3.5: "When the 5G-IA0 is used
+    /// as the NAS integrity algorithm, the UE and the AMF shall allow NAS
+    /// COUNT wrap around."
+    #[test]
+    fn the_nas_count_of_the_null_integrity_algorithm_wraps_around() {
+        let count = |value| NasCount::new(value).unwrap();
+        assert_eq!(NasCount::ZERO.wrapping_next(), count(1));
+        assert_eq!(count(0xff).wrapping_next(), count(0x100));
+        assert_eq!(NasCount::MAX.wrapping_next(), NasCount::ZERO);
+
+        // Below the last COUNTs, the estimates are those that do not wrap
+        for (lowest, sequence_number) in [(0, 0), (0x105, 0x04), (0x1ff, 0x00), (0xff_ff00, 0xff)] {
+            let lowest = count(lowest);
+            assert_eq!(
+                Ok(lowest.wrapping_estimate(sequence_number)),
+                lowest.estimate(sequence_number)
+            );
+        }
+        // After them, the overflow counter goes on from zero
+        assert_eq!(count(0x00ff_ff01).wrapping_estimate(0x00), NasCount::ZERO);
+        assert_eq!(count(0x00ff_fff0).wrapping_estimate(0x05), count(0x05));
+        assert_eq!(NasCount::MAX.wrapping_estimate(0xff), NasCount::MAX);
+        assert_eq!(NasCount::MAX.wrapping_estimate(0xfe), count(0xfe));
+        let estimate =
+            |lowest, low_bits, bits| count(lowest).wrapping_estimate_from_low_bits(low_bits, bits);
+        assert_eq!(estimate(0x00ff_ffff, 0x00, 5), Ok(NasCount::ZERO));
+        assert_eq!(estimate(0x00ff_fffe, 0x1f, 5), Ok(NasCount::MAX));
+        assert_eq!(estimate(0x25, 0x04, 5), Ok(count(0x44)));
+        assert_eq!(estimate(0x1f8, 0x2, 4), Ok(count(0x202)));
+        assert!(estimate(0, 0, 0).is_err());
+        assert!(estimate(0, 0, 9).is_err());
+        // Every lowest COUNT near the end and every sequence number: the
+        // first COUNT from there on, modulo 2^24, that ends with it
+        for lowest in 0x00ff_fe00..=0x00ff_ffff {
+            for sequence_number in 0..=255u8 {
+                let expected = (lowest..lowest + 256)
+                    .find(|value| *value as u8 == sequence_number)
+                    .unwrap();
+                assert_eq!(
+                    count(lowest).wrapping_estimate(sequence_number),
+                    count(expected & 0x00ff_ffff)
+                );
+            }
+        }
+    }
+
+    /// TS 24.501 §4.4.3.1: "the sequence number part of the estimated NAS
+    /// COUNT value shall be equal to the sequence number in the received
+    /// NAS message", and "the receiver selects the estimated NAS overflow
+    /// counter so that the estimated NAS COUNT value is higher than the
+    /// stored NAS COUNT value".
+    #[test]
+    fn a_receiver_estimates_the_nas_count_from_the_sequence_number() {
+        let count = |value| NasCount::new(value).unwrap();
+        for (lowest, sequence_number, estimate) in [
+            // The message that is expected, and one after a gap
+            (0x0000_0000, 0x00, 0x0000_0000),
+            (0x0000_0105, 0x05, 0x0000_0105),
+            (0x0000_0105, 0x90, 0x0000_0190),
+            (0x0000_0005, 0x90, 0x0000_0090),
+            // A sequence number below the expected one: the overflow
+            // counter went up
+            (0x0000_01f0, 0x02, 0x0000_0202),
+            (0x0000_01ff, 0x00, 0x0000_0200),
+            (0x0000_0105, 0x04, 0x0000_0204),
+            (0x00ff_ff00, 0xff, 0x00ff_ffff),
+        ] {
+            let got = count(lowest).estimate(sequence_number).unwrap();
+            assert_eq!(got, count(estimate), "{lowest:#x}, {sequence_number:#x}");
+            assert_eq!(got.sequence_number(), sequence_number);
+            assert!(got >= count(lowest));
+            assert!(got.get() - lowest < 256);
+        }
+        // A message that is replayed has an estimate above the COUNT that
+        // protected it: 0x105 was verified, and comes again
+        let lowest = count(0x0105).next().unwrap();
+        assert_eq!(lowest.estimate(0x05), Ok(count(0x0205)));
+        // No estimate after the last COUNT
+        assert_eq!(
+            count(0x00ff_ff01).estimate(0x00),
+            Err(SecurityError::NasCountExhausted)
+        );
+        assert_eq!(NasCount::MAX.estimate(0xff), Ok(NasCount::MAX));
+    }
+
+    /// The five bits of the sequence number of an EPS SERVICE REQUEST
+    /// (TS 24.301 §9.9.3.19), and the four of a downlink NAS COUNT at a
+    /// handover (§9.9.2.6).
+    #[test]
+    fn a_nas_count_is_estimated_from_fewer_bits() {
+        let count = |value| NasCount::new(value).unwrap();
+        let estimate =
+            |lowest, low_bits, bits| count(lowest).estimate_from_low_bits(low_bits, bits);
+        assert_eq!(estimate(0x1f8, 0x2, 4), Ok(count(0x202)));
+        assert_eq!(estimate(0x1f8, 0xf8, 8), Ok(count(0x1f8)));
+        assert_eq!(estimate(0x25, 0x04, 5), Ok(count(0x44)));
+        assert_eq!(estimate(0x25, 0x05, 5), Ok(count(0x25)));
+        // The bits above those that are carried are ignored: the octet of
+        // a SERVICE REQUEST has its KSI there
+        assert_eq!(estimate(0x25, 0xe5, 5), Ok(count(0x25)));
+        assert_eq!(estimate(0x00ff_ffff, 0x0f, 4), Ok(NasCount::MAX));
+        assert_eq!(
+            estimate(0x00ff_ffff, 0x00, 8),
+            Err(SecurityError::NasCountExhausted)
+        );
+        for bits in [0, 9, 32, u32::MAX] {
+            assert_eq!(
+                estimate(0, 0, bits),
+                Err(SecurityError::OutOfRange {
+                    field: "bits of a NAS sequence number",
+                    maximum: 8,
+                    got: bits.into()
+                })
+            );
+        }
+        // With eight bits, every lowest COUNT and every sequence number
+        for lowest in (0..0x400).chain(0x00ff_fe00..=0x00ff_ffff) {
+            for sequence_number in 0..=255u8 {
+                let expected = (lowest..lowest + 256)
+                    .find(|value| *value as u8 == sequence_number)
+                    .unwrap();
+                assert_eq!(
+                    count(lowest).estimate(sequence_number).ok(),
+                    NasCount::new(expected).ok()
+                );
+            }
+        }
+    }
 
     /// TS 33.501 §5.11.1 and TS 33.401 §5.1.3.2 and §5.1.4.2 give the four
     /// algorithms the identifiers 0 to 3 in both systems.

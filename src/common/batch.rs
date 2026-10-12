@@ -19,7 +19,7 @@
 //! DIRECTION, as an AMF, an MME or a load generator has them.
 //!
 //! [`nea_cipher_batch`] and [`nia_mac_batch`] give every message what
-//! [`nea_cipher`] and [`nia_mac`](crate::nia_mac) give
+//! [`nea_cipher`](crate::nea_cipher) and [`nia_mac`](crate::nia_mac) give
 //! it alone. A message is a job: [`CipherJob`] or [`MacJob`], which holds
 //! its key with its COUNT, its BEARER, its DIRECTION and its algorithm, so
 //! that none of them goes to another message. The jobs of a batch need not
@@ -27,7 +27,11 @@
 //!
 //! For a NAS message, [`nas_5gs::cipher_job`](crate::nas_5gs::cipher_job),
 //! [`nas_5gs::mac_job`](crate::nas_5gs::mac_job) and their counterparts of
-//! [`nas_eps`](crate::nas_eps) make the job from a NAS COUNT.
+//! [`nas_eps`](crate::nas_eps) make the job from a NAS COUNT. A keyed
+//! context makes the job of a message with
+//! [`CipheringContext::job`](crate::CipheringContext::job) or
+//! [`IntegrityContext::job`](crate::IntegrityContext::job), and the batch
+//! then has what the context has computed from the key.
 //!
 //! # What runs side by side
 //!
@@ -52,9 +56,11 @@
 //! the messages: the time of a message does not depend on the octets or
 //! the key of another.
 
+use crate::common::context::{CipheringContext, IntegrityContext};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, octets_of};
-use crate::common::nea::nea_cipher;
+use crate::common::keys::{CipheringKey, IntegrityKey};
+use crate::common::nea::cipher_octets;
 use crate::common::nia::{BitString, mac_of_bits};
 
 /// A message to cipher or to decipher in a batch: its key, the COUNT, the
@@ -62,6 +68,8 @@ use crate::common::nia::{BitString, mac_of_bits};
 pub struct CipherJob<'a> {
     algorithm: CipheringAlgorithm,
     key: &'a [u8; 16],
+    /// The context that the job comes from, if it comes from one.
+    context: Option<&'a CipheringContext>,
     count: u32,
     bearer: Bearer,
     direction: Direction,
@@ -75,9 +83,9 @@ pub struct CipherJob<'a> {
 
 impl<'a> CipherJob<'a> {
     /// The message `data`, in whole octets, with what
-    /// [`nea_cipher`] takes.
+    /// [`nea_cipher`](crate::nea_cipher) takes.
     pub fn new(
-        key: &'a [u8; 16],
+        key: &'a impl CipheringKey,
         count: u32,
         bearer: Bearer,
         direction: Direction,
@@ -86,7 +94,30 @@ impl<'a> CipherJob<'a> {
     ) -> Self {
         Self {
             algorithm,
-            key,
+            key: key.key_octets(),
+            context: None,
+            count,
+            bearer,
+            direction,
+            data,
+            retained: 0,
+            unused: 0,
+        }
+    }
+
+    /// The message `data`, in whole octets, with the key and the
+    /// algorithm of a context.
+    pub(crate) fn of_context(
+        context: &'a CipheringContext,
+        count: u32,
+        bearer: Bearer,
+        direction: Direction,
+        data: &'a mut [u8],
+    ) -> Self {
+        Self {
+            algorithm: context.algorithm(),
+            key: context.key(),
+            context: Some(context),
             count,
             bearer,
             direction,
@@ -103,7 +134,7 @@ impl<'a> CipherJob<'a> {
     /// A `bit_length` that `data` does not have is
     /// [`SecurityError::BitLengthExceedsData`].
     pub fn bits(
-        key: &'a [u8; 16],
+        key: &'a impl CipheringKey,
         count: u32,
         bearer: Bearer,
         direction: Direction,
@@ -111,31 +142,33 @@ impl<'a> CipherJob<'a> {
         bit_length: u64,
         algorithm: CipheringAlgorithm,
     ) -> Result<Self, SecurityError> {
-        let octets = octets_of(bit_length, data.len())?;
-        let mut job = Self::new(
-            key,
-            count,
-            bearer,
-            direction,
-            &mut data[..octets],
-            algorithm,
-        );
+        Self::new(key, count, bearer, direction, data, algorithm).with_bits(bit_length)
+    }
+
+    /// The job of the first `bit_length` bits of its data.
+    pub(crate) fn with_bits(mut self, bit_length: u64) -> Result<Self, SecurityError> {
+        let octets = octets_of(bit_length, self.data.len())?;
+        self.data = &mut self.data[..octets];
         let used = (bit_length % 8) as u32;
-        job.unused = if used == 0 { 0 } else { 0xff >> used };
-        job.retained = job.data.last().map_or(0, |last| last & job.unused);
-        Ok(job)
+        self.unused = if used == 0 { 0 } else { 0xff >> used };
+        self.retained = self.data.last().map_or(0, |last| last & self.unused);
+        Ok(self)
     }
 
     /// The message through the function of one message.
     fn alone(&mut self) {
-        nea_cipher(
-            self.key,
-            self.count,
-            self.bearer,
-            self.direction,
-            self.data,
-            self.algorithm,
-        );
+        let (count, bearer, direction) = (self.count, self.bearer, self.direction);
+        match self.context {
+            Some(context) => context.cipher_whole(count, bearer, direction, self.data),
+            None => cipher_octets(
+                self.key,
+                count,
+                bearer,
+                direction,
+                self.data,
+                self.algorithm,
+            ),
+        }
     }
 
     /// Put back the bits of the last octet that are not of the message.
@@ -174,6 +207,8 @@ pub fn nea_cipher_batch(jobs: &mut [CipherJob<'_>]) {
 pub struct MacJob<'a> {
     algorithm: IntegrityAlgorithm,
     key: &'a [u8; 16],
+    /// The context that the job comes from, if it comes from one.
+    context: Option<&'a IntegrityContext>,
     count: u32,
     bearer: Bearer,
     direction: Direction,
@@ -185,7 +220,7 @@ impl<'a> MacJob<'a> {
     /// The message `message`, in whole octets, with what
     /// [`nia_mac`](crate::nia_mac) takes.
     pub fn new(
-        key: &'a [u8; 16],
+        key: &'a impl IntegrityKey,
         count: u32,
         bearer: Bearer,
         direction: Direction,
@@ -194,11 +229,33 @@ impl<'a> MacJob<'a> {
     ) -> Self {
         Self {
             algorithm,
-            key,
+            key: key.key_octets(),
+            context: None,
             count,
             bearer,
             direction,
             message: BitString::whole(message),
+            mac: None,
+        }
+    }
+
+    /// The first bits of a message with the key and the algorithm of a
+    /// context.
+    pub(crate) fn of_context(
+        context: &'a IntegrityContext,
+        count: u32,
+        bearer: Bearer,
+        direction: Direction,
+        message: BitString<'a>,
+    ) -> Self {
+        Self {
+            algorithm: context.algorithm(),
+            key: context.key(),
+            context: Some(context),
+            count,
+            bearer,
+            direction,
+            message,
             mac: None,
         }
     }
@@ -209,7 +266,7 @@ impl<'a> MacJob<'a> {
     /// A `bit_length` that `message` does not have is
     /// [`SecurityError::BitLengthExceedsData`].
     pub fn bits(
-        key: &'a [u8; 16],
+        key: &'a impl IntegrityKey,
         count: u32,
         bearer: Bearer,
         direction: Direction,
@@ -222,6 +279,14 @@ impl<'a> MacJob<'a> {
         Ok(job)
     }
 
+    /// AES-CMAC with the key of the job, and its round keys on the AES
+    /// instructions, when the job comes from a context that has them.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn keyed(&self) -> Option<crate::common::nia::CmacKey<'a>> {
+        let cmac = self.context.and_then(IntegrityContext::cmac)?;
+        Some(crate::common::nia::CmacKey::Keyed(cmac, cmac.schedule()?.1))
+    }
+
     /// The MAC, once [`nia_mac_batch`] has computed it: `None` before.
     pub fn mac(&self) -> Option<u32> {
         self.mac
@@ -229,14 +294,18 @@ impl<'a> MacJob<'a> {
 
     /// The MAC through the function of one message.
     fn alone(&mut self) {
-        self.mac = Some(mac_of_bits(
-            self.key,
-            self.count,
-            self.bearer,
-            self.direction,
-            self.message,
-            self.algorithm,
-        ));
+        let (count, bearer, direction) = (self.count, self.bearer, self.direction);
+        self.mac = Some(match self.context {
+            Some(context) => context.mac_of(count, bearer, direction, self.message),
+            None => mac_of_bits(
+                self.key,
+                count,
+                bearer,
+                direction,
+                self.message,
+                self.algorithm,
+            ),
+        });
     }
 }
 
@@ -268,8 +337,8 @@ mod lanes {
     use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm};
     use crate::common::nea::{eea1_key_and_iv, eea3_iv};
     use crate::common::nia::{
-        BitString, CmacBlocks, EIA1_WORDS, Eia3, cmac_lanes, eia1_evaluate, eia1_key_and_iv,
-        eia3_iv,
+        BitString, CmacBlocks, CmacKey, EIA1_WORDS, Eia3, cmac_lanes, cmac_lanes_keyed,
+        eia1_evaluate, eia1_key_and_iv, eia3_iv,
     };
     use crate::common::simd::lanes::Stream;
     use crate::common::simd::{Instructions, snow3g_lanes, zuc_lanes};
@@ -313,17 +382,26 @@ mod lanes {
     }
 
     /// 128-EIA2 of the first `N` places of `group`.
-    fn mac_aes_group<const N: usize>(
+    fn mac_aes_group<'j, const N: usize>(
         instructions: Instructions,
-        group: &mut [Option<&mut MacJob<'_>>; AES_GROUP],
+        group: &mut [Option<&mut MacJob<'j>>; AES_GROUP],
     ) {
         let job = |place: usize| group.get(place).and_then(|job| job.as_deref());
-        let keys = core::array::from_fn(|place| job(place).map_or(&NO_KEY, |job| job.key));
         let blocks: [CmacBlocks<'_>; N] = core::array::from_fn(|place| match job(place) {
             Some(job) => CmacBlocks::new(job.count, job.bearer, job.direction, job.message),
             None => CmacBlocks::new(0, Bearer::ZERO, Direction::Uplink, BitString::whole(&[])),
         });
-        let macs = cmac_lanes(instructions, keys, &blocks);
+        // The round keys and the subkeys of a context, or the octets of
+        // the key
+        let macs = if group.iter().flatten().any(|job| job.keyed().is_some()) {
+            let key = |job: &MacJob<'j>| job.keyed().unwrap_or(CmacKey::Octets(job.key));
+            let keys =
+                core::array::from_fn(|place| job(place).map_or(CmacKey::Octets(&NO_KEY), key));
+            cmac_lanes_keyed(instructions, keys, &blocks)
+        } else {
+            let keys = core::array::from_fn(|place| job(place).map_or(&NO_KEY, |job| job.key));
+            cmac_lanes(instructions, keys, &blocks)
+        };
         for (job, mac) in group.iter_mut().flatten().zip(macs) {
             job.mac = Some(mac);
         }
@@ -509,7 +587,7 @@ mod lanes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::nea::nea_cipher_bits;
+    use crate::common::nea::{nea_cipher, nea_cipher_bits};
     use crate::common::nia::nia_mac_bits;
     use crate::{nas_5gs, nas_eps};
 
@@ -828,12 +906,13 @@ mod tests {
     /// connection in 5GS and of BEARER 0 in EPS.
     #[test]
     fn the_jobs_of_nas_messages_give_what_the_nas_functions_give() {
-        let (enc, int) = ([0x11; 16], [0x22; 16]);
         let count = crate::NasCount::new(0x01_0203).unwrap();
         let uplink = Direction::Uplink;
         for algorithm in 0..=3 {
             let cipher = CipheringAlgorithm::try_from(algorithm).unwrap();
             let integrity = IntegrityAlgorithm::try_from(algorithm).unwrap();
+            let enc = nas_5gs::KNasEnc::new([0x11; 16]);
+            let int = nas_5gs::KNasInt::new([0x22; 16]);
             for connection in [
                 nas_5gs::NasConnection::ThreeGpp,
                 nas_5gs::NasConnection::Non3Gpp,
@@ -857,6 +936,8 @@ mod tests {
                 assert!(jobs.iter().all(|job| job.mac() == Some(mac)));
             }
 
+            let enc = nas_eps::KNasEnc::new([0x11; 16]);
+            let int = nas_eps::KNasInt::new([0x22; 16]);
             let mut expected = *b"an EPS NAS message";
             nas_eps::nas_cipher(&enc, count, uplink, &mut expected, cipher);
             let mac = nas_eps::nas_mac(&int, count, uplink, &expected, integrity);

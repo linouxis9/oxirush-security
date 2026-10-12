@@ -15,26 +15,34 @@
    limitations under the License.
 */
 
-//! EPS key derivation and NAS security per 3GPP TS 33.401.
+//! EPS: the keys of TS 33.401 and their derivations, and NAS integrity
+//! and ciphering.
+//!
+//! The keys that one system maps to the other are derived by TS 33.501,
+//! in both directions: [`nas_5gs`](crate::nas_5gs) has
+//! `derive_mapped_kasme_idle` and `derive_mapped_kasme_handover`, which
+//! return a [`KAsme`], and `derive_mapped_kamf_idle` and
+//! `derive_mapped_kamf_handover`, which take one.
+//!
+//! The algorithms, their inputs and what else 5GS has too are at the
+//! [crate root](crate). Nothing here has the name of an item of
+//! [`nas_5gs`](crate::nas_5gs) by accident: a key of one system does not
+//! compile where the other's is expected.
 
-pub mod algo;
-pub mod kdf;
-pub mod security;
+mod kdf;
+mod keys;
+mod security;
 
-pub use crate::common::{
-    AccessKeyCount, Bearer, CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob,
-    NasCount, SecurityError, extract_128, nea_cipher_batch, nia_mac_batch,
-};
-pub use algo::{
-    select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
-    select_integrity_algo_with_preference,
-};
 pub use kdf::{
     compute_hash_mme, derive_ck_ik_handover, derive_ck_ik_idle_mobility, derive_ck_ik_srvcc,
     derive_kasme, derive_kasme_handover, derive_kasme_idle_mobility, derive_kenb, derive_kenb_star,
     derive_kn, derive_knas_enc, derive_knas_int, derive_krrc_enc, derive_krrc_int, derive_kup_enc,
-    derive_kup_int, derive_lwip_psk, derive_mapped_kamf_handover, derive_mapped_kamf_idle,
-    derive_nas_token, derive_nas_token_full, derive_nh, derive_skenb, derive_skwt,
+    derive_kup_int, derive_lwip_psk, derive_nas_token, derive_nh, derive_skenb, derive_skgnb,
+    derive_skwt,
+};
+pub use keys::{
+    AccessKey, CkPrime, CkSrvcc, IkPrime, IkSrvcc, KAsme, KEnb, KNasEnc, KNasInt, KRrcEnc, KRrcInt,
+    KUpEnc, KUpInt, Kn, LwipPsk, NasToken, Nh, SKwt,
 };
 pub use security::{
     cipher_job, mac_job, nas_cipher, nas_mac, re_establishment_nas_mac, service_request_short_mac,

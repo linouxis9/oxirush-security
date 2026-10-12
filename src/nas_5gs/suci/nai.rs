@@ -15,125 +15,57 @@
    limitations under the License.
 */
 
-//! SUCI and SUPI in the NAI format (TS 23.003 §28.7.3, §28.15.5 and
-//! §28.16.5): network specific identifiers, GCI and GLI.
+//! The NAI format of a SUCI (TS 23.003 §28.7.3, §28.15.5 and §28.16.5),
+//! and the NAI of a SUPI that is a network specific identifier, a GCI or a
+//! GLI (§28.7.2, §28.15.2 and §28.16.2).
 //!
 //! This is the `nai` feature. It brings the Unicode normalization of
 //! RFC 7542 usernames and the IDNA rules of RFC 5891 realms, and with them
 //! most of the crates that the crate depends on.
 
-use super::{
-    PROFILE_A_MAC_LEN, PROFILE_A_PUB_KEY_LEN, PROFILE_B_MAC_LEN, PROFILE_B_PUB_KEY_LEN,
-    suci_decrypt_a, suci_decrypt_b, suci_scheme_output_a, suci_scheme_output_b,
-};
-use crate::error::SecurityError;
+use super::ecies::{MAC_LEN, PROFILE_A_PUBLIC_KEY_LEN, PROFILE_B_PUBLIC_KEY_LEN};
+use super::{Home, NaiError, ProtectionScheme, RoutingIndicator, Suci, SuciError};
+use crate::nas_5gs::supi::SupiType;
 use alloc::{borrow::ToOwned, format, string::String, vec::Vec};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use unicode_normalization::UnicodeNormalization;
 
-/// SUPI type used by the textual NAI form in TS 23.003 clause 2.2B.
-///
-/// These values are the textual `type` field. TS 24.501 uses the opposite
-/// ordering for GCI and GLI in its separate three-bit NAS SUPI-format field.
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum SupiType {
-    /// IMSI.
-    Imsi = 0,
-    /// Network specific identifier.
-    NetworkSpecific = 1,
-    /// Global Line Identifier (GLI).
-    Gli = 2,
-    /// Global Cable Identifier (GCI).
-    Gci = 3,
-}
+/// The longest realm, in octets: the longest domain name (RFC 1035
+/// §2.3.4).
+const LONGEST_REALM: usize = 253;
+/// The longest username of a SUPI, in octets, which is also the longest
+/// plaintext of a profile.
+pub(super) const LONGEST_USERNAME: usize = 253;
+/// The longest output of a scheme of the operator, in octets: 3000 and
+/// the size of the input (TS 33.501 Annex C.1).
+const LONGEST_PROPRIETARY_OUTPUT: usize = 3000 + LONGEST_USERNAME;
+/// The longest SUCI in the NAI format that is looked at, in octets: the
+/// fields before the scheme output, the longest scheme output in
+/// hexadecimal digits, `@` and the longest realm.
+pub(super) const LONGEST_SUCI_NAI: usize = 64 + 2 * LONGEST_PROPRIETARY_OUTPUT + 1 + LONGEST_REALM;
 
-impl SupiType {
-    fn from_u8(value: u8) -> Option<Self> {
-        match value {
-            0 => Some(Self::Imsi),
-            1 => Some(Self::NetworkSpecific),
-            2 => Some(Self::Gli),
-            3 => Some(Self::Gci),
-            _ => None,
-        }
+/// The number that the NAI format writes for a SUPI type (TS 23.003
+/// §2.2B). The SUPI format of NAS has GCI and GLI the other way round.
+fn type_number(kind: SupiType) -> u8 {
+    match kind {
+        SupiType::Imsi => 0,
+        SupiType::NetworkSpecific => 1,
+        SupiType::Gli => 2,
+        SupiType::Gci => 3,
     }
 }
 
-/// Typed protection-scheme output of a textual NAI SUCI.
-#[non_exhaustive]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SuciSchemeOutput {
-    /// Clear UTF-8 username used by the null scheme.
-    Null(Vec<u8>),
-    /// Profile-A bytes: ephemeral public key, ciphertext, and MAC tag.
-    ProfileA(Vec<u8>),
-    /// Profile-B bytes: compressed ephemeral public key, ciphertext, and MAC tag.
-    ProfileB(Vec<u8>),
-    /// Operator-defined hexadecimal output for a scheme identifier in `0xC..=0xF`.
-    Proprietary {
-        /// Protection scheme identifier, `0xC` to `0xF`.
-        scheme_id: u8,
-        /// Scheme output, in the hexadecimal digits of the `out` field.
-        output: String,
-    },
-}
-
-/// Parsed TS 23.003 clause 28.7.3 SUCI in NAI form.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NaiSuci {
-    /// SUPI type, the `type` field.
-    pub supi_type: SupiType,
-    /// Routing indicator, the one to four decimal digits of the `rid` field.
-    pub routing_indicator: String,
-    /// Home network public key identifier, the `hnkey` field: `None` with
-    /// the null scheme, which has no such field, and 1 to 255 otherwise.
-    pub home_network_public_key_id: Option<u8>,
-    /// Protection scheme and its output.
-    pub scheme_output: SuciSchemeOutput,
-    /// Realm, the part after the last `@`.
-    pub realm: String,
-}
-
-/// Protection choice for constructing a network-specific-identifier SUCI.
-#[non_exhaustive]
-pub enum NaiProtectionScheme<'a> {
-    /// Null scheme: the username stays in clear.
-    Null,
-    /// Profile A, ECIES over X25519.
-    ProfileA {
-        /// Home network public key identifier, 1 to 255.
-        home_network_public_key_id: u8,
-        /// X25519 home network public key.
-        home_network_public_key: &'a [u8; 32],
-    },
-    /// Profile B, ECIES over P-256.
-    ProfileB {
-        /// Home network public key identifier, 1 to 255.
-        home_network_public_key_id: u8,
-        /// P-256 home network public key in SEC1 encoding, compressed or
-        /// uncompressed.
-        home_network_public_key: &'a [u8],
-    },
-}
-
-fn invalid_nai() -> SecurityError {
-    SecurityError::InvalidParameter("malformed SUCI NAI")
-}
-
-fn valid_routing_indicator(value: &str) -> bool {
-    (1..=4).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
-}
-
-/// Validate the RFC 7542 realm ABNF and RFC 5891 FQDN requirement.
-fn valid_realm(value: &str) -> bool {
+/// The realm of RFC 7542 §2.2, which is also a domain name of RFC 5891.
+/// Its length is checked first: nothing else looks at a longer one.
+pub(super) fn checked_realm(value: &str) -> Result<&str, NaiError> {
+    if value.is_empty() || value.len() > LONGEST_REALM {
+        return Err(NaiError::Realm);
+    }
     if value.nfc().ne(value.chars()) {
-        return false;
+        return Err(NaiError::Realm);
     }
-    let labels: Vec<&str> = value.split('.').collect();
-    let abnf_matches = labels.len() >= 2
-        && labels.iter().all(|label| {
+    let abnf_matches = value.split('.').count() >= 2
+        && value.split('.').all(|label| {
             let is_rtext =
                 |character: char| character.is_ascii_alphanumeric() || !character.is_ascii();
             !label.is_empty()
@@ -144,48 +76,34 @@ fn valid_realm(value: &str) -> bool {
                 && label.chars().last().is_some_and(is_rtext)
         });
     let Ok(ascii) = idna::domain_to_ascii_strict(value) else {
-        return false;
+        return Err(NaiError::Realm);
     };
-    if !abnf_matches || value.is_ascii() {
-        return abnf_matches;
+    let valid = if !abnf_matches || value.is_ascii() {
+        abnf_matches
+    } else {
+        let (canonical_unicode, status) = idna::domain_to_unicode(&ascii);
+        status.is_ok() && canonical_unicode == value
+    };
+    if valid {
+        Ok(value)
+    } else {
+        Err(NaiError::Realm)
     }
-    let (canonical_unicode, status) = idna::domain_to_unicode(&ascii);
-    status.is_ok() && canonical_unicode == value
 }
 
+/// The username of RFC 7542 §2.2.
 fn valid_nai_username(value: &str, allow_anonymous: bool) -> bool {
     if value.is_empty() {
         return allow_anonymous;
     }
-    if value.nfc().ne(value.chars()) {
+    if value.len() > LONGEST_USERNAME || value.nfc().ne(value.chars()) {
         return false;
     }
     value.split('.').all(|atom| {
         !atom.is_empty()
             && atom.chars().all(|character| {
                 if character.is_ascii() {
-                    character.is_ascii_alphanumeric()
-                        || matches!(
-                            character,
-                            '!' | '#'
-                                | '$'
-                                | '%'
-                                | '&'
-                                | '\''
-                                | '*'
-                                | '+'
-                                | '-'
-                                | '/'
-                                | '='
-                                | '?'
-                                | '^'
-                                | '_'
-                                | '`'
-                                | '{'
-                                | '|'
-                                | '}'
-                                | '~'
-                        )
+                    character.is_ascii_alphanumeric() || "!#$%&'*+-/=?^_`{|}~".contains(character)
                 } else {
                     !character.is_control()
                 }
@@ -193,6 +111,8 @@ fn valid_nai_username(value: &str, allow_anonymous: bool) -> bool {
     })
 }
 
+/// The realm of a SUCI whose SUPI is an IMSI: the home network domain of
+/// TS 23.003 §28.2, with the NID of an SNPN or without it.
 fn valid_imsi_realm(value: &str) -> bool {
     let labels: Vec<&str> = value.split('.').collect();
     let (nid, mnc, mcc, suffix) = match labels.as_slice() {
@@ -222,6 +142,8 @@ fn valid_imsi_realm(value: &str) -> bool {
     })
 }
 
+/// A GLI: up to 200 characters of base64 for up to 150 octets
+/// (TS 23.003 §28.16.4).
 fn valid_gli(value: &str) -> bool {
     if value.is_empty() || value.len() > 200 {
         return false;
@@ -232,12 +154,13 @@ fn valid_gli(value: &str) -> bool {
     decoded.len() <= 150 && BASE64_STANDARD.encode(decoded) == value
 }
 
-fn valid_null_scheme_output(supi_type: SupiType, value: &str) -> bool {
-    match supi_type {
+/// Whether `value` is what a SUPI of this type has before the `@` of its
+/// NAI, or the MSIN of an IMSI: the scheme output of the null scheme, and
+/// the plaintext of a profile.
+pub(super) fn valid_identity(kind: SupiType, value: &str) -> bool {
+    match kind {
         SupiType::Imsi => {
-            !value.is_empty()
-                && value.len() <= 10
-                && value.bytes().all(|byte| byte.is_ascii_digit())
+            (1..=10).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
         }
         SupiType::NetworkSpecific => valid_nai_username(value, true),
         SupiType::Gli => valid_gli(value),
@@ -245,408 +168,457 @@ fn valid_null_scheme_output(supi_type: SupiType, value: &str) -> bool {
     }
 }
 
-fn parse_decimal_field(field: &str, prefix: &str) -> Result<u8, SecurityError> {
-    let digits = field.strip_prefix(prefix).ok_or_else(invalid_nai)?;
-    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(invalid_nai());
-    }
-    digits.parse().map_err(|_| invalid_nai())
+/// The realm of a SUCI in the NAI format whose SUPI is an IMSI of
+/// `plmn`: `5gc.mnc<MNC>.mcc<MCC>.3gppnetwork.org`, the MNC with three
+/// digits (TS 23.003 §28.7.3).
+pub(super) fn imsi_realm(plmn: crate::Plmn) -> String {
+    format!(
+        "5gc.mnc{:0>3}.mcc{}.3gppnetwork.org",
+        plmn.mnc(),
+        plmn.mcc()
+    )
 }
 
-fn validate_nai_suci(value: &NaiSuci) -> Result<(), SecurityError> {
-    if !valid_routing_indicator(&value.routing_indicator)
-        || !valid_realm(&value.realm)
-        || (value.supi_type == SupiType::Imsi && !valid_imsi_realm(&value.realm))
-    {
-        return Err(invalid_nai());
+/// The decimal number of a field after its name, of at most three digits.
+fn number(field: &'static str, text: &str) -> Result<u8, NaiError> {
+    let digits = text.strip_prefix(field).ok_or(NaiError::Field(field))?;
+    if digits.is_empty() || digits.len() > 3 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(NaiError::Field(field));
     }
-    if matches!(value.supi_type, SupiType::Gli | SupiType::Gci) && value.routing_indicator != "0" {
-        return Err(SecurityError::InvalidParameter(
-            "GCI/GLI routing indicator must be zero",
-        ));
-    }
-    match &value.scheme_output {
-        SuciSchemeOutput::Null(output) => {
-            let username = core::str::from_utf8(output).map_err(|_| invalid_nai())?;
-            if value.home_network_public_key_id.is_some()
-                || !valid_null_scheme_output(value.supi_type, username)
-            {
-                return Err(invalid_nai());
-            }
-        }
-        SuciSchemeOutput::ProfileA(output) => {
-            if !matches!(value.supi_type, SupiType::Imsi | SupiType::NetworkSpecific)
-                || value.home_network_public_key_id == Some(0)
-                || value.home_network_public_key_id.is_none()
-                || output.len() < PROFILE_A_PUB_KEY_LEN + PROFILE_A_MAC_LEN + 1
-            {
-                return Err(invalid_nai());
-            }
-        }
-        SuciSchemeOutput::ProfileB(output) => {
-            if !matches!(value.supi_type, SupiType::Imsi | SupiType::NetworkSpecific)
-                || value.home_network_public_key_id == Some(0)
-                || value.home_network_public_key_id.is_none()
-                || output.len() < PROFILE_B_PUB_KEY_LEN + PROFILE_B_MAC_LEN + 1
-            {
-                return Err(invalid_nai());
-            }
-        }
-        SuciSchemeOutput::Proprietary { scheme_id, output } => {
-            if !(0x0c..=0x0f).contains(scheme_id)
-                || !output.bytes().all(|byte| byte.is_ascii_hexdigit())
-                || !matches!(value.supi_type, SupiType::Imsi | SupiType::NetworkSpecific)
-                || value.home_network_public_key_id == Some(0)
-                || value.home_network_public_key_id.is_none()
-            {
-                return Err(invalid_nai());
-            }
-        }
-    }
-    Ok(())
+    digits.parse().map_err(|_| NaiError::Field(field))
 }
 
-/// Parse the TS 23.003 clause 28.7.3/28.15.5/28.16.5 textual SUCI form.
-pub fn parse_nai_suci(input: &str) -> Result<NaiSuci, SecurityError> {
-    let (username, realm) = input.rsplit_once('@').ok_or_else(invalid_nai)?;
-    if !valid_realm(realm) {
-        return Err(invalid_nai());
+/// The octets that a field writes in hexadecimal digits after its name: at
+/// most `longest`, and exactly `exact` when that is given.
+fn octets(
+    field: &'static str,
+    text: Option<&&str>,
+    longest: usize,
+    exact: Option<usize>,
+) -> Result<Vec<u8>, NaiError> {
+    let digits = text
+        .and_then(|text| text.strip_prefix(field))
+        .ok_or(NaiError::Field(field))?;
+    if digits.len() > 2 * longest || exact.is_some_and(|octets| digits.len() != 2 * octets) {
+        return Err(NaiError::Field(field));
     }
-    let fields: Vec<&str> = username.split('.').collect();
-    if fields.len() < 4 {
-        return Err(invalid_nai());
-    }
-    let supi_type =
-        SupiType::from_u8(parse_decimal_field(fields[0], "type")?).ok_or_else(invalid_nai)?;
-    let routing_indicator = fields[1]
-        .strip_prefix("rid")
-        .filter(|value| valid_routing_indicator(value))
-        .ok_or_else(invalid_nai)?
-        .to_owned();
-    let scheme_id = parse_decimal_field(fields[2], "schid")?;
-    if scheme_id > 15 {
-        return Err(invalid_nai());
-    }
-
-    let (home_network_public_key_id, scheme_output) = match scheme_id {
-        0 => {
-            let prefix = format!("{}.{}.{}.userid", fields[0], fields[1], fields[2]);
-            let output = username.strip_prefix(&prefix).ok_or_else(invalid_nai)?;
-            (None, SuciSchemeOutput::Null(output.as_bytes().to_vec()))
-        }
-        1 | 2 => {
-            if fields.len() != 7 {
-                return Err(invalid_nai());
-            }
-            let key_id = parse_decimal_field(fields[3], "hnkey")?;
-            if key_id == 0 {
-                return Err(invalid_nai());
-            }
-            let ephemeral = hex::decode(fields[4].strip_prefix("ecckey").ok_or_else(invalid_nai)?)
-                .map_err(|_| invalid_nai())?;
-            let ciphertext = hex::decode(fields[5].strip_prefix("cip").ok_or_else(invalid_nai)?)
-                .map_err(|_| invalid_nai())?;
-            let mac = hex::decode(fields[6].strip_prefix("mac").ok_or_else(invalid_nai)?)
-                .map_err(|_| invalid_nai())?;
-            let expected_ephemeral = if scheme_id == 1 {
-                PROFILE_A_PUB_KEY_LEN
-            } else {
-                PROFILE_B_PUB_KEY_LEN
-            };
-            if ephemeral.len() != expected_ephemeral || ciphertext.is_empty() || mac.len() != 8 {
-                return Err(invalid_nai());
-            }
-            let mut output = Vec::with_capacity(ephemeral.len() + ciphertext.len() + mac.len());
-            output.extend_from_slice(&ephemeral);
-            output.extend_from_slice(&ciphertext);
-            output.extend_from_slice(&mac);
-            let output = if scheme_id == 1 {
-                SuciSchemeOutput::ProfileA(output)
-            } else {
-                SuciSchemeOutput::ProfileB(output)
-            };
-            (Some(key_id), output)
-        }
-        3..=11 => return Err(invalid_nai()),
-        scheme_id => {
-            if fields.len() < 5 {
-                return Err(invalid_nai());
-            }
-            let key_id = parse_decimal_field(fields[3], "hnkey")?;
-            if key_id == 0 {
-                return Err(invalid_nai());
-            }
-            let prefix = format!(
-                "{}.{}.{}.{}.out",
-                fields[0], fields[1], fields[2], fields[3]
-            );
-            let output = username
-                .strip_prefix(&prefix)
-                .ok_or_else(invalid_nai)?
-                .to_owned();
-            (
-                Some(key_id),
-                SuciSchemeOutput::Proprietary { scheme_id, output },
-            )
-        }
-    };
-    let parsed = NaiSuci {
-        supi_type,
-        routing_indicator,
-        home_network_public_key_id,
-        scheme_output,
-        realm: realm.to_owned(),
-    };
-    validate_nai_suci(&parsed)?;
-    Ok(parsed)
+    hex::decode(digits).map_err(|_| NaiError::Field(field))
 }
 
-/// Encode a typed SUCI into the TS 23.003 NAI representation.
-pub fn encode_nai_suci(suci: &NaiSuci) -> Result<String, SecurityError> {
-    validate_nai_suci(suci)?;
-    let prefix = format!("type{}.rid{}", suci.supi_type as u8, suci.routing_indicator);
-    let username = match &suci.scheme_output {
-        SuciSchemeOutput::Null(output) => format!(
-            "{prefix}.schid0.userid{}",
-            core::str::from_utf8(output).map_err(|_| invalid_nai())?
-        ),
-        SuciSchemeOutput::ProfileA(output) => {
-            let key_id = suci.home_network_public_key_id.ok_or_else(invalid_nai)?;
-            let cipher_end = output.len() - PROFILE_A_MAC_LEN;
-            format!(
-                "{prefix}.schid1.hnkey{key_id}.ecckey{}.cip{}.mac{}",
-                hex::encode(&output[..PROFILE_A_PUB_KEY_LEN]),
-                hex::encode(&output[PROFILE_A_PUB_KEY_LEN..cipher_end]),
-                hex::encode(&output[cipher_end..]),
-            )
-        }
-        SuciSchemeOutput::ProfileB(output) => {
-            let key_id = suci.home_network_public_key_id.ok_or_else(invalid_nai)?;
-            let cipher_end = output.len() - PROFILE_B_MAC_LEN;
-            format!(
-                "{prefix}.schid2.hnkey{key_id}.ecckey{}.cip{}.mac{}",
-                hex::encode(&output[..PROFILE_B_PUB_KEY_LEN]),
-                hex::encode(&output[PROFILE_B_PUB_KEY_LEN..cipher_end]),
-                hex::encode(&output[cipher_end..]),
-            )
-        }
-        SuciSchemeOutput::Proprietary { scheme_id, output } => {
-            let key_id = suci.home_network_public_key_id.ok_or_else(invalid_nai)?;
-            format!("{prefix}.schid{scheme_id}.hnkey{key_id}.out{output}")
-        }
-    };
-    Ok(format!("{username}@{}", suci.realm))
-}
-
-/// Construct a network-specific-identifier SUCI from a `username@realm` SUPI.
-pub fn conceal_network_specific_supi(
-    supi: &str,
-    routing_indicator: &str,
-    protection: NaiProtectionScheme<'_>,
-) -> Result<NaiSuci, SecurityError> {
-    let (username, realm) = supi.rsplit_once('@').ok_or_else(invalid_nai)?;
-    if !valid_realm(realm)
-        || !valid_nai_username(username, false)
-        || !valid_routing_indicator(routing_indicator)
-    {
-        return Err(invalid_nai());
+/// Read a SUCI in the NAI format: `username@realm`, the username in one
+/// of the three forms of TS 23.003 §28.7.3.
+pub(super) fn parse(input: &str) -> Result<Suci, SuciError> {
+    // The length first: what follows looks at no more than this
+    if input.len() > LONGEST_SUCI_NAI {
+        return Err(NaiError::TooLong.into());
     }
-    let (key_id, output) = match protection {
-        NaiProtectionScheme::Null => (None, SuciSchemeOutput::Null(username.as_bytes().to_vec())),
-        NaiProtectionScheme::ProfileA {
-            home_network_public_key_id,
-            home_network_public_key,
-        } => {
-            if username.is_empty() || home_network_public_key_id == 0 {
-                return Err(invalid_nai());
-            }
-            (
-                Some(home_network_public_key_id),
-                SuciSchemeOutput::ProfileA(suci_scheme_output_a(
-                    username.as_bytes(),
-                    home_network_public_key,
-                )?),
-            )
-        }
-        NaiProtectionScheme::ProfileB {
-            home_network_public_key_id,
-            home_network_public_key,
-        } => {
-            if username.is_empty() || home_network_public_key_id == 0 {
-                return Err(invalid_nai());
-            }
-            (
-                Some(home_network_public_key_id),
-                SuciSchemeOutput::ProfileB(suci_scheme_output_b(
-                    username.as_bytes(),
-                    home_network_public_key,
-                )?),
-            )
-        }
-    };
-    let suci = NaiSuci {
-        supi_type: SupiType::NetworkSpecific,
-        routing_indicator: routing_indicator.to_owned(),
-        home_network_public_key_id: key_id,
-        scheme_output: output,
-        realm: realm.to_owned(),
-    };
-    validate_nai_suci(&suci)?;
-    Ok(suci)
-}
+    let (username, realm) = input.rsplit_once('@').ok_or(NaiError::NoRealm)?;
+    let realm = checked_realm(realm)?;
 
-/// Deconceal a non-IMSI NAI SUCI into its `username@realm` SUPI.
-pub fn deconceal_nai_suci(
-    suci: &NaiSuci,
-    home_network_private_key: Option<&[u8]>,
-) -> Result<String, SecurityError> {
-    validate_nai_suci(suci)?;
-    if suci.supi_type == SupiType::Imsi {
-        return Err(SecurityError::InvalidParameter(
-            "IMSI NAI deconcealment needs the IMSI home-network prefix",
-        ));
-    }
-    let username = match &suci.scheme_output {
-        SuciSchemeOutput::Null(output) => output.clone(),
-        SuciSchemeOutput::ProfileA(output) => {
-            let key: &[u8; 32] = home_network_private_key
-                .ok_or(SecurityError::InvalidParameter(
-                    "missing home-network private key",
-                ))?
-                .try_into()
-                .map_err(|_| SecurityError::InvalidKeyLength {
-                    expected: 32,
-                    got: home_network_private_key.map_or(0, <[u8]>::len),
-                })?;
-            suci_decrypt_a(output, key)?
-        }
-        SuciSchemeOutput::ProfileB(output) => suci_decrypt_b(
-            output,
-            home_network_private_key.ok_or(SecurityError::InvalidParameter(
-                "missing home-network private key",
-            ))?,
-        )?,
-        SuciSchemeOutput::Proprietary { .. } => {
-            return Err(SecurityError::InvalidParameter(
-                "operator-defined SUCI cannot be deconcealed generically",
-            ));
-        }
-    };
-    let username = String::from_utf8(username).map_err(|_| invalid_nai())?;
-    if !valid_null_scheme_output(suci.supi_type, &username) {
-        return Err(invalid_nai());
-    }
-    Ok(format!("{username}@{}", suci.realm))
-}
-
-/// Deconceal a network-specific-identifier SUCI.
-pub fn deconceal_network_specific_suci(
-    suci: &NaiSuci,
-    home_network_private_key: Option<&[u8]>,
-) -> Result<String, SecurityError> {
-    if suci.supi_type != SupiType::NetworkSpecific {
-        return Err(SecurityError::InvalidParameter(
-            "SUCI is not a network-specific identifier",
-        ));
-    }
-    deconceal_nai_suci(suci, home_network_private_key)
-}
-
-/// Deconceal the NAI that a NAS SUCI carries after its first octet.
-/// `nas_supi_format` is the SUPI format of that octet: 1 for a network
-/// specific identifier, 2 for a GCI and 3 for a GLI (TS 24.501 §9.11.3.4).
-pub(super) fn nas_nai_suci_to_supi(
-    nas_supi_format: u8,
-    nai: &[u8],
-    home_network_private_key: Option<&[u8]>,
-) -> Option<String> {
-    let expected_textual_type = match nas_supi_format {
+    // The scheme output of the null scheme, the last field, may have dots
+    let mut fields = username.splitn(4, '.');
+    let mut field = |name: &'static str| fields.next().ok_or(NaiError::Field(name));
+    let supi_type = match number("type", field("type")?)? {
+        0 => SupiType::Imsi,
         1 => SupiType::NetworkSpecific,
-        // TS 24.501 NAS values 2/3 are GCI/GLI, while TS 23.003's
-        // textual type values 2/3 are GLI/GCI.
-        2 => SupiType::Gci,
-        3 => SupiType::Gli,
-        _ => return None,
+        2 => SupiType::Gli,
+        3 => SupiType::Gci,
+        other => return Err(SuciError::SupiType(other)),
     };
-    let parsed = parse_nai_suci(core::str::from_utf8(nai).ok()?).ok()?;
-    if parsed.supi_type != expected_textual_type {
-        return None;
+    let routing_indicator = field("rid")?
+        .strip_prefix("rid")
+        .ok_or(NaiError::Field("rid"))?;
+    let routing_indicator = RoutingIndicator::new(routing_indicator)?;
+    let scheme = match number("schid", field("schid")?)? {
+        identifier @ 0..=15 => ProtectionScheme::try_from(identifier)?,
+        _ => return Err(NaiError::Field("schid").into()),
+    };
+    let rest = field(match scheme {
+        ProtectionScheme::Null => "userid",
+        _ => "hnkey",
+    })?;
+
+    let (key_id, output) = match scheme {
+        ProtectionScheme::Null => {
+            let clear = rest
+                .strip_prefix("userid")
+                .ok_or(NaiError::Field("userid"))?;
+            (0, clear.as_bytes().to_vec())
+        }
+        ProtectionScheme::ProfileA | ProtectionScheme::ProfileB => {
+            let fields: Vec<&str> = rest.split('.').collect();
+            if fields.len() > 4 {
+                return Err(NaiError::Field("mac").into());
+            }
+            let key_id = number("hnkey", fields[0])?;
+            let public_key_len = if scheme == ProtectionScheme::ProfileA {
+                PROFILE_A_PUBLIC_KEY_LEN
+            } else {
+                PROFILE_B_PUBLIC_KEY_LEN
+            };
+            let mut output = octets(
+                "ecckey",
+                fields.get(1),
+                public_key_len,
+                Some(public_key_len),
+            )?;
+            let ciphertext = octets("cip", fields.get(2), LONGEST_USERNAME, None)?;
+            if ciphertext.is_empty() {
+                return Err(NaiError::Field("cip").into());
+            }
+            output.extend_from_slice(&ciphertext);
+            output.extend_from_slice(&octets("mac", fields.get(3), MAC_LEN, Some(MAC_LEN))?);
+            (key_id, output)
+        }
+        ProtectionScheme::Proprietary(_) => {
+            let (key_id, output) = rest.split_once('.').ok_or(NaiError::Field("out"))?;
+            let key_id = number("hnkey", key_id)?;
+            (
+                key_id,
+                octets("out", Some(&output), LONGEST_PROPRIETARY_OUTPUT, None)?,
+            )
+        }
+    };
+    let home = Home::Realm(realm.to_owned());
+    Suci::checked(supi_type, home, routing_indicator, scheme, key_id, output)
+}
+
+/// What the realm of a SUCI has to be for its SUPI type, once it is a
+/// realm: that of an IMSI is the home network domain of its PLMN.
+pub(super) fn check(suci: &Suci) -> Result<(), SuciError> {
+    match &suci.home {
+        Home::Realm(realm) if suci.supi_type == SupiType::Imsi && !valid_imsi_realm(realm) => {
+            Err(NaiError::ImsiRealm.into())
+        }
+        _ => Ok(()),
     }
-    deconceal_nai_suci(&parsed, home_network_private_key).ok()
+}
+
+/// Write a SUCI in the NAI format.
+pub(super) fn encode(suci: &Suci) -> String {
+    let realm = match &suci.home {
+        Home::Plmn(plmn) => imsi_realm(*plmn),
+        Home::Realm(realm) => realm.clone(),
+    };
+    let fields = format!(
+        "type{}.rid{}.schid{}",
+        type_number(suci.supi_type),
+        suci.routing_indicator.as_str(),
+        suci.scheme.identifier(),
+    );
+    let key_id = suci.key_id;
+    let output = match suci.scheme_output() {
+        super::SchemeOutput::Clear(clear) => format!("userid{clear}"),
+        super::SchemeOutput::Ecies {
+            ephemeral_public_key,
+            ciphertext,
+            mac_tag,
+        } => format!(
+            "hnkey{key_id}.ecckey{}.cip{}.mac{}",
+            hex::encode(ephemeral_public_key),
+            hex::encode(ciphertext),
+            hex::encode(mac_tag),
+        ),
+        super::SchemeOutput::Proprietary(output) => {
+            format!("hnkey{key_id}.out{}", hex::encode(output))
+        }
+    };
+    format!("{fields}.{output}@{realm}")
+}
+
+/// The username and the realm of the NAI of a SUPI that is concealed: a
+/// network specific identifier, a GCI or a GLI.
+pub(super) fn username_and_realm(kind: SupiType, nai: &str) -> Result<(&str, &str), SuciError> {
+    let (username, realm) = nai.rsplit_once('@').ok_or(NaiError::NoRealm)?;
+    let realm = checked_realm(realm)?;
+    if !valid_identity(kind, username) {
+        return Err(NaiError::Username.into());
+    }
+    Ok((username, realm))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::suci_to_supi;
     use super::super::test_keys::*;
+    use super::super::{HomeNetwork, Protection, SchemeOutput};
     use super::*;
+    use crate::nas_5gs::supi::Supi;
 
+    fn nas(format: u8, nai: &str) -> Vec<u8> {
+        let mut identity = vec![(format << 4) | 0x01];
+        identity.extend_from_slice(nai.as_bytes());
+        identity
+    }
+
+    fn refused(nai: &str) -> SuciError {
+        Suci::from_nai(nai).unwrap_err()
+    }
+
+    /// The examples of TS 23.003 §28.7.3, §28.15.5 and §28.16.5.
     #[test]
-    fn nai_null_scheme_real_wire_and_gci_gli_mapping() {
+    fn a_suci_of_the_null_scheme_is_read_in_both_forms() {
         let wire = "type1.rid678.schid0.useriduser17@example.com";
-        let parsed = parse_nai_suci(wire).unwrap();
-        assert_eq!(parsed.supi_type, SupiType::NetworkSpecific);
-        assert_eq!(encode_nai_suci(&parsed).unwrap(), wire);
-        assert_eq!(
-            deconceal_network_specific_suci(&parsed, None).unwrap(),
-            "user17@example.com"
-        );
+        let suci = Suci::from_nai(wire).unwrap();
+        assert_eq!(suci.supi_type(), SupiType::NetworkSpecific);
+        assert_eq!(suci.home_network(), HomeNetwork::Realm("example.com"));
+        assert_eq!(suci.routing_indicator(), "678");
+        assert_eq!(suci.protection_scheme(), ProtectionScheme::Null);
+        assert_eq!(suci.home_network_public_key_id(), 0);
+        assert_eq!(suci.scheme_output(), SchemeOutput::Clear("user17"));
+        assert_eq!(suci.to_nai(), wire);
+        assert_eq!(suci.to_string(), "suci-1-example.com-678-0-0-user17");
+        let supi = suci.deconceal(None).unwrap();
+        assert_eq!(supi, Supi::network_specific("user17@example.com").unwrap());
+        assert_eq!(supi.to_string(), "nai-user17@example.com");
 
-        let mut nas = vec![0x11];
-        nas.extend_from_slice(wire.as_bytes());
-        assert_eq!(
-            suci_to_supi(&nas, None).as_deref(),
-            Some("user17@example.com")
-        );
+        // In a mobile identity, the SUPI format 1 and the text
+        assert_eq!(suci.to_nas().unwrap(), nas(1, wire));
+        assert_eq!(Suci::from_nas(&nas(1, wire)), Ok(suci));
 
-        // NAS format 2 means GCI, whose TS 23.003 textual type is 3.
+        // The SUPI format 2 of NAS is a GCI, whose SUPI type is 3, and the
+        // SUPI format 3 a GLI, whose SUPI type is 2
         let gci = "type3.rid0.schid0.userid00-00-5E-00-53-00@operator.com";
-        let mut nas = vec![0x21];
-        nas.extend_from_slice(gci.as_bytes());
+        let suci = Suci::from_nas(&nas(2, gci)).unwrap();
+        assert_eq!(suci.supi_type(), SupiType::Gci);
+        assert_eq!(suci.to_nas().unwrap(), nas(2, gci));
         assert_eq!(
-            suci_to_supi(&nas, None).as_deref(),
-            Some("00-00-5E-00-53-00@operator.com")
+            suci.deconceal(None).unwrap().to_string(),
+            "gci-00-00-5E-00-53-00@operator.com"
         );
-        // NAS format 3 means GLI, whose textual type is 2.
         let gli = "type2.rid0.schid0.useridQUJDRA==@operator.com";
-        let mut nas = vec![0x31];
-        nas.extend_from_slice(gli.as_bytes());
+        let suci = Suci::from_nas(&nas(3, gli)).unwrap();
+        assert_eq!(suci.supi_type(), SupiType::Gli);
+        assert_eq!(suci.to_nas().unwrap(), nas(3, gli));
         assert_eq!(
-            suci_to_supi(&nas, None).as_deref(),
-            Some("QUJDRA==@operator.com")
+            suci.deconceal(None).unwrap().to_string(),
+            "gli-QUJDRA==@operator.com"
         );
-        assert!(parse_nai_suci("type3.rid1.schid0.userid00-00-5E-00-53-00@operator.com").is_err());
-    }
-
-    #[test]
-    fn nai_proprietary_scheme_range_and_hex_output_are_strict() {
-        for valid in [
-            "type1.rid678.schid12.hnkey27.out00aBff@example.com",
-            "type1.rid678.schid12.hnkey255.out00aBff@example.com",
-        ] {
-            let parsed = parse_nai_suci(valid).unwrap();
-            assert_eq!(encode_nai_suci(&parsed).unwrap(), valid);
+        for (format, nai) in [(1, gci), (2, gli), (3, gci), (2, wire)] {
+            assert_eq!(
+                Suci::from_nas(&nas(format, nai)),
+                Err(SuciError::SupiTypeMismatch)
+            );
         }
+        // A GCI and a GLI have the routing indicator 0 and the null scheme
+        assert_eq!(
+            refused("type3.rid1.schid0.userid00-00-5E-00-53-00@operator.com"),
+            SuciError::RoutingIndicator
+        );
+        assert_eq!(
+            refused("type3.rid0.schid12.hnkey1.outaa@operator.com"),
+            SuciError::NullSchemeRequired
+        );
+        // An anonymous SUCI, whose username is empty
+        let anonymous = Suci::from_nai("type1.rid678.schid0.userid@example.com").unwrap();
+        assert_eq!(
+            anonymous.deconceal(None).unwrap().identity(),
+            "@example.com"
+        );
+    }
 
-        assert!(parse_nai_suci("type1.rid678.schid3.hnkey27.out00aBff@example.com").is_err());
-        assert!(parse_nai_suci("type1.rid678.schid12.hnkey27.outnot-hex@example.com").is_err());
-        assert!(
-            encode_nai_suci(&NaiSuci {
-                supi_type: SupiType::NetworkSpecific,
-                routing_indicator: "678".into(),
-                home_network_public_key_id: Some(27),
-                scheme_output: SuciSchemeOutput::Proprietary {
-                    scheme_id: 15,
-                    output: "xyz".into(),
-                },
-                realm: "example.com".into(),
-            })
-            .is_err()
+    /// m5: each mistake has an error of its own.
+    #[test]
+    fn a_text_that_is_no_suci_is_refused_with_its_reason() {
+        for (nai, error) in [
+            ("type1.rid678.schid0.useriduser17", NaiError::NoRealm),
+            ("type1.rid678.schid0.useriduser17@example", NaiError::Realm),
+            ("type1.rid678.schid0.useriduser17@", NaiError::Realm),
+            ("@example.com", NaiError::Field("type")),
+            ("user17@example.com", NaiError::Field("type")),
+            (
+                "typex.rid678.schid0.useridu@example.com",
+                NaiError::Field("type"),
+            ),
+            ("type1@example.com", NaiError::Field("rid")),
+            (
+                "type1.schid0.rid1.useridu@example.com",
+                NaiError::Field("rid"),
+            ),
+            ("type1.rid678@example.com", NaiError::Field("schid")),
+            (
+                "type1.rid678.schid16.useridu@example.com",
+                NaiError::Field("schid"),
+            ),
+            ("type1.rid678.schid0@example.com", NaiError::Field("userid")),
+            (
+                "type1.rid678.schid0.user17@example.com",
+                NaiError::Field("userid"),
+            ),
+            ("type1.rid678.schid1@example.com", NaiError::Field("hnkey")),
+            (
+                "type1.rid678.schid1.hnkey@example.com",
+                NaiError::Field("hnkey"),
+            ),
+            (
+                "type1.rid678.schid1.hnkey1000.ecckey@example.com",
+                NaiError::Field("hnkey"),
+            ),
+            (
+                "type1.rid678.schid1.hnkey27@example.com",
+                NaiError::Field("ecckey"),
+            ),
+            (
+                "type1.rid678.schid12.hnkey27@example.com",
+                NaiError::Field("out"),
+            ),
+            (
+                "type1.rid678.schid12.hnkey27.outnot-hex@example.com",
+                NaiError::Field("out"),
+            ),
+            (
+                "type1.rid678.schid12.hnkey27.outabc@example.com",
+                NaiError::Field("out"),
+            ),
+        ] {
+            assert_eq!(refused(nai), SuciError::Nai(error), "{nai}");
+        }
+        // The fields of a profile, each missing or of another length
+        let key = "42".repeat(32);
+        let profile = |ecckey: &str, cip: &str, mac: &str| {
+            format!("type1.rid678.schid1.hnkey27.{ecckey}.{cip}.{mac}@example.com")
+        };
+        let whole = profile(&format!("ecckey{key}"), "cipaabb", "mac0011223344556677");
+        assert!(Suci::from_nai(&whole).is_ok());
+        for (nai, field) in [
+            (
+                profile(
+                    &format!("ecckey{}", &key[2..]),
+                    "cipaabb",
+                    "mac0011223344556677",
+                ),
+                "ecckey",
+            ),
+            (
+                profile(&format!("key{key}"), "cipaabb", "mac0011223344556677"),
+                "ecckey",
+            ),
+            (
+                profile(&format!("ecckey{key}"), "cip", "mac0011223344556677"),
+                "cip",
+            ),
+            (
+                profile(&format!("ecckey{key}"), "cipaab", "mac0011223344556677"),
+                "cip",
+            ),
+            (
+                profile(&format!("ecckey{key}"), "cipaabb", "mac00112233445566"),
+                "mac",
+            ),
+            (
+                profile(
+                    &format!("ecckey{key}"),
+                    "cipaabb",
+                    "mac0011223344556677.more",
+                ),
+                "mac",
+            ),
+            (whole.replace(".mac0011223344556677", ""), "mac"),
+        ] {
+            assert_eq!(
+                refused(&nai),
+                SuciError::Nai(NaiError::Field(field)),
+                "{nai}"
+            );
+        }
+        // What is not of the NAI itself
+        assert_eq!(
+            refused("type7.rid678.schid0.useridu@example.com"),
+            SuciError::SupiType(7)
+        );
+        assert_eq!(
+            refused("type1.rid12345.schid0.useridu@example.com"),
+            SuciError::RoutingIndicator
+        );
+        assert_eq!(
+            refused("type1.rid678.schid3.hnkey27.out00@example.com"),
+            SuciError::UnknownScheme(3)
+        );
+        assert_eq!(
+            refused("type1.rid678.schid0.userida b@example.com"),
+            SuciError::SchemeOutput
+        );
+        // A SUPI without a realm, and one that is an IMSI
+        let conceal = |supi: &Supi<'_>| Suci::conceal_nai(supi, "678", Protection::Null);
+        assert!(Supi::network_specific("bob").is_err());
+        assert_eq!(
+            conceal(&Supi::network_specific("bob@example").unwrap()),
+            Err(SuciError::Nai(NaiError::Realm))
+        );
+        assert_eq!(
+            conceal(&Supi::network_specific("a b@example.com").unwrap()),
+            Err(SuciError::Nai(NaiError::Username))
+        );
+        assert_eq!(
+            conceal(&Supi::imsi("208930000000001").unwrap()),
+            Err(SuciError::Identity)
+        );
+        // A text of a mobile identity that is not UTF-8
+        assert_eq!(
+            Suci::from_nas(&[0x11, b't', 0xff, b'@', b'a', b'.', b'b']),
+            Err(SuciError::Nai(NaiError::Encoding))
+        );
+    }
+
+    /// m3: the length is looked at first, and the realm before its
+    /// labels.
+    #[test]
+    fn a_text_that_is_too_long_is_refused_before_it_is_read() {
+        let huge = format!(
+            "type1.rid0.schid0.userid{}@example.com",
+            "a".repeat(64 * 1024)
+        );
+        assert_eq!(refused(&huge), SuciError::Nai(NaiError::TooLong));
+        assert_eq!(
+            Suci::from_nas(&nas(1, &huge)),
+            Err(SuciError::Nai(NaiError::TooLong))
+        );
+        let long_realm = format!("type1.rid0.schid0.useridu@{}.com", "a".repeat(250));
+        assert_eq!(refused(&long_realm), SuciError::Nai(NaiError::Realm));
+        let realm = format!("{0}.{0}.{0}.{1}.com", "a".repeat(63), "a".repeat(57));
+        assert_eq!(realm.len(), 253);
+        assert!(Suci::from_nai(&format!("type1.rid0.schid0.useridu@{realm}")).is_ok());
+        // A username of more than 253 octets, in clear and as ciphertext
+        let long_username = format!("type1.rid0.schid0.userid{}@example.com", "a".repeat(254));
+        assert_eq!(refused(&long_username), SuciError::SchemeOutput);
+        let long_ciphertext = format!(
+            "type1.rid0.schid1.hnkey1.ecckey{}.cip{}.mac0011223344556677@example.com",
+            "42".repeat(32),
+            "aa".repeat(254)
+        );
+        assert_eq!(
+            refused(&long_ciphertext),
+            SuciError::Nai(NaiError::Field("cip"))
+        );
+    }
+
+    /// The home network public key identifier is 1 to 254 with a scheme
+    /// that has a key, in this form as in a mobile identity.
+    #[test]
+    fn a_key_identifier_is_the_same_in_both_forms() {
+        for valid in [1, 27, 254] {
+            let nai = format!("type1.rid678.schid12.hnkey{valid}.out00abff@example.com");
+            let suci = Suci::from_nai(&nai).unwrap();
+            assert_eq!(suci.home_network_public_key_id(), valid);
+            assert_eq!(
+                suci.scheme_output(),
+                SchemeOutput::Proprietary(&[0x00, 0xab, 0xff])
+            );
+            assert_eq!(suci.to_nai(), nai);
+        }
+        for invalid in [0, 255] {
+            let nai = format!("type1.rid678.schid12.hnkey{invalid}.out00abff@example.com");
+            assert_eq!(refused(&nai), SuciError::KeyIdentifier(invalid));
+        }
+        // Hexadecimal digits of either case are read, and written small
+        let upper = Suci::from_nai("type1.rid678.schid12.hnkey27.out00ABFF@example.com").unwrap();
+        assert_eq!(
+            upper.to_nai(),
+            "type1.rid678.schid12.hnkey27.out00abff@example.com"
         );
     }
 
     #[test]
-    fn nai_rfc7542_username_and_realm_grammar_is_strict() {
+    fn the_grammar_of_rfc_7542_is_strict() {
         for realm in [
             ".",
             "a..b",
@@ -656,18 +628,9 @@ mod tests {
             "ｅxample.com",
             "a．b.example",
         ] {
-            assert!(
-                encode_nai_suci(&NaiSuci {
-                    supi_type: SupiType::NetworkSpecific,
-                    routing_indicator: "678".into(),
-                    home_network_public_key_id: Some(27),
-                    scheme_output: SuciSchemeOutput::Proprietary {
-                        scheme_id: 12,
-                        output: "aabb".into(),
-                    },
-                    realm: realm.into(),
-                })
-                .is_err(),
+            assert_eq!(
+                refused(&format!("type1.rid678.schid0.useridu@{realm}")),
+                SuciError::Nai(NaiError::Realm),
                 "realm {realm:?}"
             );
         }
@@ -676,144 +639,173 @@ mod tests {
             "type1.rid678.schid0.userida@b@example.com",
             "type1.rid678.schid0.userida..b@example.com",
         ] {
-            assert!(parse_nai_suci(wire).is_err(), "{wire}");
+            assert_eq!(refused(wire), SuciError::SchemeOutput, "{wire}");
         }
-        assert!(
-            conceal_network_specific_supi("a b@example.com", "678", NaiProtectionScheme::Null)
-                .is_err()
-        );
-        assert!(
-            conceal_network_specific_supi("a@b@example.com", "678", NaiProtectionScheme::Null)
-                .is_err()
-        );
-        assert!(
-            conceal_network_specific_supi("e\u{301}@example.com", "678", NaiProtectionScheme::Null)
-                .is_err()
-        );
-
-        for username in ["user\u{a0}name", "user\u{2003}name"] {
-            let supi = format!("{username}@example.com");
-            let concealed =
-                conceal_network_specific_supi(&supi, "678", NaiProtectionScheme::Null).unwrap();
+        let conceal = |nai: &str| {
+            Suci::conceal_nai(
+                &Supi::network_specific(nai).unwrap(),
+                "678",
+                Protection::Null,
+            )
+        };
+        // A space, a second @, and a username that is not normalized
+        for nai in ["a b@example.com", "a@b@example.com", "e\u{301}@example.com"] {
             assert_eq!(
-                deconceal_network_specific_suci(&concealed, None).unwrap(),
-                supi
+                conceal(nai),
+                Err(SuciError::Nai(NaiError::Username)),
+                "{nai}"
             );
+        }
+        for username in ["user\u{a0}name", "user\u{2003}name", "élodie"] {
+            let nai = format!("{username}@example.com");
+            let supi = conceal(&nai).unwrap().deconceal(None).unwrap();
+            assert_eq!(supi.identity(), nai);
         }
         for username in ["user\u{85}name", "user\u{7f}name"] {
-            assert!(
-                conceal_network_specific_supi(
-                    &format!("{username}@example.com"),
-                    "678",
-                    NaiProtectionScheme::Null,
-                )
-                .is_err()
-            );
+            assert!(conceal(&format!("{username}@example.com")).is_err());
         }
-
-        let unicode =
-            conceal_network_specific_supi("élodie@example.com", "678", NaiProtectionScheme::Null)
-                .unwrap();
-        assert_eq!(
-            deconceal_network_specific_suci(&unicode, None).unwrap(),
-            "élodie@example.com"
-        );
         for realm in ["bücher.example", "xn--bcher-kva.example"] {
             let nai = format!("alice@{realm}");
-            let concealed =
-                conceal_network_specific_supi(&nai, "678", NaiProtectionScheme::Null).unwrap();
-            assert_eq!(
-                deconceal_network_specific_suci(&concealed, None).unwrap(),
-                nai
-            );
+            let supi = conceal(&nai).unwrap().deconceal(None).unwrap();
+            assert_eq!(supi.identity(), nai);
         }
-        assert!(parse_nai_suci("type1.rid678.schid0.useridélodie@bu\u{0308}cher.example").is_err());
-        for imsi in [
+        assert_eq!(
+            refused("type1.rid678.schid0.useridélodie@bu\u{0308}cher.example"),
+            SuciError::Nai(NaiError::Realm)
+        );
+    }
+
+    /// TS 23.003 §28.7.3: the SUCI of an IMSI in the NAI format, whose
+    /// realm is the home network domain. It is read and written, and its
+    /// IMSI is not known from it.
+    #[test]
+    fn an_imsi_in_the_nai_format_keeps_its_realm() {
+        for nai in [
             "type0.rid678.schid0.userid0999999999@5gc.mnc015.mcc234.3gppnetwork.org",
             "type0.rid678.schid0.userid0999999999@5gc.nid000007ed9d5.mnc015.mcc234.3gppnetwork.org",
         ] {
-            assert_eq!(
-                encode_nai_suci(&parse_nai_suci(imsi).unwrap()).unwrap(),
-                imsi
-            );
+            let suci = Suci::from_nai(nai).unwrap();
+            assert_eq!(suci.supi_type(), SupiType::Imsi);
+            assert_eq!(suci.to_nai(), nai);
+            assert_eq!(suci.deconceal(None), Err(SuciError::MncLengthUnknown));
+            assert_eq!(suci.to_nas(), Err(SuciError::MncLengthUnknown));
         }
-        for wire in [
-            "type0.rid678.schid0.userid@5gc.mnc015.mcc234.3gppnetwork.org",
-            "type0.rid678.schid0.useridabc@5gc.mnc015.mcc234.3gppnetwork.org",
-            "type0.rid678.schid0.userid01234567890@5gc.mnc015.mcc234.3gppnetwork.org",
-            "type0.rid678.schid0.userid0123@example.com",
-            "type3.rid0.schid0.userid@operator.com",
-            "type2.rid0.schid0.userid***@operator.com",
+        for (nai, error) in [
+            (
+                "type0.rid678.schid0.userid@5gc.mnc015.mcc234.3gppnetwork.org",
+                SuciError::SchemeOutput,
+            ),
+            (
+                "type0.rid678.schid0.useridabc@5gc.mnc015.mcc234.3gppnetwork.org",
+                SuciError::SchemeOutput,
+            ),
+            (
+                "type0.rid678.schid0.userid01234567890@5gc.mnc015.mcc234.3gppnetwork.org",
+                SuciError::SchemeOutput,
+            ),
+            (
+                "type0.rid678.schid0.userid0123@example.com",
+                SuciError::Nai(NaiError::ImsiRealm),
+            ),
+            (
+                "type3.rid0.schid0.userid@operator.com",
+                SuciError::SchemeOutput,
+            ),
+            (
+                "type2.rid0.schid0.userid***@operator.com",
+                SuciError::SchemeOutput,
+            ),
         ] {
-            assert!(parse_nai_suci(wire).is_err(), "{wire}");
+            assert_eq!(refused(nai), error, "{nai}");
         }
-    }
-
-    #[test]
-    fn nai_profiles_decrypt_official_annex_c_vectors() {
-        let private_a = hex::decode(PROFILE_A_PRIV).unwrap();
-        let output_a = hex::decode(concat!(
-            "977d8b2fdaa7b64aa700d04227d5b440630ea4ec50f9082273a26bb678c92222",
-            "8e358a1582adb15322c10e515141d2039a",
-            "12e1d7783a97f1ac"
-        ))
-        .unwrap();
-        let suci_a = NaiSuci {
-            supi_type: SupiType::NetworkSpecific,
-            routing_indicator: "678".into(),
-            home_network_public_key_id: Some(27),
-            scheme_output: SuciSchemeOutput::ProfileA(output_a),
-            realm: "3gpp.com".into(),
-        };
-        assert_eq!(
-            deconceal_network_specific_suci(&suci_a, Some(&private_a)).unwrap(),
-            "verylongusername1@3gpp.com"
-        );
-        assert_eq!(
-            parse_nai_suci(&encode_nai_suci(&suci_a).unwrap()).unwrap(),
-            suci_a
-        );
-
-        let private_b = hex::decode(PROFILE_B_PRIV).unwrap();
-        let output_b = hex::decode(concat!(
-            "03759bb22c563d9f4a6b3c1419e543fc2f39d6823f02a9d71162b39399218b244b",
-            "be22d8b9f856a52ed381cd7eaf4cf2d525",
-            "3cddc61a0a7882eb"
-        ))
-        .unwrap();
-        let suci_b = NaiSuci {
-            supi_type: SupiType::NetworkSpecific,
-            routing_indicator: "678".into(),
-            home_network_public_key_id: Some(27),
-            scheme_output: SuciSchemeOutput::ProfileB(output_b),
-            realm: "3gpp.com".into(),
-        };
-        assert_eq!(
-            deconceal_network_specific_suci(&suci_b, Some(&private_b)).unwrap(),
-            "verylongusername1@3gpp.com"
-        );
-        assert_eq!(
-            parse_nai_suci(&encode_nai_suci(&suci_b).unwrap()).unwrap(),
-            suci_b
-        );
-    }
-
-    #[test]
-    fn nai_constructor_uses_utf8_username_as_ecies_plaintext() {
-        let public: [u8; 32] = hex::decode(PROFILE_A_PUB).unwrap().try_into().unwrap();
-        let private = hex::decode(PROFILE_A_PRIV).unwrap();
-        let suci = conceal_network_specific_supi(
-            "user17@example.com",
+        // The IMSI of a mobile identity is written with the realm of its
+        // PLMN, the MNC with three digits (the example of §28.7.3)
+        let suci = Suci::conceal_imsi(
+            crate::Plmn::new("234", "15").unwrap(),
+            "0999999999",
             "678",
-            NaiProtectionScheme::ProfileA {
-                home_network_public_key_id: 27,
-                home_network_public_key: &public,
-            },
+            Protection::Null,
         )
         .unwrap();
         assert_eq!(
-            deconceal_network_specific_suci(&suci, Some(&private)).unwrap(),
-            "user17@example.com"
+            suci.to_nai(),
+            "type0.rid678.schid0.userid0999999999@5gc.mnc015.mcc234.3gppnetwork.org"
+        );
+    }
+
+    /// TS 33.501 Annex C.4.3.2 and C.4.4.2: the scheme outputs of the
+    /// network specific identifier verylongusername1@3gpp.com.
+    #[test]
+    fn the_profiles_de_conceal_the_data_of_annex_c4() {
+        for (scheme, private, ecckey, cip, mac) in [
+            (
+                1,
+                private_a(),
+                "977d8b2fdaa7b64aa700d04227d5b440630ea4ec50f9082273a26bb678c92222",
+                "8e358a1582adb15322c10e515141d2039a",
+                "12e1d7783a97f1ac",
+            ),
+            (
+                2,
+                private_b(),
+                "03759bb22c563d9f4a6b3c1419e543fc2f39d6823f02a9d71162b39399218b244b",
+                "be22d8b9f856a52ed381cd7eaf4cf2d525",
+                "3cddc61a0a7882eb",
+            ),
+        ] {
+            let nai = format!(
+                "type1.rid678.schid{scheme}.hnkey27.ecckey{ecckey}.cip{cip}.mac{mac}@3gpp.com"
+            );
+            let suci = Suci::from_nai(&nai).unwrap();
+            assert_eq!(suci.to_nai(), nai);
+            assert_eq!(suci.home_network_public_key_id(), 27);
+            assert_eq!(
+                suci.deconceal(Some(&private)).unwrap().identity(),
+                "verylongusername1@3gpp.com"
+            );
+            assert_eq!(Suci::from_nas(&suci.to_nas().unwrap()), Ok(suci));
+        }
+    }
+
+    #[test]
+    fn a_username_is_concealed_as_its_octets() {
+        let supi = Supi::network_specific("user17@example.com").unwrap();
+        for (public, private) in [(public_a(), private_a()), (public_b(), private_b())] {
+            let protection = Protection::Ecies {
+                key_id: 27,
+                key: &public,
+            };
+            let suci = Suci::conceal_nai(&supi, "678", protection).unwrap();
+            let SchemeOutput::Ecies { ciphertext, .. } = suci.scheme_output() else {
+                panic!("the scheme output of a profile");
+            };
+            assert_eq!(ciphertext.len(), "user17".len());
+            assert_eq!(
+                suci.deconceal(Some(&private)),
+                Ok(supi.clone().into_owned())
+            );
+            // A username that is not there cannot be concealed
+            let anonymous = Supi::network_specific("@example.com").unwrap();
+            assert_eq!(
+                Suci::conceal_nai(&anonymous, "678", protection),
+                Err(SuciError::Nai(NaiError::Username))
+            );
+        }
+        // A GCI and a GLI have the null scheme alone
+        let gci = Supi::gci("00-00-5E-00-53-00@operator.com").unwrap();
+        let protection = Protection::Ecies {
+            key_id: 1,
+            key: &public_a(),
+        };
+        assert_eq!(
+            Suci::conceal_nai(&gci, "0", protection),
+            Err(SuciError::NullSchemeRequired)
+        );
+        assert_eq!(
+            Suci::conceal_nai(&gci, "0", Protection::Null)
+                .unwrap()
+                .to_nai(),
+            "type3.rid0.schid0.userid00-00-5E-00-53-00@operator.com"
         );
     }
 
@@ -821,16 +813,11 @@ mod tests {
     /// the username of the NAI.
     #[test]
     fn annex_c4_null_scheme_nai_vector() {
-        let suci = conceal_network_specific_supi(
-            "verylongusername1@3gpp.com",
-            "0",
-            NaiProtectionScheme::Null,
-        )
-        .unwrap();
-        assert!(
-            encode_nai_suci(&suci)
-                .unwrap()
-                .ends_with(".schid0.useridverylongusername1@3gpp.com")
+        let supi = Supi::network_specific("verylongusername1@3gpp.com").unwrap();
+        let suci = Suci::conceal_nai(&supi, "0", Protection::Null).unwrap();
+        assert_eq!(
+            suci.to_nai(),
+            "type1.rid0.schid0.useridverylongusername1@3gpp.com"
         );
     }
 }

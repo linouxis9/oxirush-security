@@ -17,14 +17,12 @@
 
 //! 5GS NAS integrity and ciphering (TS 33.501 §6.4.3 and §6.4.4).
 
+use super::keys::{KNasEnc, KNasInt};
 use crate::common::batch::{CipherJob, MacJob};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
-pub use crate::common::{
-    nea_cipher, nea_cipher_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits,
-    nea3_cipher, nea3_cipher_bits, nia_mac, nia_mac_bits, nia1_mac, nia1_mac_bits, nia2_mac,
-    nia2_mac_bits, nia3_mac, nia3_mac_bits,
-};
+use crate::common::nea::nea_cipher;
+use crate::common::nia::nia_mac;
 
 /// The NAS connection of a 5GS NAS message, which gives the BEARER input of
 /// the algorithms: the NAS connection identifier 0x01 for 3GPP access and
@@ -70,7 +68,7 @@ impl From<NasConnection> for Bearer {
 /// `message` is what the MAC covers: the sequence number octet, then the
 /// NAS message, ciphered when it is to be.
 pub fn nas_mac(
-    key: &[u8; 16],
+    key: &KNasInt,
     count: NasCount,
     connection: NasConnection,
     direction: Direction,
@@ -89,7 +87,7 @@ pub fn nas_mac(
 
 /// Cipher or decipher a 5GS NAS message in place (TS 33.501 §6.4.4).
 pub fn nas_cipher(
-    key: &[u8; 16],
+    key: &KNasEnc,
     count: NasCount,
     connection: NasConnection,
     direction: Direction,
@@ -110,7 +108,7 @@ pub fn nas_cipher(
 /// [`nas_cipher`] takes, as a job of
 /// [`nea_cipher_batch`](crate::nea_cipher_batch).
 pub fn cipher_job<'a>(
-    key: &'a [u8; 16],
+    key: &'a KNasEnc,
     count: NasCount,
     connection: NasConnection,
     direction: Direction,
@@ -130,7 +128,7 @@ pub fn cipher_job<'a>(
 /// A 5GS NAS message whose MAC is computed with those of others: what
 /// [`nas_mac`] takes, as a job of [`nia_mac_batch`](crate::nia_mac_batch).
 pub fn mac_job<'a>(
-    key: &'a [u8; 16],
+    key: &'a KNasInt,
     count: NasCount,
     connection: NasConnection,
     direction: Direction,
@@ -150,10 +148,18 @@ pub fn mac_job<'a>(
 /// Compute the MAC of a NAS Container (NASC) for N2 handover with a KAMF
 /// change or for EPS to 5GS handover (TS 33.501 §6.9.2.3.3, §8.4.2).
 ///
+/// `message` is the value of the container from its octet 7 on, the
+/// octets after its message authentication code (TS 24.501 §4.4.3.3):
+/// the three octets of an Intra N1 mode NAS transparent container, which
+/// are the algorithms, the flags with the ngKSI and the sequence number
+/// (§9.11.2.6), or the four of an S1 mode to N1 mode NAS transparent
+/// container, which are the algorithms, the NCC with the ngKSI and two
+/// spare octets (§9.11.2.9).
+///
 /// The inputs are fixed: COUNT is 2^32 - 1, DIRECTION is 1, and BEARER is
 /// the NAS connection identifier for 3GPP access, 0x01. The COUNT is used
 /// only for this MAC and does not change the NAS COUNTs.
-pub fn nas_container_mac(key: &[u8; 16], message: &[u8], algorithm: IntegrityAlgorithm) -> u32 {
+pub fn nas_container_mac(key: &KNasInt, message: &[u8], algorithm: IntegrityAlgorithm) -> u32 {
     nia_mac(
         key,
         u32::MAX,
@@ -174,12 +180,16 @@ mod tests {
         Bearer::new(value).unwrap()
     }
 
+    /// TS 33.501 §6.9.2.3.3. The message is octets 7 to 9 of an Intra N1
+    /// mode NAS transparent container: 128-5G-EA2 and 128-5G-IA2, a new
+    /// KAMF with ngKSI 5, and the sequence number 0x22.
     #[test]
     fn nas_container_mac_uses_the_reserved_count() {
-        let container = [0x01, 0x00, 0x00, 0x05, 0x22];
+        let key = KNasInt::new(KEY);
+        let container = [0x22, 0x15, 0x22];
         let mac = |count| {
             nia_mac(
-                &KEY,
+                &key,
                 count,
                 bearer(1),
                 Direction::Downlink,
@@ -188,11 +198,11 @@ mod tests {
             )
         };
         assert_eq!(
-            nas_container_mac(&KEY, &container, IntegrityAlgorithm::NIA2),
+            nas_container_mac(&key, &container, IntegrityAlgorithm::NIA2),
             mac(0xffff_ffff)
         );
         assert_ne!(
-            nas_container_mac(&KEY, &container, IntegrityAlgorithm::NIA2),
+            nas_container_mac(&key, &container, IntegrityAlgorithm::NIA2),
             mac(0x00ff_ffff)
         );
     }
@@ -209,11 +219,12 @@ mod tests {
         assert_eq!(Bearer::from(NasConnection::ThreeGpp), bearer(1));
         assert_eq!(Bearer::from(NasConnection::Non3Gpp), bearer(2));
 
+        let key = KNasInt::new(KEY);
         let payload = [0x7e, 0x00, 0x41, 0x01];
         let count = NasCount::from_parts(0, 1);
         let mac = |connection| {
             nas_mac(
-                &KEY,
+                &key,
                 count,
                 connection,
                 Direction::Uplink,
@@ -225,7 +236,7 @@ mod tests {
         assert_eq!(
             mac(NasConnection::Non3Gpp),
             nia_mac(
-                &KEY,
+                &key,
                 1,
                 bearer(2),
                 Direction::Uplink,
@@ -238,27 +249,15 @@ mod tests {
     /// The functions of NAS take a NAS COUNT, which has 24 bits; the
     /// algorithms take any 32-bit COUNT.
     #[test]
-    fn the_crate_root_has_the_functions_of_5gs_nas() {
+    fn nas_ciphering_is_the_algorithm_with_the_nas_connection() {
+        let key = KNasEnc::new(KEY);
         let payload = [0x7e, 0x00, 0x41, 0x01];
         let (connection, uplink) = (NasConnection::ThreeGpp, Direction::Uplink);
-        let algorithm = IntegrityAlgorithm::NIA2;
-
-        assert_eq!(
-            crate::nas_mac(
-                &KEY,
-                NasCount::from_parts(0, 1),
-                connection,
-                uplink,
-                &payload,
-                algorithm
-            ),
-            0x7f88_ff87
-        );
         assert!(NasCount::new(1 << 24).is_err());
 
         let mut ciphered = payload;
-        crate::nas_cipher(
-            &KEY,
+        nas_cipher(
+            &key,
             NasCount::MAX,
             connection,
             uplink,
@@ -266,8 +265,8 @@ mod tests {
             CipheringAlgorithm::NEA2,
         );
         let mut expected = payload;
-        crate::nea_cipher(
-            &KEY,
+        nea_cipher(
+            &key,
             0x00ff_ffff,
             bearer(1),
             uplink,
@@ -275,8 +274,6 @@ mod tests {
             CipheringAlgorithm::NEA2,
         );
         assert_eq!(ciphered, expected);
-
-        // The algorithm itself takes any 32-bit COUNT
-        crate::nia_mac(&KEY, 1 << 24, bearer(1), uplink, &payload, algorithm);
+        assert_ne!(ciphered, payload);
     }
 }

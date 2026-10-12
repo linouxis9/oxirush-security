@@ -17,33 +17,45 @@
 
 //! EPS key derivation per 3GPP TS 33.401 Annex A.
 
+use super::keys::{
+    AccessKey, CkPrime, CkSrvcc, IkPrime, IkSrvcc, KAsme, KEnb, KNasEnc, KNasInt, KRrcEnc, KRrcInt,
+    KUpEnc, KUpInt, Kn, LwipPsk, NasToken, Nh, SKwt,
+};
 use crate::SecurityError;
 use crate::common::input::{AccessKeyCount, CipheringAlgorithm, IntegrityAlgorithm, NasCount};
 use crate::common::kdf::{checked_parameter, derive, derive_algorithm_key, kdf};
+use crate::common::keys::{Autn, Ck, Ik};
+use crate::common::plmn::Plmn;
+use crate::nas_5gs::KGnb;
 use zeroize::Zeroizing;
 
 /// FC of the algorithm key derivation function (TS 33.401 Annex A.7).
 const FC_ALGORITHM_KEY: u8 = 0x15;
 
-fn ck_ik(ck: &[u8; 16], ik: &[u8; 16]) -> Zeroizing<[u8; 32]> {
+fn ck_ik(ck: &Ck, ik: &Ik) -> Zeroizing<[u8; 32]> {
     let mut key = Zeroizing::new([0u8; 32]);
-    key[..16].copy_from_slice(ck);
-    key[16..].copy_from_slice(ik);
+    key[..16].copy_from_slice(ck.as_octets());
+    key[16..].copy_from_slice(ik.as_octets());
     key
 }
 
-/// Derive KASME from CK || IK, serving network identity, and SQN XOR AK.
-///
-/// `sn_id` is the PLMN identity in the three octets that
-/// [`plmn_to_bytes`](crate::plmn::plmn_to_bytes) gives.
-/// TS 33.401 Annex A.2, FC=0x10.
-pub fn derive_kasme(
-    ck: &[u8; 16],
-    ik: &[u8; 16],
-    sn_id: &[u8; 3],
-    sqn_xor_ak: &[u8; 6],
-) -> [u8; 32] {
-    derive(ck_ik(ck, ik).as_ref(), 0x10, &[sn_id, sqn_xor_ak])
+/// The two keys of 128 bits that 256 derived bits are: the most
+/// significant half, then the least significant one.
+fn halves(full: Zeroizing<[u8; 32]>) -> ([u8; 16], [u8; 16]) {
+    let (first, second) = full.split_at(16);
+    (
+        first.try_into().expect("sixteen octets"),
+        second.try_into().expect("sixteen octets"),
+    )
+}
+
+/// Derive KASME from CK || IK, the serving network identity and the AUTN of
+/// the authentication, whose SQN xor AK the derivation takes (TS 33.401
+/// Annex A.2, FC=0x10).
+pub fn derive_kasme(ck: &Ck, ik: &Ik, serving_network: Plmn, autn: &Autn) -> KAsme {
+    let sn_id = serving_network.to_octets();
+    let parameters: [&[u8]; 2] = [&sn_id, autn.sqn_xor_ak()];
+    KAsme::new(derive(ck_ik(ck, ik).as_ref(), 0x10, &parameters))
 }
 
 /// Derive KeNB from KASME and the uplink NAS COUNT (Annex A.3, FC=0x11).
@@ -51,17 +63,19 @@ pub fn derive_kasme(
 /// `ul_nas_count` is the uplink NAS COUNT of the message that started the
 /// derivation, as a [`NasCount`]. At a handover from 5GS it is
 /// [`AccessKeyCount::Handover`] (TS 33.501 §8.3.2).
-pub fn derive_kenb(kasme: &[u8; 32], ul_nas_count: impl Into<AccessKeyCount>) -> [u8; 32] {
+pub fn derive_kenb(kasme: &KAsme, ul_nas_count: impl Into<AccessKeyCount>) -> KEnb {
     let count = ul_nas_count.into().get().to_be_bytes();
-    derive(kasme, 0x11, &[&count])
+    KEnb::new(derive(kasme.as_octets(), 0x11, &[&count]))
 }
 
-/// Derive NH from KASME and KeNB or the previous NH (Annex A.4, FC=0x12).
-pub fn derive_nh(kasme: &[u8; 32], sync_input: &[u8; 32]) -> [u8; 32] {
-    derive(kasme, 0x12, &[sync_input])
+/// Derive NH from KASME (Annex A.4, FC=0x12). `sync_input` is KeNB for the
+/// first NH, and the NH before it for each one after.
+pub fn derive_nh(kasme: &KAsme, sync_input: &impl AccessKey) -> Nh {
+    Nh::new(derive(kasme.as_octets(), 0x12, &[sync_input.key_octets()]))
 }
 
-/// Derive KeNB* for a target cell (Annex A.5, FC=0x13).
+/// Derive KeNB* for a target cell (Annex A.5, FC=0x13). The target eNB
+/// takes it as its KeNB.
 ///
 /// `base_key` is KeNB for horizontal derivation or NH for vertical derivation.
 /// EARFCN-DL uses two octets through 65535 and three above that.
@@ -69,10 +83,10 @@ pub fn derive_nh(kasme: &[u8; 32], sync_input: &[u8; 32]) -> [u8; 32] {
 /// A `pci` above 503 or an `earfcn_dl` above 262143 is
 /// [`SecurityError::OutOfRange`].
 pub fn derive_kenb_star(
-    base_key: &[u8; 32],
+    base_key: &impl AccessKey,
     pci: u16,
     earfcn_dl: u32,
-) -> Result<[u8; 32], SecurityError> {
+) -> Result<KEnb, SecurityError> {
     if pci > 503 {
         return Err(SecurityError::OutOfRange {
             field: "E-UTRA PCI",
@@ -88,139 +102,147 @@ pub fn derive_kenb_star(
         });
     }
     let earfcn = earfcn_dl.to_be_bytes();
-    let encoded_earfcn = if earfcn_dl <= u16::MAX as u32 {
+    let encoded_earfcn = if earfcn_dl <= 0xffff {
         &earfcn[2..]
     } else {
         &earfcn[1..]
     };
-    Ok(derive(
-        base_key,
-        0x13,
-        &[&pci.to_be_bytes(), encoded_earfcn],
-    ))
+    let parameters: [&[u8]; 2] = [&pci.to_be_bytes(), encoded_earfcn];
+    Ok(KEnb::new(derive(base_key.key_octets(), 0x13, &parameters)))
 }
 
 /// Derive KNASenc, the NAS ciphering key of `algorithm`, from KASME
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x01).
-pub fn derive_knas_enc(kasme: &[u8; 32], algorithm: CipheringAlgorithm) -> [u8; 16] {
-    derive_algorithm_key(kasme, FC_ALGORITHM_KEY, 0x01, algorithm.into())
+pub fn derive_knas_enc(kasme: &KAsme, algorithm: CipheringAlgorithm) -> KNasEnc {
+    let key = derive_algorithm_key(kasme.as_octets(), FC_ALGORITHM_KEY, 0x01, algorithm.into());
+    KNasEnc::new(key)
 }
 
 /// Derive KNASint, the NAS integrity key of `algorithm`, from KASME
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x02).
-pub fn derive_knas_int(kasme: &[u8; 32], algorithm: IntegrityAlgorithm) -> [u8; 16] {
-    derive_algorithm_key(kasme, FC_ALGORITHM_KEY, 0x02, algorithm.into())
+pub fn derive_knas_int(kasme: &KAsme, algorithm: IntegrityAlgorithm) -> KNasInt {
+    let key = derive_algorithm_key(kasme.as_octets(), FC_ALGORITHM_KEY, 0x02, algorithm.into());
+    KNasInt::new(key)
 }
 
 /// Derive KRRCenc, the RRC ciphering key of `algorithm`, from KeNB
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x03).
 ///
 /// The keys of an SgNB come from S-KgNB with the function of TS 33.501
-/// (TS 33.401 Annex A.19): use
+/// (TS 33.401 Annex A.19): [`derive_skgnb`] gives it as the key that
 /// [`nas_5gs::derive_krrc_enc`](crate::nas_5gs::derive_krrc_enc) and the
-/// three beside it for those.
-pub fn derive_krrc_enc(kenb: &[u8; 32], algorithm: CipheringAlgorithm) -> [u8; 16] {
-    derive_algorithm_key(kenb, FC_ALGORITHM_KEY, 0x03, algorithm.into())
+/// three beside it take.
+pub fn derive_krrc_enc(kenb: &KEnb, algorithm: CipheringAlgorithm) -> KRrcEnc {
+    let key = derive_algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x03, algorithm.into());
+    KRrcEnc::new(key)
 }
 
 /// Derive KRRCint, the RRC integrity key of `algorithm`, from KeNB
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x04).
-pub fn derive_krrc_int(kenb: &[u8; 32], algorithm: IntegrityAlgorithm) -> [u8; 16] {
-    derive_algorithm_key(kenb, FC_ALGORITHM_KEY, 0x04, algorithm.into())
+pub fn derive_krrc_int(kenb: &KEnb, algorithm: IntegrityAlgorithm) -> KRrcInt {
+    let key = derive_algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x04, algorithm.into());
+    KRrcInt::new(key)
 }
 
 /// Derive KUPenc, the user plane ciphering key of `algorithm`, from KeNB
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x05).
-pub fn derive_kup_enc(kenb: &[u8; 32], algorithm: CipheringAlgorithm) -> [u8; 16] {
-    derive_algorithm_key(kenb, FC_ALGORITHM_KEY, 0x05, algorithm.into())
+pub fn derive_kup_enc(kenb: &KEnb, algorithm: CipheringAlgorithm) -> KUpEnc {
+    let key = derive_algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x05, algorithm.into());
+    KUpEnc::new(key)
 }
 
 /// Derive KUPint, the user plane integrity key of `algorithm`, from KeNB
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x06).
-pub fn derive_kup_int(kenb: &[u8; 32], algorithm: IntegrityAlgorithm) -> [u8; 16] {
-    derive_algorithm_key(kenb, FC_ALGORITHM_KEY, 0x06, algorithm.into())
+pub fn derive_kup_int(kenb: &KEnb, algorithm: IntegrityAlgorithm) -> KUpInt {
+    let key = derive_algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x06, algorithm.into());
+    KUpInt::new(key)
 }
 
-/// Map KASME to CK' || IK' at handover (TS 33.401 Annex A.8, FC=0x16).
-pub fn derive_ck_ik_handover(kasme: &[u8; 32], dl_nas_count: NasCount) -> [u8; 32] {
-    derive(kasme, 0x16, &[&dl_nas_count.get().to_be_bytes()])
+/// Map KASME to CK' and IK' at handover (TS 33.401 Annex A.8, FC=0x16).
+pub fn derive_ck_ik_handover(kasme: &KAsme, dl_nas_count: NasCount) -> (CkPrime, IkPrime) {
+    let count = dl_nas_count.get().to_be_bytes();
+    let (ck, ik) = halves(Zeroizing::new(derive(kasme.as_octets(), 0x16, &[&count])));
+    (CkPrime::new(ck), IkPrime::new(ik))
 }
 
-/// Derive the full NAS token KDF output (Annex A.9, FC=0x17).
-/// The two least significant octets are sent on the wire.
-pub fn derive_nas_token_full(kasme: &[u8; 32], ul_nas_count: NasCount) -> [u8; 32] {
-    derive(kasme, 0x17, &[&ul_nas_count.get().to_be_bytes()])
-}
-
-/// Derive the two-octet NAS token transmitted during inter-RAT mobility.
-pub fn derive_nas_token(kasme: &[u8; 32], ul_nas_count: NasCount) -> [u8; 2] {
-    let full = derive_nas_token_full(kasme, ul_nas_count);
-    [full[30], full[31]]
+/// Derive the NAS token of a mobility to UTRAN or GERAN (Annex A.9,
+/// FC=0x17). [`NasToken::transmitted`] is the two octets that are sent.
+pub fn derive_nas_token(kasme: &KAsme, ul_nas_count: NasCount) -> NasToken {
+    let count = ul_nas_count.get().to_be_bytes();
+    NasToken::new(derive(kasme.as_octets(), 0x17, &[&count]))
 }
 
 /// Map CK || IK to K'ASME at handover (Annex A.10, FC=0x18).
-pub fn derive_kasme_handover(ck: &[u8; 16], ik: &[u8; 16], nonce_mme: u32) -> [u8; 32] {
-    derive(ck_ik(ck, ik).as_ref(), 0x18, &[&nonce_mme.to_be_bytes()])
+pub fn derive_kasme_handover(ck: &Ck, ik: &Ik, nonce_mme: u32) -> KAsme {
+    let nonce = nonce_mme.to_be_bytes();
+    KAsme::new(derive(ck_ik(ck, ik).as_ref(), 0x18, &[&nonce]))
 }
 
 /// Map CK || IK to K'ASME at idle mobility (Annex A.11, FC=0x19).
-pub fn derive_kasme_idle_mobility(
-    ck: &[u8; 16],
-    ik: &[u8; 16],
-    nonce_ue: u32,
-    nonce_mme: u32,
-) -> [u8; 32] {
-    derive(
-        ck_ik(ck, ik).as_ref(),
-        0x19,
-        &[&nonce_ue.to_be_bytes(), &nonce_mme.to_be_bytes()],
-    )
+pub fn derive_kasme_idle_mobility(ck: &Ck, ik: &Ik, nonce_ue: u32, nonce_mme: u32) -> KAsme {
+    let parameters: [&[u8]; 2] = [&nonce_ue.to_be_bytes(), &nonce_mme.to_be_bytes()];
+    KAsme::new(derive(ck_ik(ck, ik).as_ref(), 0x19, &parameters))
 }
 
-/// Derive CKSRVCC || IKSRVCC from KASME or KASME_SRVCC (Annex A.12, FC=0x1A).
-pub fn derive_ck_ik_srvcc(kasme: &[u8; 32], dl_nas_count: NasCount) -> [u8; 32] {
-    derive(kasme, 0x1a, &[&dl_nas_count.get().to_be_bytes()])
+/// Derive CKSRVCC and IKSRVCC from KASME, or from the KASME_SRVCC that
+/// [`nas_5gs::derive_kasme_srvcc`](crate::nas_5gs::derive_kasme_srvcc)
+/// gives (Annex A.12, FC=0x1A).
+pub fn derive_ck_ik_srvcc(kasme: &KAsme, dl_nas_count: NasCount) -> (CkSrvcc, IkSrvcc) {
+    let count = dl_nas_count.get().to_be_bytes();
+    let (ck, ik) = halves(Zeroizing::new(derive(kasme.as_octets(), 0x1a, &[&count])));
+    (CkSrvcc::new(ck), IkSrvcc::new(ik))
 }
 
-/// Map KASME to CK' || IK' at idle mobility (Annex A.13, FC=0x1B).
-pub fn derive_ck_ik_idle_mobility(kasme: &[u8; 32], ul_nas_count: NasCount) -> [u8; 32] {
-    derive(kasme, 0x1b, &[&ul_nas_count.get().to_be_bytes()])
+/// Map KASME to CK' and IK' at idle mobility (Annex A.13, FC=0x1B).
+pub fn derive_ck_ik_idle_mobility(kasme: &KAsme, ul_nas_count: NasCount) -> (CkPrime, IkPrime) {
+    let count = ul_nas_count.get().to_be_bytes();
+    let (ck, ik) = halves(Zeroizing::new(derive(kasme.as_octets(), 0x1b, &[&count])));
+    (CkPrime::new(ck), IkPrime::new(ik))
 }
 
-/// Derive S-KeNB or S-KgNB for dual connectivity (Annex A.15, FC=0x1C).
-pub fn derive_skenb(kenb: &[u8; 32], scg_counter: u16) -> [u8; 32] {
-    derive(kenb, 0x1c, &[&scg_counter.to_be_bytes()])
+/// Derive S-KeNB, the key of a secondary eNB, which takes it as its KeNB
+/// (Annex A.15, FC=0x1C).
+pub fn derive_skenb(kenb: &KEnb, scg_counter: u16) -> KEnb {
+    KEnb::new(derive(
+        kenb.as_octets(),
+        0x1c,
+        &[&scg_counter.to_be_bytes()],
+    ))
+}
+
+/// Derive S-KgNB, the key of a secondary gNB, which takes it as its KgNB:
+/// the derivation of [`derive_skenb`] (Annex A.15, FC=0x1C).
+pub fn derive_skgnb(kenb: &KEnb, scg_counter: u16) -> KGnb {
+    KGnb::new(derive(
+        kenb.as_octets(),
+        0x1c,
+        &[&scg_counter.to_be_bytes()],
+    ))
 }
 
 /// Derive LWIP-PSK for LTE/WLAN integration (Annex A.16, FC=0x1E).
-pub fn derive_lwip_psk(kenb: &[u8; 32], lwip_counter: u16) -> [u8; 32] {
-    derive(kenb, 0x1e, &[&lwip_counter.to_be_bytes()])
+pub fn derive_lwip_psk(kenb: &KEnb, lwip_counter: u16) -> LwipPsk {
+    LwipPsk::new(derive(
+        kenb.as_octets(),
+        0x1e,
+        &[&lwip_counter.to_be_bytes()],
+    ))
 }
 
 /// Derive K_n for IOPS subscriber key separation (Annex A.17, FC=0x1D).
-/// `f_n` is the operator-proprietary f(n) value; `imsi` is its encoded IMSI.
+/// `mk` is the master key, `f_n` the operator-proprietary f(n) value and
+/// `imsi` its encoded IMSI.
 ///
 /// An `f_n` or an `imsi` longer than 65535 octets is
 /// [`SecurityError::InputTooLong`].
-pub fn derive_kn(mk: &[u8], f_n: &[u8], imsi: &[u8]) -> Result<[u8; 32], SecurityError> {
+pub fn derive_kn(mk: &[u8], f_n: &[u8], imsi: &[u8]) -> Result<Kn, SecurityError> {
     let (f_n, imsi) = (checked_parameter(f_n)?, checked_parameter(imsi)?);
-    Ok(derive(mk, 0x1d, &[f_n, imsi]))
+    Ok(Kn::new(derive(mk, 0x1d, &[f_n, imsi])))
 }
 
 /// Derive S-KWT for LTE/WLAN aggregation (Annex A.18, FC=0x1F).
-pub fn derive_skwt(kenb: &[u8; 32], wt_counter: u16) -> [u8; 32] {
-    derive(kenb, 0x1f, &[&wt_counter.to_be_bytes()])
-}
-
-/// Map KASME to KAMF for idle EPS to 5GS mobility (TS 33.501 Annex A.15, FC=0x75).
-/// The new 5GS NAS COUNTs start at zero after the context is installed.
-pub fn derive_mapped_kamf_idle(kasme: &[u8; 32], tau_ul_nas_count: NasCount) -> [u8; 32] {
-    derive(kasme, 0x75, &[&tau_ul_nas_count.get().to_be_bytes()])
-}
-
-/// Map KASME to KAMF for connected EPS to 5GS handover (Annex A.15, FC=0x76).
-pub fn derive_mapped_kamf_handover(kasme: &[u8; 32], nh: &[u8; 32]) -> [u8; 32] {
-    derive(kasme, 0x76, &[nh])
+pub fn derive_skwt(kenb: &KEnb, wt_counter: u16) -> SKwt {
+    SKwt::new(derive(kenb.as_octets(), 0x1f, &[&wt_counter.to_be_bytes()]))
 }
 
 /// Compute HASHMME or HASHUE over a plain ATTACH REQUEST or TRACKING AREA
@@ -238,10 +260,15 @@ pub fn compute_hash_mme(plain_request: &[u8]) -> [u8; 8] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::extract_128;
+    use crate::common::kdf::{extract_128, kdf};
 
     fn count(value: u32) -> NasCount {
         NasCount::new(value).unwrap()
+    }
+
+    /// The octets 0, 1, 2 and so on.
+    fn counting() -> [u8; 32] {
+        core::array::from_fn(|index| index as u8)
     }
 
     /// TS 33.401 Annex A.7: the algorithm type distinguishers 0x01 to 0x06,
@@ -250,20 +277,21 @@ mod tests {
     #[test]
     fn algorithm_keys_use_the_distinguishers_of_annex_a_7() {
         let key = [0x5a; 32];
+        let (kasme, kenb) = (KAsme::new(key), KEnb::new(key));
         let expected =
-            |kind: u8, identity: u8| extract_128(&kdf(&key, &[0x15, kind, 0, 1, identity, 0, 1]));
+            |kind: u8, identity: u8| *extract_128(&kdf(&key, &[0x15, kind, 0, 1, identity, 0, 1]));
         for (identity, ciphering, integrity) in [
             (0, CipheringAlgorithm::EEA0, IntegrityAlgorithm::EIA0),
             (1, CipheringAlgorithm::EEA1, IntegrityAlgorithm::EIA1),
             (2, CipheringAlgorithm::EEA2, IntegrityAlgorithm::EIA2),
             (3, CipheringAlgorithm::EEA3, IntegrityAlgorithm::EIA3),
         ] {
-            assert_eq!(derive_knas_enc(&key, ciphering), expected(0x01, identity));
-            assert_eq!(derive_knas_int(&key, integrity), expected(0x02, identity));
-            assert_eq!(derive_krrc_enc(&key, ciphering), expected(0x03, identity));
-            assert_eq!(derive_krrc_int(&key, integrity), expected(0x04, identity));
-            assert_eq!(derive_kup_enc(&key, ciphering), expected(0x05, identity));
-            assert_eq!(derive_kup_int(&key, integrity), expected(0x06, identity));
+            assert_eq!(derive_knas_enc(&kasme, ciphering), expected(0x01, identity));
+            assert_eq!(derive_knas_int(&kasme, integrity), expected(0x02, identity));
+            assert_eq!(derive_krrc_enc(&kenb, ciphering), expected(0x03, identity));
+            assert_eq!(derive_krrc_int(&kenb, integrity), expected(0x04, identity));
+            assert_eq!(derive_kup_enc(&kenb, ciphering), expected(0x05, identity));
+            assert_eq!(derive_kup_int(&kenb, integrity), expected(0x06, identity));
         }
     }
 
@@ -271,7 +299,7 @@ mod tests {
     /// ARFCN-ValueEUTRA-r9), and a parameter that fits the two-octet L.
     #[test]
     fn inputs_out_of_range_are_errors() {
-        let key = [0x5a; 32];
+        let key = KEnb::new([0x5a; 32]);
         assert!(derive_kenb_star(&key, 503, 262_143).is_ok());
         assert_eq!(
             derive_kenb_star(&key, 504, 0),
@@ -290,8 +318,8 @@ mod tests {
             })
         );
         let too_long = vec![0; 65536];
-        assert!(derive_kn(&key, &too_long, b"1").is_err());
-        assert!(derive_kn(&key, b"1", &too_long).is_err());
+        assert!(derive_kn(&[0x5a; 32], &too_long, b"1").is_err());
+        assert!(derive_kn(&[0x5a; 32], b"1", &too_long).is_err());
     }
 
     #[test]
@@ -314,113 +342,123 @@ mod tests {
     }
 
     #[test]
-    fn mapped_kamf_vectors() {
-        let kasme = core::array::from_fn(|i| i as u8);
-        let nh = core::array::from_fn(|i| (i + 32) as u8);
-        assert_eq!(
-            hex::encode(derive_mapped_kamf_idle(&kasme, count(0x0012_3456))),
-            "eb553a2dc491745c18c4d717b577e068485326c458a726838abe755f38666beb"
-        );
-        assert_eq!(
-            hex::encode(derive_mapped_kamf_handover(&kasme, &nh)),
-            "38d4b0135f82c7b44cf54c76232badc8ac02744ef43225ade981dcde7ca9ba8f"
-        );
-    }
-
-    #[test]
     fn eps_kdf_annex_a_inputs() {
-        let ck: [u8; 16] = core::array::from_fn(|i| i as u8);
-        let ik: [u8; 16] = core::array::from_fn(|i| (i + 16) as u8);
-        let kasme = derive_kasme(&ck, &ik, &[0x02, 0xf8, 0x39], &[1, 2, 3, 4, 5, 6]);
+        let ck = Ck::new(core::array::from_fn(|i| i as u8));
+        let ik = Ik::new(core::array::from_fn(|i| (i + 16) as u8));
+        // SQN xor AK, then the AMF field and the MAC, which are not taken
+        let autn = Autn::new([1, 2, 3, 4, 5, 6, 0x80, 0, 9, 9, 9, 9, 9, 9, 9, 9]);
+        // The SN id is the PLMN identity of the NAS messages, 02 f8 39
+        let serving_network = Plmn::new("208", "93").unwrap();
+        let kasme = derive_kasme(&ck, &ik, serving_network, &autn);
         assert_eq!(
-            hex::encode(kasme),
+            hex::encode(kasme.as_octets()),
             "8a58509be1c244dc519dd5fbd4305f4192c782fe6ff79438d1fa7ff9740bbb30"
         );
-        let key: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let (kasme, kenb) = (KAsme::new(counting()), KEnb::new(counting()));
         assert_eq!(
-            hex::encode(derive_knas_enc(&key, CipheringAlgorithm::EEA2)),
+            hex::encode(derive_knas_enc(&kasme, CipheringAlgorithm::EEA2).as_octets()),
             "4eb6379f81a769c754e9dc2534ff77b9"
         );
         assert_eq!(
-            hex::encode(derive_kenb(&key, count(258))),
+            hex::encode(derive_kenb(&kasme, count(258)).as_octets()),
             "5df775f16633b7e14575d47423c64d2062b6c8a5f10f3db6c234cbbf4dbe3237"
         );
         assert_eq!(
-            hex::encode(derive_nh(&key, &key)),
+            hex::encode(derive_nh(&kasme, &kenb).as_octets()),
             "7bf9464bc8eeb207517c813f7dbc0ab8e69a410bbfc42c44c98cc7ea8ae30c7b"
         );
+        // The next NH comes from the one before it
         assert_eq!(
-            hex::encode(derive_kenb_star(&key, 42, 6300).unwrap()),
+            derive_nh(&kasme, &Nh::new(counting())),
+            derive_nh(&kasme, &kenb)
+        );
+        assert_eq!(
+            hex::encode(derive_kenb_star(&kenb, 42, 6300).unwrap().as_octets()),
             "f93166c8f78f1df39674bae749e42483fb6c7310aba47a0250b58a7fc1b50c20"
         );
         assert_eq!(
-            hex::encode(derive_kenb_star(&key, 42, 70000).unwrap()),
+            hex::encode(derive_kenb_star(&kenb, 42, 70000).unwrap().as_octets()),
             "3618729a2dc241123c1e08bc76aa2828bd3a1c67c6317116c53148c470bd33b2"
         );
     }
 
+    /// The two keys of a pair, one after the other.
+    fn pair<const N: usize>(first: &[u8; N], second: &[u8; N]) -> String {
+        hex::encode(first) + &hex::encode(second)
+    }
+
     #[test]
     fn eps_kdf_interworking_and_dual_connectivity_vectors() {
-        let key: [u8; 32] = core::array::from_fn(|i| i as u8);
-        let ck: [u8; 16] = key[..16].try_into().unwrap();
-        let ik: [u8; 16] = key[16..].try_into().unwrap();
+        let key = counting();
+        let (kasme, kenb) = (KAsme::new(key), KEnb::new(key));
+        let ck = Ck::from_slice(&key[..16]).unwrap();
+        let ik = Ik::from_slice(&key[16..]).unwrap();
         let count = count(0x0012_3456);
+        let (ck_prime, ik_prime) = derive_ck_ik_handover(&kasme, count);
         assert_eq!(
-            hex::encode(derive_ck_ik_handover(&key, count)),
+            pair(ck_prime.as_octets(), ik_prime.as_octets()),
             "242509d73fcf33220a4641e6a07cf18f02f948a95ee84355e0b9439b1d0dd700"
         );
+        let token = derive_nas_token(&kasme, count);
         assert_eq!(
-            hex::encode(derive_nas_token_full(&key, count)),
+            hex::encode(token.as_octets()),
             "b3f915c1428ce3d0f49e8e89e84460bf6eb68f0a72859583864c2e8df79a0668"
         );
-        assert_eq!(derive_nas_token(&key, count), [0x06, 0x68]);
+        assert_eq!(token.transmitted(), [0x06, 0x68]);
         assert_eq!(
-            hex::encode(derive_kasme_handover(&ck, &ik, 0x1234_5678)),
+            hex::encode(derive_kasme_handover(&ck, &ik, 0x1234_5678).as_octets()),
             "f0fdd0678c200d0bc94fe7073e9e5abc252b11be183d0274f29ee895457b6c56"
         );
         assert_eq!(
-            hex::encode(derive_kasme_idle_mobility(
-                &ck,
-                &ik,
-                0x0102_0304,
-                0x1234_5678
-            )),
+            hex::encode(derive_kasme_idle_mobility(&ck, &ik, 0x0102_0304, 0x1234_5678).as_octets()),
             "28ada05dd47868ca359dda734d5169415cf262ee0ebba98a0b92227f7ed10c7b"
         );
+        let (ck_srvcc, ik_srvcc) = derive_ck_ik_srvcc(&kasme, count);
         assert_eq!(
-            hex::encode(derive_ck_ik_srvcc(&key, count)),
+            pair(ck_srvcc.as_octets(), ik_srvcc.as_octets()),
             "24535f189286e0669aba6fa001563ddba8fd203c24edc6fd4357202e648ce48b"
         );
+        let (ck_prime, ik_prime) = derive_ck_ik_idle_mobility(&kasme, count);
         assert_eq!(
-            hex::encode(derive_ck_ik_idle_mobility(&key, count)),
+            pair(ck_prime.as_octets(), ik_prime.as_octets()),
             "3f9fdf623b9b3a1dc45ca30206773a7a591d351f831f4b0abb60cea5493de3b8"
         );
         assert_eq!(
-            hex::encode(derive_skenb(&key, 0x0123)),
+            hex::encode(derive_skenb(&kenb, 0x0123).as_octets()),
             "33a14244121c11ee70d1ff64fecb9d25a92791587712f47d85e277e0260b9686"
         );
         assert_eq!(
-            hex::encode(derive_lwip_psk(&key, 0x0123)),
+            hex::encode(derive_lwip_psk(&kenb, 0x0123).as_octets()),
             "b870389602b0611f4c63b886f434ef0b4fa53866b894e5fe3d2f1507d31d77bf"
         );
         assert_eq!(
-            hex::encode(derive_kn(&key, &[0x01, 0x23], b"208930000000001").unwrap()),
+            hex::encode(
+                derive_kn(&key, &[0x01, 0x23], b"208930000000001")
+                    .unwrap()
+                    .as_octets()
+            ),
             "7e1c7c360af6f9c207fb595915b6ba3a2b682cd93ee988e1edf8ca64dd62b7c6"
         );
         assert_eq!(
-            hex::encode(derive_skwt(&key, 0x0123)),
+            hex::encode(derive_skwt(&kenb, 0x0123).as_octets()),
             "8f008e0d6d0e9fd9b179cb6bc1f2059e903c9d514818dcebd2b6027ff16f6944"
         );
-        // An SgNB key, from S-KgNB with the function of TS 33.501 Annex A.8
+        // S-KgNB is derived as S-KeNB is, and is a key of an NR node: its
+        // algorithm keys come from the function of TS 33.501 Annex A.8
+        let skgnb = derive_skgnb(&kenb, 0x0123);
+        assert_eq!(skgnb.as_octets(), derive_skenb(&kenb, 0x0123).as_octets());
         assert_eq!(
-            hex::encode(crate::nas_5gs::derive_krrc_enc(
-                &key,
-                CipheringAlgorithm::NEA2
-            )),
+            hex::encode(
+                crate::nas_5gs::derive_krrc_enc(
+                    &crate::nas_5gs::KGnb::new(key),
+                    CipheringAlgorithm::NEA2
+                )
+                .as_octets()
+            ),
             "62e9c027277cfbcea25a0af641e7accf"
         );
         assert_eq!(
-            hex::encode(derive_kenb(&key, AccessKeyCount::Handover)),
+            hex::encode(derive_kenb(&kasme, AccessKeyCount::Handover).as_octets()),
             "fe3156f5d68e325cb928061beace8637b064ce155ae1507fb5a44c4a08f19d69"
         );
     }

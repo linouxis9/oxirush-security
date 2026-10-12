@@ -35,20 +35,32 @@
 //! [`nas_5gs::nas_cipher`](crate::nas_5gs::nas_cipher) or
 //! [`nas_eps::nas_cipher`](crate::nas_eps::nas_cipher), which take a NAS
 //! COUNT.
+use crate::common::aes128::Aes128;
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, octets_of};
+use crate::common::keys::CipheringKey;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::common::simd::Instructions;
-use crate::snow3g::Snow3G;
-use crate::zuc::Zuc;
-use aes::Aes128Enc;
-use aes::cipher::{BlockCipherEncrypt, KeyInit};
+use crate::common::snow3g::Snow3G;
+use crate::common::zuc::Zuc;
 use zeroize::{Zeroize, Zeroizing};
 
 /// Cipher or decipher octets in place with `algorithm`.
 ///
 /// The null algorithm leaves the data as it is.
 pub fn nea_cipher(
+    key: &impl CipheringKey,
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    data: &mut [u8],
+    algorithm: CipheringAlgorithm,
+) {
+    cipher_octets(key.key_octets(), count, bearer, direction, data, algorithm);
+}
+
+/// Cipher or decipher octets in place with the octets of a key.
+pub(crate) fn cipher_octets(
     key: &[u8; 16],
     count: u32,
     bearer: Bearer,
@@ -72,7 +84,7 @@ pub fn nea_cipher(
 /// [`SecurityError::BitLengthExceedsData`], with the null algorithm too,
 /// and the data is then unchanged.
 pub fn nea_cipher_bits(
-    key: &[u8; 16],
+    key: &impl CipheringKey,
     count: u32,
     bearer: Bearer,
     direction: Direction,
@@ -80,14 +92,15 @@ pub fn nea_cipher_bits(
     bit_length: u64,
     algorithm: CipheringAlgorithm,
 ) -> Result<(), SecurityError> {
+    let key = key.key_octets();
     cipher_bits(data, bit_length, |octets| {
-        nea_cipher(key, count, bearer, direction, octets, algorithm)
+        cipher_octets(key, count, bearer, direction, octets, algorithm)
     })
 }
 
 /// Apply a whole-octet cipher to the octets that hold the first
 /// `bit_length` bits, then give the unused bits of the last octet back.
-fn cipher_bits(
+pub(crate) fn cipher_bits(
     data: &mut [u8],
     bit_length: u64,
     apply: impl FnOnce(&mut [u8]),
@@ -143,7 +156,7 @@ const KEYSTREAM_WORDS: usize = 48;
 /// IV[2] = (BEARER << 27) | (DIRECTION << 26)
 /// IV[3] = COUNT
 /// ```
-pub fn nea1_cipher(
+pub(crate) fn nea1_cipher(
     key: &[u8; 16],
     count: u32,
     bearer: Bearer,
@@ -179,24 +192,6 @@ pub(crate) fn eea1_key_and_iv(
     (k, [bearer_dir, count, bearer_dir, count])
 }
 
-/// Cipher or decipher the first `bit_length` bits with 128-NEA1 /
-/// 128-EEA1.
-///
-/// A `bit_length` above the length of `data` in bits is
-/// [`SecurityError::BitLengthExceedsData`].
-pub fn nea1_cipher_bits(
-    key: &[u8; 16],
-    count: u32,
-    bearer: Bearer,
-    direction: Direction,
-    data: &mut [u8],
-    bit_length: u64,
-) -> Result<(), SecurityError> {
-    cipher_bits(data, bit_length, |octets| {
-        nea1_cipher(key, count, bearer, direction, octets)
-    })
-}
-
 // ── NEA2: 128-EEA2 (AES-128-CTR) ──────────────────────────────────────────────
 
 /// Cipher or decipher octets with 128-NEA2 / 128-EEA2 (TS 33.401
@@ -209,7 +204,7 @@ pub fn nea1_cipher_bits(
 ///   Bytes [5..7]:  0x000000
 ///   Bytes [8..15]: block counter (big-endian u64, starts at 0)
 /// ```
-pub fn nea2_cipher(
+pub(crate) fn nea2_cipher(
     key: &[u8; 16],
     count: u32,
     bearer: Bearer,
@@ -221,37 +216,14 @@ pub fn nea2_cipher(
     }
     let prefix = ctr_prefix(count, bearer, direction);
 
+    // The round keys go from their expansion to the counter mode without
+    // a keyed state between the two, which a message alone does not need
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if let Some(instructions) = Instructions::detect() {
         let schedules = instructions.aes_schedules([key]);
         return instructions.aes_ctr(&schedules[0], u64::from_le_bytes(prefix), data);
     }
-
-    // The counter blocks of a group are encrypted in one call
-    let cipher = Aes128Enc::new(key.into());
-    let mut keystream = [aes::Block::default(); CTR_GROUP];
-    let mut counter = 0u64;
-    for group in data.chunks_mut(16 * CTR_GROUP) {
-        let blocks = &mut keystream[..group.len().div_ceil(16)];
-        for block in blocks.iter_mut() {
-            block[..8].copy_from_slice(&prefix);
-            block[8..].copy_from_slice(&counter.to_be_bytes());
-            counter += 1;
-        }
-        cipher.encrypt_blocks(blocks);
-        for (octets, block) in group.chunks_mut(16).zip(blocks.iter()) {
-            for (octet, key_octet) in octets.iter_mut().zip(block) {
-                *octet ^= key_octet;
-            }
-        }
-    }
-
-    // A group overwrites the blocks of the one before it: the array holds
-    // keystream in as many blocks as the longest group had
-    let written = CTR_GROUP.min(data.len().div_ceil(16));
-    for block in &mut keystream[..written] {
-        block.as_mut_slice().zeroize();
-    }
+    Aes128::of_crate(key).ctr(prefix, data);
 }
 
 /// The upper eight octets of the counter blocks of a message, which are
@@ -264,25 +236,7 @@ pub(crate) fn ctr_prefix(count: u32, bearer: Bearer, direction: Direction) -> [u
 }
 
 /// The number of counter blocks that 128-EEA2 encrypts in one call.
-const CTR_GROUP: usize = 8;
-
-/// Cipher or decipher the first `bit_length` bits with 128-NEA2 /
-/// 128-EEA2.
-///
-/// A `bit_length` above the length of `data` in bits is
-/// [`SecurityError::BitLengthExceedsData`].
-pub fn nea2_cipher_bits(
-    key: &[u8; 16],
-    count: u32,
-    bearer: Bearer,
-    direction: Direction,
-    data: &mut [u8],
-    bit_length: u64,
-) -> Result<(), SecurityError> {
-    cipher_bits(data, bit_length, |octets| {
-        nea2_cipher(key, count, bearer, direction, octets)
-    })
-}
+pub(crate) const CTR_GROUP: usize = 8;
 
 // ── NEA3: 128-EEA3 (ZUC keystream) ────────────────────────────────────────────
 
@@ -298,7 +252,7 @@ pub fn nea2_cipher_bits(
 ///   Byte  [12]:    (BEARER << 3) | (DIRECTION << 2)
 ///   Bytes [13..15]: 0x000000
 /// ```
-pub fn nea3_cipher(
+pub(crate) fn nea3_cipher(
     key: &[u8; 16],
     count: u32,
     bearer: Bearer,
@@ -323,27 +277,52 @@ pub(crate) fn eea3_iv(count: u32, bearer: Bearer, direction: Direction) -> [u8; 
     iv
 }
 
-/// Cipher or decipher the first `bit_length` bits with 128-NEA3 /
-/// 128-EEA3.
-///
-/// A `bit_length` above the length of `data` in bits is
-/// [`SecurityError::BitLengthExceedsData`].
-pub fn nea3_cipher_bits(
-    key: &[u8; 16],
-    count: u32,
-    bearer: Bearer,
-    direction: Direction,
-    data: &mut [u8],
-    bit_length: u64,
-) -> Result<(), SecurityError> {
-    cipher_bits(data, bit_length, |octets| {
-        nea3_cipher(key, count, bearer, direction, octets)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One algorithm over the first bits of the data, by its number.
+    fn algorithm_bits(
+        algorithm: CipheringAlgorithm,
+    ) -> impl Fn(&[u8; 16], u32, Bearer, Direction, &mut [u8], u64) -> Result<(), SecurityError>
+    {
+        move |key, count, bearer, direction, data, bit_length| {
+            nea_cipher_bits(key, count, bearer, direction, data, bit_length, algorithm)
+        }
+    }
+
+    fn nea1_cipher_bits(
+        key: &[u8; 16],
+        count: u32,
+        bearer: Bearer,
+        direction: Direction,
+        data: &mut [u8],
+        bit_length: u64,
+    ) -> Result<(), SecurityError> {
+        algorithm_bits(CipheringAlgorithm::Snow3g)(key, count, bearer, direction, data, bit_length)
+    }
+
+    fn nea2_cipher_bits(
+        key: &[u8; 16],
+        count: u32,
+        bearer: Bearer,
+        direction: Direction,
+        data: &mut [u8],
+        bit_length: u64,
+    ) -> Result<(), SecurityError> {
+        algorithm_bits(CipheringAlgorithm::Aes)(key, count, bearer, direction, data, bit_length)
+    }
+
+    fn nea3_cipher_bits(
+        key: &[u8; 16],
+        count: u32,
+        bearer: Bearer,
+        direction: Direction,
+        data: &mut [u8],
+        bit_length: u64,
+    ) -> Result<(), SecurityError> {
+        algorithm_bits(CipheringAlgorithm::Zuc)(key, count, bearer, direction, data, bit_length)
+    }
 
     fn bearer(value: u8) -> Bearer {
         Bearer::new(value).unwrap()

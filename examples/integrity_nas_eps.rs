@@ -21,14 +21,15 @@
 //! NAS bearer 0, and the SERVICE REQUEST short MAC takes its two least
 //! significant octets (TS 24.301 §9.9.3.28).
 
-use oxirush_security::nas_eps::*;
+use oxirush_security::nas_eps::{KNasInt, nas_mac, service_request_short_mac};
+use oxirush_security::{Direction, IntegrityAlgorithm, NasCount};
 
 fn main() {
     // Example 128-bit integrity key (KNASint)
-    let key: [u8; 16] = [
+    let key = KNasInt::new([
         0x2b, 0xd6, 0x45, 0x9f, 0x82, 0xc5, 0xb3, 0x00, 0x95, 0x2c, 0x49, 0x10, 0x48, 0x81, 0xff,
         0x48,
-    ];
+    ]);
 
     // The inputs of a NAS message: its 24-bit NAS COUNT and its direction.
     // The EPS NAS bearer is always 0
@@ -39,7 +40,7 @@ fn main() {
     let message = [0x56, 0x07, 0x60, 0x03];
 
     println!("=== EPS NAS integrity MAC computation ===\n");
-    println!("Key:       {}", hex::encode(key));
+    println!("Key:       {}", hex::encode(key.as_octets()));
     println!("COUNT:     0x{:08x}", count.get());
     println!("Direction: {} (uplink)", u8::from(direction));
     println!("Message:   {}\n", hex::encode(message));
@@ -47,24 +48,22 @@ fn main() {
     // One call for every algorithm
     let mac = |algorithm| nas_mac(&key, count, direction, &message, algorithm);
 
-    // EIA1 — SNOW 3G (128-EIA1)
-    let mac_eia1 = mac(IntegrityAlgorithm::EIA1);
-    println!("EIA1 (SNOW 3G)  MAC: 0x{mac_eia1:08x}");
+    let algorithms = [
+        IntegrityAlgorithm::EIA1, // SNOW 3G
+        IntegrityAlgorithm::EIA2, // AES-CMAC
+        IntegrityAlgorithm::EIA3, // ZUC
+        IntegrityAlgorithm::EIA0, // null integrity: the MAC is zero
+    ];
+    for algorithm in algorithms {
+        println!("{:<8} MAC: 0x{:08x}", algorithm.name_eps(), mac(algorithm));
+    }
+    assert_eq!(
+        mac(IntegrityAlgorithm::EIA0),
+        0,
+        "EIA0 must always return 0"
+    );
 
-    // EIA2 — AES-CMAC (128-EIA2)
-    let mac_eia2 = mac(IntegrityAlgorithm::EIA2);
-    println!("EIA2 (AES-CMAC) MAC: 0x{mac_eia2:08x}");
-
-    // EIA3 — ZUC (128-EIA3)
-    let mac_eia3 = mac(IntegrityAlgorithm::EIA3);
-    println!("EIA3 (ZUC)      MAC: 0x{mac_eia3:08x}");
-
-    // EIA0 — null integrity (always returns 0)
-    let mac_eia0 = mac(IntegrityAlgorithm::EIA0);
-    println!("EIA0 (null)     MAC: 0x{mac_eia0:08x}");
-    assert_eq!(mac_eia0, 0, "EIA0 must always return 0");
-
-    // SERVICE REQUEST: KSI 1, five COUNT bits 0x16
+    // SERVICE REQUEST: KSI 1, and the five low bits of the NAS COUNT, 0x16
     let ksi_and_sequence_number = (1 << 5) | 0x16;
     let short_mac = service_request_short_mac(
         &key,
@@ -75,9 +74,15 @@ fn main() {
     );
     println!("SERVICE REQUEST short MAC (EIA2): 0x{short_mac:04x}");
 
+    // The MME has the NAS COUNT of the SERVICE REQUEST from those five bits
+    // and from the lowest uplink NAS COUNT that it still accepts
+    let lowest = NasCount::new(0x00a6f050).expect("a 24-bit NAS COUNT");
+    let estimated = lowest.estimate_from_low_bits(ksi_and_sequence_number, 5);
+    assert_eq!(estimated, Ok(count));
+
     // Each algorithm produces a different MAC for the same input
-    assert_ne!(mac_eia1, mac_eia2);
-    assert_ne!(mac_eia2, mac_eia3);
+    assert_ne!(mac(IntegrityAlgorithm::EIA1), mac(IntegrityAlgorithm::EIA2));
+    assert_ne!(mac(IntegrityAlgorithm::EIA2), mac(IntegrityAlgorithm::EIA3));
 
     println!("\nAll MACs computed successfully.");
 }

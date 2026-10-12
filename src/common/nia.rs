@@ -32,35 +32,31 @@
 //!
 //! For a NAS message use [`nas_5gs::nas_mac`](crate::nas_5gs::nas_mac) or
 //! [`nas_eps::nas_mac`](crate::nas_eps::nas_mac), which take a NAS COUNT.
+use crate::common::aes128::Aes128;
 use crate::common::ct::{clmul64, clmul128, mask64};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, Direction, IntegrityAlgorithm, octets_of};
+use crate::common::keys::IntegrityKey;
 use crate::common::nea::ctr_prefix;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-use crate::common::simd::Instructions;
-use crate::snow3g::Snow3G;
-use crate::zuc::Zuc;
-use aes::Aes128Enc;
-use aes::cipher::{BlockCipherEncrypt, KeyInit};
+use crate::common::simd::{AesSchedule, Instructions};
+use crate::common::snow3g::Snow3G;
+use crate::common::zuc::Zuc;
 use zeroize::{Zeroize, Zeroizing};
 
 /// Compute the 32-bit MAC of a message of whole octets with `algorithm`.
 ///
 /// The null algorithm gives zero.
 pub fn nia_mac(
-    key: &[u8; 16],
+    key: &impl IntegrityKey,
     count: u32,
     bearer: Bearer,
     direction: Direction,
     message: &[u8],
     algorithm: IntegrityAlgorithm,
 ) -> u32 {
-    match algorithm {
-        IntegrityAlgorithm::Null => 0,
-        IntegrityAlgorithm::Snow3g => nia1_mac(key, count, bearer, direction, message),
-        IntegrityAlgorithm::Aes => nia2_mac(key, count, bearer, direction, message),
-        IntegrityAlgorithm::Zuc => nia3_mac(key, count, bearer, direction, message),
-    }
+    let (key, message) = (key.key_octets(), BitString::whole(message));
+    mac_of_bits(key, count, bearer, direction, message, algorithm)
 }
 
 /// Compute the MAC that [`nia_mac`] computes over the first `bit_length`
@@ -70,7 +66,7 @@ pub fn nia_mac(
 /// A `bit_length` above the length of `message` in bits is
 /// [`SecurityError::BitLengthExceedsData`], with the null algorithm too.
 pub fn nia_mac_bits(
-    key: &[u8; 16],
+    key: &impl IntegrityKey,
     count: u32,
     bearer: Bearer,
     direction: Direction,
@@ -78,7 +74,7 @@ pub fn nia_mac_bits(
     bit_length: u64,
     algorithm: IntegrityAlgorithm,
 ) -> Result<u32, SecurityError> {
-    let bits = BitString::new(message, bit_length)?;
+    let (key, bits) = (key.key_octets(), BitString::new(message, bit_length)?);
     Ok(mac_of_bits(key, count, bearer, direction, bits, algorithm))
 }
 
@@ -145,8 +141,8 @@ impl<'a> BitString<'a> {
 
 // ── NIA1: 128-EIA1 (SNOW 3G MAC) ──────────────────────────────────────────────
 
-/// Compute the MAC of a message of whole octets with 128-NIA1 / 128-EIA1
-/// (TS 33.401 Annex B.2.2, TS 35.215 §4, TS 35.216).
+/// The MAC of 128-NIA1 / 128-EIA1 (TS 33.401 Annex B.2.2, TS 35.215 §4,
+/// TS 35.216).
 ///
 /// The inputs map to UIA2 (UEA2/UIA2 specification §4.4):
 /// ```text
@@ -156,33 +152,6 @@ impl<'a> BitString<'a> {
 /// - IV[2] = FRESH
 /// - IV[3] = COUNT
 /// ```
-pub fn nia1_mac(
-    key: &[u8; 16],
-    count: u32,
-    bearer: Bearer,
-    direction: Direction,
-    message: &[u8],
-) -> u32 {
-    eia1(key, count, bearer, direction, BitString::whole(message))
-}
-
-/// Compute the 128-NIA1 / 128-EIA1 MAC of the first `bit_length` bits of
-/// `message`. The unused low-order bits of the last octet are ignored.
-///
-/// A `bit_length` above the length of `message` in bits is
-/// [`SecurityError::BitLengthExceedsData`].
-pub fn nia1_mac_bits(
-    key: &[u8; 16],
-    count: u32,
-    bearer: Bearer,
-    direction: Direction,
-    message: &[u8],
-    bit_length: u64,
-) -> Result<u32, SecurityError> {
-    let bits = BitString::new(message, bit_length)?;
-    Ok(eia1(key, count, bearer, direction, bits))
-}
-
 fn eia1(
     key: &[u8; 16],
     count: u32,
@@ -288,44 +257,6 @@ pub(crate) fn reduce64(low: u64, high: u64) -> u64 {
 
 // ── NIA2: 128-EIA2 (AES-CMAC) ─────────────────────────────────────────────────
 
-/// Compute the MAC of a message of whole octets with 128-NIA2 / 128-EIA2
-/// (TS 33.401 Annex B.2.3).
-///
-/// ```text
-/// Input block M = COUNT[31:0] || BEARER[4:0] || DIRECTION[0] || 0*26 || message
-/// ```
-/// Returns the 32-bit MAC-I (first 4 bytes of AES-CMAC output).
-pub fn nia2_mac(
-    key: &[u8; 16],
-    count: u32,
-    bearer: Bearer,
-    direction: Direction,
-    message: &[u8],
-) -> u32 {
-    eia2(key, count, bearer, direction, BitString::whole(message))
-}
-
-/// Compute the 128-NIA2 / 128-EIA2 MAC of the first `bit_length` bits of
-/// `message`.
-///
-/// The final partial octet is left aligned and its unused low-order bits are
-/// ignored, as in TS 33.401 Annex C.2. The 64-bit COUNT/BEARER/DIRECTION
-/// prefix is included by this function.
-///
-/// A `bit_length` above the length of `message` in bits is
-/// [`SecurityError::BitLengthExceedsData`].
-pub fn nia2_mac_bits(
-    key: &[u8; 16],
-    count: u32,
-    bearer: Bearer,
-    direction: Direction,
-    message: &[u8],
-    bit_length: u64,
-) -> Result<u32, SecurityError> {
-    let bits = BitString::new(message, bit_length)?;
-    Ok(eia2(key, count, bearer, direction, bits))
-}
-
 /// Doubling in GF(2^128) for the CMAC subkeys (RFC 4493 §2.3), with no
 /// branch on the secret top bit.
 fn cmac_double(value: u128) -> u128 {
@@ -333,6 +264,16 @@ fn cmac_double(value: u128) -> u128 {
     (value << 1) ^ u128::from(0x87 & carry)
 }
 
+/// The MAC of 128-NIA2 / 128-EIA2 (TS 33.401 Annex B.2.3): the first four
+/// octets of the AES-CMAC of
+///
+/// ```text
+/// M = COUNT[31:0] || BEARER[4:0] || DIRECTION[0] || 0*26 || message
+/// ```
+///
+/// The last octet of a message that does not end with one is left
+/// aligned, and its unused low-order bits are ignored, as in TS 33.401
+/// Annex C.2.
 fn eia2(
     key: &[u8; 16],
     count: u32,
@@ -341,11 +282,81 @@ fn eia2(
     message: BitString<'_>,
 ) -> u32 {
     let blocks = CmacBlocks::new(count, bearer, direction, message);
+    // The key expansion, the subkeys and the chain in one piece of code,
+    // without a keyed state between them, which a message alone does not
+    // need
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if let Some(instructions) = Instructions::detect() {
         return cmac_lanes(instructions, [key], &[blocks])[0];
     }
-    blocks.mac(key)
+    Cmac::of(Aes128::of_crate(key)).mac(&blocks)
+}
+
+/// AES-CMAC with its key: the cipher and the two subkeys, which do not
+/// change from a message to the next (RFC 4493 §2.3).
+#[derive(Clone)]
+pub(crate) struct Cmac {
+    cipher: Aes128,
+    /// K1 and K2, each a number whose first octet is the low one.
+    k1: u128,
+    k2: u128,
+}
+
+impl Cmac {
+    pub(crate) fn new(key: &[u8; 16]) -> Self {
+        Self::of(Aes128::new(key))
+    }
+
+    /// AES-CMAC with a cipher that has its key.
+    fn of(cipher: Aes128) -> Self {
+        let (k1, k2) = subkeys(cipher.encrypt(0));
+        Self { cipher, k1, k2 }
+    }
+
+    /// The round keys, on the AES instructions.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn schedule(&self) -> Option<(Instructions, &AesSchedule)> {
+        self.cipher.schedule()
+    }
+
+    /// The MAC of a message, from its blocks.
+    pub(crate) fn mac(&self, blocks: &CmacBlocks<'_>) -> u32 {
+        let last = Zeroizing::new(blocks.last_with(self.k1, self.k2));
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        if let Some((instructions, schedule)) = self.cipher.schedule() {
+            let (first, body) = ([blocks.first], [blocks.body]);
+            let mac = Zeroizing::new(instructions.aes_cbc_mac([schedule], first, body, &[*last]));
+            return (mac[0] as u32).swap_bytes();
+        }
+
+        // `state = AES(state XOR block)`, for each block
+        let mut state = Zeroizing::new(0u128);
+        if let Some(first) = blocks.first {
+            *state = self.cipher.encrypt(first);
+        }
+        for block in blocks.body {
+            *state = self.cipher.encrypt(*state ^ u128::from_le_bytes(*block));
+        }
+        *state = self.cipher.encrypt(*state ^ *last);
+        // The first four octets, the high one first
+        (*state as u32).swap_bytes()
+    }
+}
+
+impl Drop for Cmac {
+    fn drop(&mut self) {
+        self.k1.zeroize();
+        self.k2.zeroize();
+    }
+}
+
+/// The subkeys K1 and K2 from `l`, the encryption of a block of zeros
+/// (RFC 4493 §2.3): L, as the number whose first octet is the high one,
+/// doubled once and twice. Each is given as the number whose first octet
+/// is the low one.
+fn subkeys(l: u128) -> (u128, u128) {
+    let k1 = cmac_double(l.swap_bytes());
+    (k1.swap_bytes(), cmac_double(k1).swap_bytes())
 }
 
 /// The blocks of AES-CMAC of one message of 128-EIA2, which no key has
@@ -419,39 +430,10 @@ impl<'a> CmacBlocks<'a> {
         }
     }
 
-    /// The last block with its subkey, K1 or K2, which come from `l`, the
-    /// encryption of a block of zeros (RFC 4493 §2.3).
-    fn last_with_subkey(&self, l: u128) -> u128 {
-        // The subkeys are L, as the number whose first octet is the high
-        // one, doubled once or twice
-        let mut subkey = Zeroizing::new(cmac_double(l.swap_bytes()));
-        if !self.complete {
-            *subkey = cmac_double(*subkey);
-        }
-        self.last ^ subkey.swap_bytes()
-    }
-
-    /// The MAC with the `aes` crate, one block after the other.
-    fn mac(&self, key: &[u8; 16]) -> u32 {
-        let cipher = Aes128Enc::new(key.into());
-        let mut state = Zeroizing::new([0u8; 16]);
-        cipher.encrypt_block((&mut *state).into());
-        let last = Zeroizing::new(self.last_with_subkey(u128::from_le_bytes(*state)));
-
-        // `state = AES(state XOR block)`, for each block
-        let absorb = |state: &mut [u8; 16], block: u128| {
-            *state = (u128::from_le_bytes(*state) ^ block).to_le_bytes();
-            cipher.encrypt_block(state.into());
-        };
-        *state = [0; 16];
-        if let Some(first) = self.first {
-            absorb(&mut state, first);
-        }
-        for block in self.body {
-            absorb(&mut state, u128::from_le_bytes(*block));
-        }
-        absorb(&mut state, *last);
-        u32::from_be_bytes([state[0], state[1], state[2], state[3]])
+    /// The last block with its subkey: K1 when it is complete, and K2
+    /// when it is padded (RFC 4493 §2.4).
+    fn last_with(&self, k1: u128, k2: u128) -> u128 {
+        self.last ^ if self.complete { k1 } else { k2 }
     }
 }
 
@@ -477,20 +459,79 @@ pub(crate) fn cmac_lanes<const N: usize>(
     let mut last = Zeroizing::new([0u128; N]);
     instructions.aes_encrypt(schedules, &mut last);
     for (last, blocks) in last.iter_mut().zip(blocks) {
-        *last = blocks.last_with_subkey(*last);
+        let (k1, k2) = subkeys(*last);
+        *last = blocks.last_with(k1, k2);
     }
+    cbc_mac_lanes(instructions, schedules, blocks, &last)
+}
 
+/// The key of a message of a batch: its octets, or AES-CMAC with its key
+/// from a context that has it.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[derive(Clone, Copy)]
+pub(crate) enum CmacKey<'a> {
+    Octets(&'a [u8; 16]),
+    Keyed(&'a Cmac, &'a AesSchedule),
+}
+
+/// AES-CMAC of several messages as [`cmac_lanes`] computes it, of which
+/// some have a keyed context: their round keys and their subkeys come
+/// from there, and those of the others are computed side by side.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) fn cmac_lanes_keyed<const N: usize>(
+    instructions: Instructions,
+    keys: [CmacKey<'_>; N],
+    blocks: &[CmacBlocks<'_>; N],
+) -> [u32; N] {
+    const NO_KEY: [u8; 16] = [0; 16];
+    let octets = keys.map(|key| match key {
+        CmacKey::Octets(octets) => octets,
+        CmacKey::Keyed(..) => &NO_KEY,
+    });
+    let mut expanded = Zeroizing::new([[0u128; 11]; N]);
+    let mut last = Zeroizing::new([0u128; N]);
+    if keys.iter().any(|key| matches!(key, CmacKey::Octets(_))) {
+        expanded = instructions.aes_schedules(octets);
+        instructions.aes_encrypt(expanded.each_ref(), &mut last);
+    }
+    let mut schedules = expanded.each_ref();
+    for (((schedule, last), key), blocks) in schedules
+        .iter_mut()
+        .zip(last.iter_mut())
+        .zip(keys)
+        .zip(blocks)
+    {
+        let (k1, k2) = match key {
+            CmacKey::Octets(_) => subkeys(*last),
+            CmacKey::Keyed(cmac, round_keys) => {
+                *schedule = round_keys;
+                (cmac.k1, cmac.k2)
+            }
+        };
+        *last = blocks.last_with(k1, k2);
+    }
+    cbc_mac_lanes(instructions, schedules, blocks, &last)
+}
+
+/// The MACs of the CBC-MAC chains of several messages, whose last blocks
+/// have their subkeys.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn cbc_mac_lanes<const N: usize>(
+    instructions: Instructions,
+    schedules: [&AesSchedule; N],
+    blocks: &[CmacBlocks<'_>; N],
+    last: &[u128; N],
+) -> [u32; N] {
     let first = blocks.each_ref().map(|blocks| blocks.first);
     let body = blocks.each_ref().map(|blocks| blocks.body);
-    let macs = Zeroizing::new(instructions.aes_cbc_mac(schedules, first, body, &last));
+    let macs = Zeroizing::new(instructions.aes_cbc_mac(schedules, first, body, last));
     // The first four octets, the high one first
     macs.map(|mac| (mac as u32).swap_bytes())
 }
 
 // ── NIA3: 128-EIA3 (ZUC MAC) ──────────────────────────────────────────────────
 
-/// Compute the MAC of a message of whole octets with 128-NIA3 / 128-EIA3
-/// (TS 33.401 Annex B.2.4, TS 35.221 §4).
+/// The MAC of 128-NIA3 / 128-EIA3 (TS 33.401 Annex B.2.4, TS 35.221 §4).
 ///
 /// IV construction (EEA3/EIA3 specification §4.3):
 /// ```text
@@ -502,33 +543,6 @@ pub(crate) fn cmac_lanes<const N: usize>(
 ///   Byte  [14]:    iv[6] XOR (DIRECTION << 7)  = DIRECTION << 7 (since iv[6]=0)
 ///   Byte  [15]:    0x00
 /// ```
-pub fn nia3_mac(
-    key: &[u8; 16],
-    count: u32,
-    bearer: Bearer,
-    direction: Direction,
-    message: &[u8],
-) -> u32 {
-    eia3(key, count, bearer, direction, BitString::whole(message))
-}
-
-/// Compute the 128-NIA3 / 128-EIA3 MAC of the first `bit_length` bits of
-/// `message`. The unused low-order bits of the last octet are ignored.
-///
-/// A `bit_length` above the length of `message` in bits is
-/// [`SecurityError::BitLengthExceedsData`].
-pub fn nia3_mac_bits(
-    key: &[u8; 16],
-    count: u32,
-    bearer: Bearer,
-    direction: Direction,
-    message: &[u8],
-    bit_length: u64,
-) -> Result<u32, SecurityError> {
-    let bits = BitString::new(message, bit_length)?;
-    Ok(eia3(key, count, bearer, direction, bits))
-}
-
 fn eia3(
     key: &[u8; 16],
     count: u32,
@@ -698,6 +712,99 @@ fn eia3_groups(mut tag: u32, mut window: u64, groups: &[[u8; 4]], words: &[u32])
 mod tests {
     use super::*;
 
+    fn nia1_mac(
+        key: &[u8; 16],
+        count: u32,
+        bearer: Bearer,
+        direction: Direction,
+        message: &[u8],
+    ) -> u32 {
+        nia_mac(
+            key,
+            count,
+            bearer,
+            direction,
+            message,
+            IntegrityAlgorithm::Snow3g,
+        )
+    }
+
+    fn nia1_mac_bits(
+        key: &[u8; 16],
+        count: u32,
+        bearer: Bearer,
+        direction: Direction,
+        message: &[u8],
+        bit_length: u64,
+    ) -> Result<u32, SecurityError> {
+        let algorithm = IntegrityAlgorithm::Snow3g;
+        nia_mac_bits(
+            key, count, bearer, direction, message, bit_length, algorithm,
+        )
+    }
+
+    fn nia2_mac(
+        key: &[u8; 16],
+        count: u32,
+        bearer: Bearer,
+        direction: Direction,
+        message: &[u8],
+    ) -> u32 {
+        nia_mac(
+            key,
+            count,
+            bearer,
+            direction,
+            message,
+            IntegrityAlgorithm::Aes,
+        )
+    }
+
+    fn nia2_mac_bits(
+        key: &[u8; 16],
+        count: u32,
+        bearer: Bearer,
+        direction: Direction,
+        message: &[u8],
+        bit_length: u64,
+    ) -> Result<u32, SecurityError> {
+        let algorithm = IntegrityAlgorithm::Aes;
+        nia_mac_bits(
+            key, count, bearer, direction, message, bit_length, algorithm,
+        )
+    }
+
+    fn nia3_mac(
+        key: &[u8; 16],
+        count: u32,
+        bearer: Bearer,
+        direction: Direction,
+        message: &[u8],
+    ) -> u32 {
+        nia_mac(
+            key,
+            count,
+            bearer,
+            direction,
+            message,
+            IntegrityAlgorithm::Zuc,
+        )
+    }
+
+    fn nia3_mac_bits(
+        key: &[u8; 16],
+        count: u32,
+        bearer: Bearer,
+        direction: Direction,
+        message: &[u8],
+        bit_length: u64,
+    ) -> Result<u32, SecurityError> {
+        let algorithm = IntegrityAlgorithm::Zuc;
+        nia_mac_bits(
+            key, count, bearer, direction, message, bit_length, algorithm,
+        )
+    }
+
     fn bearer(value: u8) -> Bearer {
         Bearer::new(value).unwrap()
     }
@@ -724,7 +831,8 @@ mod tests {
     /// `aes` crate: the string in blocks, the last one complete and with
     /// K1, or padded with a one bit and zero bits and with K2.
     fn cmac_of_rfc_4493(key: &[u8; 16], octets: &[u8], bits: usize) -> [u8; 16] {
-        let cipher = Aes128Enc::new(key.into());
+        use aes::cipher::{BlockCipherEncrypt, KeyInit};
+        let cipher = aes::Aes128Enc::new(key.into());
         let mut l = [0u8; 16];
         cipher.encrypt_block((&mut l).into());
         let k1 = cmac_double(u128::from_be_bytes(l));
