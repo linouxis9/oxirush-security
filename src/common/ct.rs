@@ -161,7 +161,18 @@ pub(crate) fn linear_map(x: u32, columns: &[u8; 8]) -> u32 {
 }
 
 /// The low 64 bits of the carry-less product of `x` and `y`, the product
-/// of two polynomials over GF(2).
+/// of two polynomials over GF(2): one instruction of the processor when it
+/// has it, and [`clmul64_scalar`] otherwise.
+#[inline]
+pub(crate) fn clmul64(x: u64, y: u64) -> u64 {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if let Some((low, _)) = crate::common::simd::carry_less_product(x, y) {
+        return low;
+    }
+    clmul64_scalar(x, y)
+}
+
+/// [`clmul64`] without an instruction of the processor for it.
 ///
 /// Each operand is cut into four words that keep one bit in four. The
 /// integer product of two of them adds up to sixteen ones at a position.
@@ -172,7 +183,7 @@ pub(crate) fn linear_map(x: u32, columns: &[u8; 8]) -> u32 {
 /// modulo four. This is the multiplication of BearSSL's constant-time
 /// GHASH.
 #[inline]
-pub(crate) fn clmul64(x: u64, y: u64) -> u64 {
+fn clmul64_scalar(x: u64, y: u64) -> u64 {
     const EVERY_FOURTH: u64 = 0x1111_1111_1111_1111;
     let x: [u64; 4] = core::array::from_fn(|i| x & (EVERY_FOURTH << i));
     let y: [u64; 4] = core::array::from_fn(|i| y & (EVERY_FOURTH << i));
@@ -190,11 +201,15 @@ pub(crate) fn clmul64(x: u64, y: u64) -> u64 {
 /// The carry-less product of `x` and `y` in two words, low then high.
 #[inline]
 pub(crate) fn clmul128(x: u64, y: u64) -> (u64, u64) {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if let Some(product) = crate::common::simd::carry_less_product(x, y) {
+        return product;
+    }
     // The product of the reversed operands is the reversed product, which
     // has 127 bits: its low word, reversed and moved by one, is the high
     // word of the product.
-    let high = clmul64(x.reverse_bits(), y.reverse_bits()).reverse_bits() >> 1;
-    (clmul64(x, y), high)
+    let high = clmul64_scalar(x.reverse_bits(), y.reverse_bits()).reverse_bits() >> 1;
+    (clmul64_scalar(x, y), high)
 }
 
 #[cfg(test)]

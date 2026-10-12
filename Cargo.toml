@@ -50,6 +50,11 @@ hex = { version = "0.4", optional = true }
 [dev-dependencies]
 hex = "0.4"
 
+# `cargo fuzz` builds the crate with `--cfg fuzzing`, which lets the fuzz
+# targets compare the vector paths with the scalar ones.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+
 [[example]]
 name = "suci_conceal"
 required-features = ["nai"]

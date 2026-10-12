@@ -19,8 +19,14 @@
 //! ciphering, and SUCI concealment, per 3GPP TS 33.501 and TS 33.401.
 //!
 //! They are functions over octets. The crate stores no key and keeps no
-//! NAS COUNT: the caller passes both for each message. It has no `unsafe`
-//! code, and no function panics on its arguments.
+//! NAS COUNT: the caller passes both for each message. No function panics
+//! on its arguments.
+//!
+//! SNOW 3G, ZUC and the two MACs that use them run on the AES, vector and
+//! carry-less multiplication instructions of an x86-64 or AArch64 processor
+//! that has them, which is seen when the program runs, and on scalar code
+//! elsewhere. The calls of that vector code are the `unsafe` code of the
+//! crate, in one module.
 //!
 //! # Deriving the keys from an authentication vector
 //!
@@ -143,7 +149,8 @@
 //! Without them the crate has the key derivations and the algorithms, and
 //! depends on `sha2`, `aes`, `zeroize` and `subtle` alone.
 
-#![forbid(unsafe_code)]
+// `unsafe` is allowed in one module, `common::simd`, which says why
+#![deny(unsafe_code)]
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -195,3 +202,18 @@ pub use nas_5gs::{
     msin_to_bcd, suci_conceal, suci_decrypt_a, suci_decrypt_b, suci_scheme_output_a,
     suci_scheme_output_b, suci_to_string, suci_to_supi,
 };
+
+/// What `cargo fuzz` drives beside the public functions. It builds the
+/// crate with `--cfg fuzzing`; no other build has this module.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub mod fuzzing {
+    /// Run `work` without the vector instructions of the processor, on the
+    /// scalar code that every target has.
+    pub fn scalar<R>(work: impl FnOnce() -> R) -> R {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        return crate::common::simd::scalar(work);
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        work()
+    }
+}

@@ -25,6 +25,31 @@ jobs:
       - run: cargo test --no-default-features
       - run: cargo test --no-default-features --features suci
 
+  # SNOW 3G and ZUC have a form on the vector instructions of AArch64, which
+  # the tests compare with the scalar one
+  aarch64:
+    name: Test (AArch64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test
+      - run: cargo test --release
+
+  # A target that has the scalar code alone, and 32-bit lengths
+  scalar:
+    name: Test (32-bit x86, scalar code alone)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - run: cargo test --target i686-unknown-linux-gnu
+
   msrv:
     name: MSRV (1.88)
     runs-on: ubuntu-latest

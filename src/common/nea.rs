@@ -103,21 +103,31 @@ fn cipher_bits(
 }
 
 /// XOR a keystream of 32-bit words, most significant octet first, into the
-/// data. The copy of the last word is wiped.
-fn xor_keystream(data: &mut [u8], mut next_word: impl FnMut() -> u32) {
-    let mut word = Zeroizing::new(0u32);
-    let (words, rest) = data.as_chunks_mut::<4>();
-    for octets in words {
-        *word = next_word();
-        *octets = (u32::from_be_bytes(*octets) ^ *word).to_be_bytes();
-    }
-    if !rest.is_empty() {
-        *word = next_word();
-        for (octet, key_octet) in rest.iter_mut().zip(word.to_be_bytes()) {
-            *octet ^= key_octet;
+/// data. `fill` gives the next words of the keystream, which are taken
+/// [`KEYSTREAM_WORDS`] at a time. The copy of the keystream is wiped.
+fn xor_keystream(data: &mut [u8], mut fill: impl FnMut(&mut [u32])) {
+    let mut keystream = [0u32; KEYSTREAM_WORDS];
+    for part in data.chunks_mut(4 * KEYSTREAM_WORDS) {
+        let words = &mut keystream[..part.len().div_ceil(4)];
+        fill(words);
+        let (whole, rest) = part.as_chunks_mut::<4>();
+        for (octets, word) in whole.iter_mut().zip(words.iter()) {
+            *octets = (u32::from_be_bytes(*octets) ^ word).to_be_bytes();
+        }
+        if let Some(word) = words.get(whole.len()) {
+            for (octet, key_octet) in rest.iter_mut().zip(word.to_be_bytes()) {
+                *octet ^= key_octet;
+            }
         }
     }
+    // A part overwrites the words of the one before it: the array holds
+    // keystream in as many words as the longest part had
+    keystream[..data.len().div_ceil(4).min(KEYSTREAM_WORDS)].zeroize();
 }
+
+/// The number of keystream words that [`xor_keystream`] asks for at a time:
+/// a multiple of three, the number that SNOW 3G makes at once.
+const KEYSTREAM_WORDS: usize = 48;
 
 // ── NEA1: 128-EEA1 (SNOW 3G keystream) ────────────────────────────────────────
 
@@ -155,7 +165,7 @@ pub fn nea1_cipher(
     let iv = [bearer_dir, count, bearer_dir, count];
 
     let mut snow = Snow3G::new(*k, iv);
-    xor_keystream(data, || snow.next_word());
+    xor_keystream(data, |words| snow.fill(words));
 }
 
 /// Cipher or decipher the first `bit_length` bits with 128-NEA1 /
@@ -286,7 +296,7 @@ pub fn nea3_cipher(
     iv.copy_within(0..8, 8);
 
     let mut zuc = Zuc::new(key, &iv);
-    xor_keystream(data, || zuc.next_word());
+    xor_keystream(data, |words| zuc.fill(words));
 }
 
 /// Cipher or decipher the first `bit_length` bits with 128-NEA3 /

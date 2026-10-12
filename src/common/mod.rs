@@ -27,6 +27,8 @@ pub mod nea;
 pub mod nia;
 pub mod plmn;
 pub(crate) mod sha256;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) mod simd;
 pub mod snow3g;
 pub mod zuc;
 

@@ -20,15 +20,25 @@
 //! A word-oriented stream cipher producing 32-bit keystream words.
 //! Uses a 16-stage LFSR over GF(2^31-1), bit reorganization, and a nonlinear function.
 //!
-//! No memory access and no branch depends on the key or on the state. S0
-//! is three rounds of four-bit S-boxes, each a word that is shifted. S1 is
-//! an affine image of the inversion of GF(2^8), as the S-box of AES is, and
-//! is computed from one round of AES by the `aes` crate, with the AES
-//! instructions of the processor or, without them, a bitsliced routine. The
-//! reduction modulo 2^31 - 1 has no branch. Compiled-code timing requires
-//! target-specific assessment.
+//! No memory access and no branch depends on the key or on the state, in
+//! either of two implementations of the generator.
+//!
+//! On an x86-64 or AArch64 processor with the AES and vector instructions,
+//! which is seen when the program runs, [`Zuc`] computes its S-boxes on
+//! those instructions: the module `simd` has that code.
+//!
+//! Elsewhere it is the scalar code of this module. S0 is three rounds of
+//! four-bit S-boxes, each a word that is shifted. S1 is an affine image of
+//! the inversion of GF(2^8), as the S-box of AES is, and is computed from
+//! one round of AES by the `aes` crate, with a bitsliced routine when the
+//! processor has no AES instruction. The reduction modulo 2^31 - 1 has no
+//! branch.
+//!
+//! Compiled-code timing requires target-specific assessment.
 
 use crate::common::ct::{block_to_columns, columns_to_block, linear_map, nibble, nibbles};
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+use crate::common::simd;
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -46,7 +56,7 @@ const P: u32 = 0x7FFFFFFF; // 2^31 - 1
 /// is not zero. The result is in [1, 2^31 - 1], with 2^31 - 1 for a
 /// multiple of it, as the LFSR wants, and no step branches.
 #[inline]
-fn mod31(sum: u64) -> u32 {
+pub(crate) fn mod31(sum: u64) -> u32 {
     const P: u64 = 0x7fff_ffff;
     // 2^31 is 1 modulo 2^31 - 1: a fold adds what is above bit 30 to what
     // is below. The first fold leaves less than 2^31 + 2^24. In the second,
@@ -60,21 +70,21 @@ fn mod31(sum: u64) -> u32 {
 // ── Linear transforms ──────────────────────────────────────────────────────────
 
 #[inline]
-fn l1(x: u32) -> u32 {
+pub(crate) fn l1(x: u32) -> u32 {
     x ^ x.rotate_left(2) ^ x.rotate_left(10) ^ x.rotate_left(18) ^ x.rotate_left(24)
 }
 
 #[inline]
-fn l2(x: u32) -> u32 {
+pub(crate) fn l2(x: u32) -> u32 {
     x ^ x.rotate_left(8) ^ x.rotate_left(14) ^ x.rotate_left(22) ^ x.rotate_left(30)
 }
 
 // ── S-boxes ────────────────────────────────────────────────────────────────────
 
 /// The three four-bit S-boxes of S0.
-const P1: u64 = nibbles([9, 15, 0, 14, 15, 15, 2, 10, 0, 4, 0, 12, 7, 5, 3, 9]);
-const P2: u64 = nibbles([8, 13, 6, 5, 7, 0, 12, 4, 11, 1, 14, 10, 15, 3, 9, 2]);
-const P3: u64 = nibbles([2, 6, 10, 6, 0, 13, 10, 15, 3, 3, 13, 5, 0, 9, 12, 13]);
+pub(crate) const P1: u64 = nibbles([9, 15, 0, 14, 15, 15, 2, 10, 0, 4, 0, 12, 7, 5, 3, 9]);
+pub(crate) const P2: u64 = nibbles([8, 13, 6, 5, 7, 0, 12, 4, 11, 1, 14, 10, 15, 3, 9, 2]);
+pub(crate) const P3: u64 = nibbles([2, 6, 10, 6, 0, 13, 10, 15, 3, 3, 13, 5, 0, 9, 12, 13]);
 
 /// S0: three rounds that each add to one half of the octet a four-bit
 /// S-box of the other half, then a rotation by five bits. This is how the
@@ -96,9 +106,9 @@ fn s0(x: u8) -> u8 {
 /// AES, which is a root of the same polynomial, and `S1_OUT` with
 /// `S1_CONSTANT` is the affine map that is left. Each array has the image
 /// of the octet with bit `i` alone.
-const S1_IN: [u8; 8] = [0x01, 0x32, 0x73, 0x75, 0xd9, 0xe8, 0xcd, 0x2d];
-const S1_OUT: [u8; 8] = [0x4f, 0x90, 0x4b, 0x37, 0x34, 0x42, 0x36, 0x66];
-const S1_CONSTANT: u8 = 0xfe;
+pub(crate) const S1_IN: [u8; 8] = [0x01, 0x32, 0x73, 0x75, 0xd9, 0xe8, 0xcd, 0x2d];
+pub(crate) const S1_OUT: [u8; 8] = [0x4f, 0x90, 0x4b, 0x37, 0x34, 0x42, 0x36, 0x66];
+pub(crate) const S1_CONSTANT: u8 = 0xfe;
 
 /// The S-boxes on the two words of a clock: S0(x0) || S1(x1) || S0(x2) ||
 /// S1(x3) on each.
@@ -135,29 +145,23 @@ fn sboxes(a: u32, b: u32, block: &mut [u8; 16]) -> (u32, u32) {
 
 /// ZUC keystream generator: the LFSR and the two registers of the nonlinear
 /// function, initialized with a key and an IV. The state is wiped on drop.
-pub struct Zuc {
-    /// The sixteen 31-bit stages, in a ring: stage `i` is at `head + i`
-    /// modulo 16.
-    s: [u32; 16],
-    /// Where stage 0 is. A clock writes the new stage 15 over it and moves
-    /// it by one, in place of moving fifteen stages.
-    head: usize,
-    r1: u32,
-    r2: u32,
-    started: bool,
-    /// The AES state that the S-boxes work in. It is part of the generator
-    /// so that it is wiped with it, and not at every clock.
-    block: [u8; 16],
+pub struct Zuc(Generator);
+
+/// The generator on the vector instructions of the processor when it has
+/// them, and the scalar one otherwise. They give the same words.
+enum Generator {
+    Scalar(Scalar),
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    Vector(simd::Zuc),
 }
 
 impl zeroize::Zeroize for Zuc {
     fn zeroize(&mut self) {
-        self.s.zeroize();
-        self.head.zeroize();
-        self.r1.zeroize();
-        self.r2.zeroize();
-        self.started.zeroize();
-        self.block.zeroize();
+        match &mut self.0 {
+            Generator::Scalar(scalar) => scalar.zeroize(),
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            Generator::Vector(vector) => vector.zeroize(),
+        }
     }
 }
 
@@ -172,32 +176,87 @@ impl zeroize::ZeroizeOnDrop for Zuc {}
 impl Zuc {
     /// Initialize ZUC with 128-bit key and 128-bit IV.
     pub fn new(key: &[u8; 16], iv: &[u8; 16]) -> Self {
-        let mut z = Zuc {
-            s: [0u32; 16],
+        // Load LFSR: s[i] = k[i] || d[i] || iv[i] (31 bits: 8+15+8)
+        let mut stages: [u32; 16] = core::array::from_fn(|i| {
+            (u32::from(key[i]) << 23) | (u32::from(D[i]) << 8) | u32::from(iv[i])
+        });
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        if let Some(vector) = simd::Zuc::new(stages) {
+            zeroize::Zeroize::zeroize(&mut stages);
+            return Self(Generator::Vector(vector));
+        }
+        let scalar = Scalar::new(stages);
+        zeroize::Zeroize::zeroize(&mut stages);
+        Self(Generator::Scalar(scalar))
+    }
+
+    /// The next keystream word.
+    pub fn next_word(&mut self) -> u32 {
+        let mut word = [0];
+        self.fill(&mut word);
+        word[0]
+    }
+
+    /// Fill `words` with the next keystream words.
+    pub fn fill(&mut self, words: &mut [u32]) {
+        match &mut self.0 {
+            Generator::Scalar(scalar) => scalar.fill(words),
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            Generator::Vector(vector) => vector.fill(words),
+        }
+    }
+}
+
+/// The generator in scalar code: the reference of the vector one, and what
+/// runs where the processor has no instruction for it.
+struct Scalar {
+    /// The sixteen 31-bit stages, in a ring: stage `i` is at `head + i`
+    /// modulo 16.
+    s: [u32; 16],
+    /// Where stage 0 is. A clock writes the new stage 15 over it and moves
+    /// it by one, in place of moving fifteen stages.
+    head: usize,
+    r1: u32,
+    r2: u32,
+    started: bool,
+    /// The AES state that the S-boxes work in. It is part of the generator
+    /// so that it is wiped with it, and not at every clock.
+    block: [u8; 16],
+}
+
+impl zeroize::Zeroize for Scalar {
+    fn zeroize(&mut self) {
+        self.s.zeroize();
+        self.head.zeroize();
+        self.r1.zeroize();
+        self.r2.zeroize();
+        self.started.zeroize();
+        self.block.zeroize();
+    }
+}
+
+impl Scalar {
+    /// The generator from its sixteen stages after the key and the IV are
+    /// loaded, after the 32 clocks of the initialization.
+    fn new(s: [u32; 16]) -> Self {
+        let mut z = Self {
+            s,
             head: 0,
             r1: 0,
             r2: 0,
             started: false,
             block: [0; 16],
         };
-
-        // Load LFSR: s[i] = k[i] || d[i] || iv[i] (31 bits: 8+15+8)
-        for i in 0..16 {
-            z.s[i] = ((key[i] as u32) << 23) | ((D[i] as u32) << 8) | (iv[i] as u32);
-        }
-
-        // 32 initialization clocks
         for _ in 0..32 {
             let (x0, x1, x2, x3) = z.bit_reorg();
             let w = z.f(x0, x1, x2, x3);
             z.lfsr_init(w >> 1);
         }
-
         z
     }
 
     /// The next keystream word.
-    pub fn next_word(&mut self) -> u32 {
+    fn next_word(&mut self) -> u32 {
         if !self.started {
             // TS 35.222 discards one word after initialization, once per state.
             let (x0, x1, x2, x3) = self.bit_reorg();
@@ -212,7 +271,7 @@ impl Zuc {
     }
 
     /// Fill `words` with the next keystream words.
-    pub fn fill(&mut self, words: &mut [u32]) {
+    fn fill(&mut self, words: &mut [u32]) {
         for word in words {
             *word = self.next_word();
         }
@@ -400,7 +459,7 @@ mod tests {
         };
         let mut values = random();
         let mut stage = move || 1 + values.next().unwrap() % P;
-        let mut zuc = Zuc::new(&[0; 16], &[0; 16]);
+        let mut zuc = Scalar::new([1; 16]);
         for round in 0..200_000 {
             let mut s: [u32; 16] = core::array::from_fn(|_| stage());
             let w = match round % 4 {

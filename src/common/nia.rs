@@ -197,15 +197,17 @@ fn eia1(
     let p = ((z[0] as u64) << 32) | (z[1] as u64);
     let q = ((z[2] as u64) << 32) | (z[3] as u64);
 
-    // The message in 64-bit blocks, the last one padded with zero bits
+    // The message in 64-bit blocks, the last one padded with zero bits.
+    // The last octet of the message may have bits that are not of it.
     let mut eval: u64 = 0;
-    let mut blocks = message.octets.chunks(8).peekable();
-    while let Some(chunk) = blocks.next() {
-        let mut block = [0u8; 8];
-        block[..chunk.len()].copy_from_slice(chunk);
-        if blocks.peek().is_none() {
-            block[chunk.len() - 1] &= message.last_mask();
+    if let Some((last, whole)) = message.octets.split_last() {
+        let (blocks, rest) = whole.as_chunks::<8>();
+        for block in blocks {
+            eval = mul64(eval ^ u64::from_be_bytes(*block), p);
         }
+        let mut block = [0u8; 8];
+        block[..rest.len()].copy_from_slice(rest);
+        block[rest.len()] = last & message.last_mask();
         eval = mul64(eval ^ u64::from_be_bytes(block), p);
     }
 
@@ -412,23 +414,28 @@ fn eia3(
     // takes the window shifted left by i, and the word is in its high half.
     // With the 32 bits reversed, bit i is the coefficient of x^i.
     let mut zuc = Zuc::new(key, &iv);
+    // L = ceil(LENGTH / 32) + 2 words of keystream in all
+    let total = message.bit_length().div_ceil(32) as usize + 2;
+    let mut keystream = Keystream::new(|words| zuc.fill(words), total);
     let mut window = Zeroizing::new(0u64);
-    shift_in(&mut window, &mut zuc);
-    shift_in(&mut window, &mut zuc);
+    shift_in(&mut window, &mut keystream);
+    shift_in(&mut window, &mut keystream);
 
+    // The last octet of the message may have bits that are not of it: the
+    // groups before the one it is in are whole
     let mut tag: u32 = 0;
-    let groups = message.octets.len().div_ceil(4);
-    for (index, group) in message.octets.chunks(4).enumerate() {
-        // A new 32-bit group of the message moves the window by a word
-        if index != 0 {
-            shift_in(&mut window, &mut zuc);
+    if let Some((last, whole)) = message.octets.split_last() {
+        let (groups, rest) = whole.as_chunks::<4>();
+        for group in groups {
+            let bits = u64::from(u32::from_be_bytes(*group).reverse_bits());
+            tag ^= (clmul64(bits, *window) >> 32) as u32;
+            // The next 32-bit group of the message is a word further
+            shift_in(&mut window, &mut keystream);
         }
-        let mut bits = [0u8; 4];
-        bits[..group.len()].copy_from_slice(group);
-        if index + 1 == groups {
-            bits[group.len() - 1] &= message.last_mask();
-        }
-        let bits = u64::from(u32::from_be_bytes(bits).reverse_bits());
+        let mut group = [0u8; 4];
+        group[..rest.len()].copy_from_slice(rest);
+        group[rest.len()] = last & message.last_mask();
+        let bits = u64::from(u32::from_be_bytes(group).reverse_bits());
         tag ^= (clmul64(bits, *window) >> 32) as u32;
     }
 
@@ -436,20 +443,68 @@ fn eia3(
     // L = ceil(LENGTH / 32) + 2
     let end = (message.bit_length() % 32) as u32;
     if end == 0 && !message.octets.is_empty() {
-        shift_in(&mut window, &mut zuc);
+        shift_in(&mut window, &mut keystream);
     }
     tag ^= ((*window << end) >> 32) as u32;
     let last_word = if end == 0 {
         *window as u32
     } else {
-        zuc.next_word()
+        keystream.next_word()
     };
     tag ^ last_word
 }
 
 /// Move the window of two keystream words forward by one word.
-fn shift_in(window: &mut u64, zuc: &mut Zuc) {
-    *window = (*window << 32) | u64::from(zuc.next_word());
+fn shift_in(window: &mut u64, keystream: &mut Keystream<impl FnMut(&mut [u32])>) {
+    *window = (*window << 32) | u64::from(keystream.next_word());
+}
+
+/// The words of a keystream one at a time, taken from the generator
+/// several at a time. The copy is wiped on drop.
+struct Keystream<F> {
+    /// Gives the next words of the generator.
+    fill: F,
+    words: [u32; KEYSTREAM_WORDS],
+    /// The words of `words` that are from the generator, and how many of
+    /// them were given.
+    filled: usize,
+    given: usize,
+    /// The words that the caller will still want once these are given.
+    remaining: usize,
+}
+
+/// The number of words that a [`Keystream`] takes from its generator at a
+/// time.
+const KEYSTREAM_WORDS: usize = 32;
+
+impl<F: FnMut(&mut [u32])> Keystream<F> {
+    /// A keystream of which the caller wants `total` words.
+    fn new(fill: F, total: usize) -> Self {
+        Self {
+            fill,
+            words: [0; KEYSTREAM_WORDS],
+            filled: 0,
+            given: 0,
+            remaining: total,
+        }
+    }
+
+    fn next_word(&mut self) -> u32 {
+        if self.given == self.filled {
+            self.filled = self.remaining.clamp(1, KEYSTREAM_WORDS);
+            self.remaining = self.remaining.saturating_sub(self.filled);
+            self.given = 0;
+            (self.fill)(&mut self.words[..self.filled]);
+        }
+        self.given += 1;
+        self.words[self.given - 1]
+    }
+}
+
+impl<F> Drop for Keystream<F> {
+    fn drop(&mut self) {
+        self.words.zeroize();
+    }
 }
 
 #[cfg(test)]

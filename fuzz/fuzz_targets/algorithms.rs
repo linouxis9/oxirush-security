@@ -1,9 +1,12 @@
 //! The algorithms take any message and any length in bits without a panic:
 //! ciphering twice gives the data back, the bits after the length are left
 //! alone or ignored, and a length that the buffer does not hold is an error.
+//! On a processor with the vector instructions, they give what the scalar
+//! code gives.
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use oxirush_security::fuzzing::scalar;
 use oxirush_security::{
     Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, nea_cipher, nea_cipher_bits,
     nia_mac, nia_mac_bits,
@@ -24,10 +27,16 @@ fuzz_target!(|bytes: &[u8]| {
     let available = message.len() as u64 * 8;
     let bits = u64::from(u16::from_be_bytes([head[22] >> 2, head[23]])) % (available + 9);
 
-    // Whole octets
+    // Whole octets, on the vector instructions of the processor and
+    // without them
     let mac = nia_mac(&key, count, bearer, direction, message, integrity);
+    let scalar_mac = scalar(|| nia_mac(&key, count, bearer, direction, message, integrity));
+    assert_eq!(mac, scalar_mac);
     let mut data = message.to_vec();
     nea_cipher(&key, count, bearer, direction, &mut data, ciphering);
+    let mut scalar_data = message.to_vec();
+    scalar(|| nea_cipher(&key, count, bearer, direction, &mut scalar_data, ciphering));
+    assert_eq!(data, scalar_data);
     nea_cipher(&key, count, bearer, direction, &mut data, ciphering);
     assert_eq!(data, message);
 
@@ -41,6 +50,24 @@ fuzz_target!(|bytes: &[u8]| {
     }
     let mac_bits = mac_bits.expect("the length is within the message");
     ciphered.expect("the length is within the data");
+    scalar(|| {
+        assert_eq!(
+            nia_mac_bits(&key, count, bearer, direction, message, bits, integrity),
+            Ok(mac_bits)
+        );
+        let mut scalar_data = message.to_vec();
+        nea_cipher_bits(
+            &key,
+            count,
+            bearer,
+            direction,
+            &mut scalar_data,
+            bits,
+            ciphering,
+        )
+        .expect("the length is within the data");
+        assert_eq!(scalar_data, data);
+    });
     if bits == available {
         assert_eq!(mac_bits, mac);
     }

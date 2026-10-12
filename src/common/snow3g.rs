@@ -20,18 +20,28 @@
 //! A word-oriented stream cipher producing 32-bit keystream words.
 //! Uses a 16-stage LFSR over GF(2^32) and a 3-register FSM with two S-boxes.
 //!
-//! No memory access and no branch depends on the key or on the state. S1
-//! is one round of AES on a column, which the `aes` crate computes with the
-//! AES instructions of the processor or, without them, with a bitsliced
-//! routine. The S-box SQ of S2 is read whole and narrowed down through
-//! masks. MULα and DIVα multiply by constants of GF(2^8), bit by bit of the
-//! constants. Compiled-code timing requires target-specific assessment.
+//! No memory access and no branch depends on the key or on the state, in
+//! either of two implementations of the generator.
+//!
+//! On an x86-64 or AArch64 processor with the AES and vector instructions,
+//! which is seen when the program runs, [`Snow3G`] clocks three times at
+//! once on those instructions: the module `simd` has that code.
+//!
+//! Elsewhere it is the scalar code of this module. S1 is one round of AES
+//! on a column, which the `aes` crate computes with a bitsliced routine
+//! when the processor has no AES instruction. The S-box SQ of S2 is read
+//! whole and narrowed down through masks. MULα and DIVα multiply by
+//! constants of GF(2^8), bit by bit of the constants.
+//!
+//! Compiled-code timing requires target-specific assessment.
 
 use crate::common::ct::{Table, block_to_columns, columns_to_block};
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+use crate::common::simd;
 
 // ── SQ S-box used by S2 (TS 35.216) ───────────────────────────────────────────
 
-const SQ_OCTETS: [u8; 256] = [
+pub(crate) const SQ_OCTETS: [u8; 256] = [
     0x25, 0x24, 0x73, 0x67, 0xD7, 0xAE, 0x5C, 0x30, 0xA4, 0xEE, 0x6E, 0xCB, 0x7D, 0xB5, 0x82, 0xDB,
     0xE4, 0x8E, 0x48, 0x49, 0x4F, 0x5D, 0x6A, 0x78, 0x70, 0x88, 0xE8, 0x5F, 0x5E, 0x84, 0x65, 0xE2,
     0xD8, 0xE9, 0xCC, 0xED, 0x40, 0x2F, 0x11, 0x28, 0x57, 0xD2, 0xAC, 0xE3, 0x4A, 0x15, 0x1B, 0xB9,
@@ -77,7 +87,7 @@ static SQ: Table = Table::new(&SQ_OCTETS);
 
 /// MULα as defined with MULxPOW (reduction polynomial 0xa9 for the outer
 /// field: x^8 + x^7 + x^5 + x^3 + 1).
-const fn mul_alpha_value(c: u8) -> u32 {
+pub(crate) const fn mul_alpha_value(c: u8) -> u32 {
     ((mulxpow(c, 23, 0xa9) as u32) << 24)
         | ((mulxpow(c, 245, 0xa9) as u32) << 16)
         | ((mulxpow(c, 48, 0xa9) as u32) << 8)
@@ -85,7 +95,7 @@ const fn mul_alpha_value(c: u8) -> u32 {
 }
 
 /// DIVα as defined with MULxPOW.
-const fn div_alpha_value(c: u8) -> u32 {
+pub(crate) const fn div_alpha_value(c: u8) -> u32 {
     ((mulxpow(c, 16, 0xa9) as u32) << 24)
         | ((mulxpow(c, 39, 0xa9) as u32) << 16)
         | ((mulxpow(c, 6, 0xa9) as u32) << 8)
@@ -170,30 +180,23 @@ fn s2(w: u32) -> u32 {
 
 /// SNOW 3G keystream generator: the LFSR and the FSM registers, initialized
 /// with a key and an IV. The state is wiped on drop.
-pub struct Snow3G {
-    /// The sixteen stages, in a ring: stage `i` is at `head + i` modulo 16.
-    lfsr: [u32; 16],
-    /// Where stage 0 is. A clock writes the new stage 15 over it and moves
-    /// it by one, in place of moving fifteen stages.
-    head: usize,
-    r1: u32,
-    r2: u32,
-    r3: u32,
-    started: bool,
-    /// The AES state that S1 works in. It is part of the generator so that
-    /// it is wiped with it, and not at every clock.
-    block: [u8; 16],
+pub struct Snow3G(Generator);
+
+/// The generator on the vector instructions of the processor when it has
+/// them, and the scalar one otherwise. They give the same words.
+enum Generator {
+    Scalar(Scalar),
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    Vector(simd::Snow3g),
 }
 
 impl zeroize::Zeroize for Snow3G {
     fn zeroize(&mut self) {
-        self.lfsr.zeroize();
-        self.head.zeroize();
-        self.r1.zeroize();
-        self.r2.zeroize();
-        self.r3.zeroize();
-        self.started.zeroize();
-        self.block.zeroize();
+        match &mut self.0 {
+            Generator::Scalar(scalar) => scalar.zeroize(),
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            Generator::Vector(vector) => vector.zeroize(),
+        }
     }
 }
 
@@ -211,42 +214,16 @@ impl Snow3G {
     /// Key and IV words follow their big-endian order in the SNOW 3G core
     /// specification. EEA1/EIA1 wrappers apply their own key mapping.
     pub fn new(mut k: [u32; 4], iv: [u32; 4]) -> Self {
-        let mut s = Self {
-            lfsr: [0u32; 16],
-            head: 0,
-            r1: 0,
-            r2: 0,
-            r3: 0,
-            started: false,
-            block: [0; 16],
-        };
-
-        // Load LFSR (matching free5gc snow3g.go newSnow3g)
-        s.lfsr[0] = k[0] ^ 0xFFFFFFFF;
-        s.lfsr[1] = k[1] ^ 0xFFFFFFFF;
-        s.lfsr[2] = k[2] ^ 0xFFFFFFFF;
-        s.lfsr[3] = k[3] ^ 0xFFFFFFFF;
-        s.lfsr[4] = k[0];
-        s.lfsr[5] = k[1];
-        s.lfsr[6] = k[2];
-        s.lfsr[7] = k[3];
-        s.lfsr[8] = k[0] ^ 0xFFFFFFFF;
-        s.lfsr[9] = k[1] ^ 0xFFFFFFFF ^ iv[3];
-        s.lfsr[10] = k[2] ^ 0xFFFFFFFF ^ iv[2];
-        s.lfsr[11] = k[3] ^ 0xFFFFFFFF;
-        s.lfsr[12] = k[0] ^ iv[1];
-        s.lfsr[13] = k[1];
-        s.lfsr[14] = k[2];
-        s.lfsr[15] = k[3] ^ iv[0];
-
-        // 32 initialization clocks
-        for _ in 0..32 {
-            let f = s.clock_fsm();
-            s.clock_lfsr_init(f);
-        }
-
+        let mut stages = load(&k, &iv);
         zeroize::Zeroize::zeroize(&mut k);
-        s
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        if let Some(vector) = simd::Snow3g::new(stages) {
+            zeroize::Zeroize::zeroize(&mut stages);
+            return Self(Generator::Vector(vector));
+        }
+        let scalar = Scalar::new(stages);
+        zeroize::Zeroize::zeroize(&mut stages);
+        Self(Generator::Scalar(scalar))
     }
 
     /// Initialize from 128-bit key and IV byte slices.
@@ -254,31 +231,114 @@ impl Snow3G {
     /// The key and IV are four consecutive big-endian words, as in the
     /// SNOW 3G core specification. EEA1/EIA1 mode code handles its own key mapping.
     pub fn from_bytes(key: &[u8; 16], iv: &[u8; 16]) -> Self {
+        let (key, _) = key.as_chunks::<4>();
+        let (iv, _) = iv.as_chunks::<4>();
         let k = zeroize::Zeroizing::new([
-            u32::from_be_bytes(key[0..4].try_into().expect("4-byte slice from 16-byte key")),
-            u32::from_be_bytes(key[4..8].try_into().expect("4-byte slice from 16-byte key")),
-            u32::from_be_bytes(
-                key[8..12]
-                    .try_into()
-                    .expect("4-byte slice from 16-byte key"),
-            ),
-            u32::from_be_bytes(
-                key[12..16]
-                    .try_into()
-                    .expect("4-byte slice from 16-byte key"),
-            ),
+            u32::from_be_bytes(key[0]),
+            u32::from_be_bytes(key[1]),
+            u32::from_be_bytes(key[2]),
+            u32::from_be_bytes(key[3]),
         ]);
         let v = [
-            u32::from_be_bytes(iv[0..4].try_into().expect("4-byte slice from 16-byte IV")),
-            u32::from_be_bytes(iv[4..8].try_into().expect("4-byte slice from 16-byte IV")),
-            u32::from_be_bytes(iv[8..12].try_into().expect("4-byte slice from 16-byte IV")),
-            u32::from_be_bytes(iv[12..16].try_into().expect("4-byte slice from 16-byte IV")),
+            u32::from_be_bytes(iv[0]),
+            u32::from_be_bytes(iv[1]),
+            u32::from_be_bytes(iv[2]),
+            u32::from_be_bytes(iv[3]),
         ];
         Self::new(*k, v)
     }
 
     /// The next keystream word.
     pub fn next_word(&mut self) -> u32 {
+        let mut word = [0];
+        self.fill(&mut word);
+        word[0]
+    }
+
+    /// Fill `words` with the next keystream words.
+    pub fn fill(&mut self, words: &mut [u32]) {
+        match &mut self.0 {
+            Generator::Scalar(scalar) => scalar.fill(words),
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            Generator::Vector(vector) => vector.fill(words),
+        }
+    }
+}
+
+/// The sixteen stages of the LFSR that a key and an IV give (TS 35.216).
+fn load(k: &[u32; 4], iv: &[u32; 4]) -> [u32; 16] {
+    let n = |word: u32| word ^ 0xFFFF_FFFF;
+    [
+        n(k[0]),
+        n(k[1]),
+        n(k[2]),
+        n(k[3]),
+        k[0],
+        k[1],
+        k[2],
+        k[3],
+        n(k[0]),
+        n(k[1]) ^ iv[3],
+        n(k[2]) ^ iv[2],
+        n(k[3]),
+        k[0] ^ iv[1],
+        k[1],
+        k[2],
+        k[3] ^ iv[0],
+    ]
+}
+
+/// The generator in scalar code: the reference of the vector one, and what
+/// runs where the processor has no instruction for it.
+struct Scalar {
+    /// The sixteen stages, in a ring: stage `i` is at `head + i` modulo 16.
+    lfsr: [u32; 16],
+    /// Where stage 0 is. A clock writes the new stage 15 over it and moves
+    /// it by one, in place of moving fifteen stages.
+    head: usize,
+    r1: u32,
+    r2: u32,
+    r3: u32,
+    started: bool,
+    /// The AES state that S1 works in. It is part of the generator so that
+    /// it is wiped with it, and not at every clock.
+    block: [u8; 16],
+}
+
+impl zeroize::Zeroize for Scalar {
+    fn zeroize(&mut self) {
+        self.lfsr.zeroize();
+        self.head.zeroize();
+        self.r1.zeroize();
+        self.r2.zeroize();
+        self.r3.zeroize();
+        self.started.zeroize();
+        self.block.zeroize();
+    }
+}
+
+impl Scalar {
+    /// The generator from the stages that [`load`] gives, after the 32
+    /// clocks of the initialization.
+    fn new(lfsr: [u32; 16]) -> Self {
+        let mut s = Self {
+            lfsr,
+            head: 0,
+            r1: 0,
+            r2: 0,
+            r3: 0,
+            started: false,
+            block: [0; 16],
+        };
+        for _ in 0..32 {
+            let f = s.clock_fsm();
+            s.clock_lfsr_init(f);
+        }
+        s
+    }
+
+    /// The next keystream word.
+    fn next_word(&mut self) -> u32 {
         if !self.started {
             // TS 35.216 discards one word after initialization, once per state.
             let _ = self.clock_fsm();
@@ -291,7 +351,7 @@ impl Snow3G {
     }
 
     /// Fill `words` with the next keystream words.
-    pub fn fill(&mut self, words: &mut [u32]) {
+    fn fill(&mut self, words: &mut [u32]) {
         for word in words {
             *word = self.next_word();
         }
