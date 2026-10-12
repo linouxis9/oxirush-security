@@ -208,7 +208,7 @@ and what a type cannot say is a `Result`. Every call below changes.
     jumps on bits of the state.
 
   The compiled code was read for x86-64 with Rust 1.98.1, and no timing
-  was measured: the README says what was checked.
+  was measured: the documentation says what was checked.
 - SNOW 3G and ZUC also have a form on the vector instructions of the
   processor, which runs when it has them: SSSE3, SSE4.1, AES-NI and
   PCLMULQDQ on x86-64, and AES on AArch64. The crate looks at the processor

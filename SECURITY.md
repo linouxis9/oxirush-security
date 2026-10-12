@@ -28,6 +28,6 @@ Fixes go into the latest release. An older version gets none.
 
 ## What to know before reporting
 
-The crate has not had a security audit. Its README says what it wipes and
-what it does not, and that the timing of the compiled code has not been
-measured: a report on either is welcome all the same.
+The crate has not had a security audit. Its documentation says what it
+wipes and what it does not, and that the timing of the compiled code has
+not been measured: a report on either is welcome all the same.
