@@ -15,8 +15,10 @@ System of 4G) in Rust, per 3GPP TS 33.501 and TS 33.401: key derivation,
 integrity and ciphering of NAS (the Non-Access Stratum, the signalling
 between a device and the core network) with SNOW 3G, AES and ZUC, and the
 concealment of a subscriber identity as a SUCI. They are functions over
-octets. The crate stores no key, keeps no NAS COUNT, has no `unsafe` code,
-and no function panics on its arguments.
+octets. The crate stores no key, keeps no NAS COUNT, and no function panics
+on its arguments. Its `unsafe` code is in one module and of one kind: the
+calls of the code that is compiled for the vector instructions of a
+processor, once the processor is seen to have them.
 
 It is one of the OxiRush crates for mobile core networks, with
 [oxirush-nas](https://github.com/linouxis9/oxirush-nas) (NAS messages),
@@ -432,10 +434,12 @@ the others of `common`) take what the algorithm takes.
 |---------|---------------------|
 | Wiped after use | Explicit buffers and owned state: CK‖IK buffers, key-bearing KDF input buffers, the SHA-256 state and the key block and inner hash of HMAC-SHA-256, SUCI ECIES KDF buffers, cipher state including the AES key schedule, and keystream buffers. The hasher and the AES cipher are those of the `sha2` and `aes` crates, built with their `zeroize` features: the crate does not compile without them. |
 | Not wiped | Temporary copies and compiler-generated spills, which the wiping above does not all cover. Returned keys and deconcealed identities belong to the caller, who clears them when their lifetime ends. |
-| Secret-dependent indexing and branches | In the source, SNOW 3G, ZUC, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor branch on a secret value. S1 of SNOW 3G and the S-box S1 of ZUC are computed from one round of AES, which the `aes` crate runs on the AES instructions of the processor or, without them, as a bitsliced routine. The S-box SQ of SNOW 3G is read whole and narrowed down through masks. S0 of ZUC is three four-bit S-boxes, each a word that is shifted. MULα, DIVα and the field multiplications of the two MACs are carry-less products, made with shifts and integer multiplications. A mask that a secret bit gives goes through `core::hint::black_box`. |
-| Checked in the compiled code | Without `black_box` the compiler turned the masked selection of SQ into conditional jumps on bits of the state. In the release build for x86-64 with Rust 1.98.1, the functions of SNOW 3G and ZUC and of the six algorithms were read in the disassembly: their conditional jumps test a length, a loop counter, a feature of the processor or whether the generator has started, and none a secret. Shifts by a secret amount and multiplications of secret words remain. They take a time that does not depend on their operands on the x86-64 and AArch64 processors of today, and may not on a small processor whose multiplier stops early. |
+| Secret-dependent indexing and branches | SNOW 3G, ZUC, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor branch on a secret value, in either of the two forms that SNOW 3G and ZUC have. |
+| On vector instructions | On an x86-64 processor with SSSE3, SSE4.1, AES-NI and PCLMULQDQ, or an AArch64 one with AES, which the crate sees when the program runs: an S-box is read with shuffle instructions, whose index is an operand and not an address; S1 of SNOW 3G and the S-box inside S1 of ZUC are the AES instruction; the products of the two MACs are the carry-less multiplication instruction. SNOW 3G is clocked three times at once. |
+| In scalar code | Elsewhere, and as the reference of the tests: S1 of SNOW 3G and the S-box S1 of ZUC are computed from one round of AES, which the `aes` crate runs as a bitsliced routine without the AES instructions. The S-box SQ of SNOW 3G is read whole and narrowed down through masks. S0 of ZUC is three four-bit S-boxes, each a word that is shifted. MULα, DIVα and the field multiplications of the two MACs are carry-less products, made with shifts and integer multiplications. A mask that a secret bit gives goes through `core::hint::black_box`. |
+| Checked in the compiled code | Without `black_box` the compiler turned the masked selection of SQ in the scalar code into conditional jumps on bits of the state. In the release build for x86-64 with Rust 1.98.1, the functions of SNOW 3G and ZUC in both forms and of the six algorithms were read in the disassembly: their conditional jumps test a length, a loop counter, a place in a buffer, a feature of the processor or whether the generator has started, and none a secret. In the scalar code, shifts by a secret amount and multiplications of secret words remain. They take a time that does not depend on their operands on the x86-64 and AArch64 processors of today, and may not on a small processor whose multiplier stops early. |
 | Comparison | `constant_time_eq` compares RES\* with XRES\*, or HRES\* with HXRES\*, through `subtle`: its time depends on the lengths and not on where the values differ. |
-| Not measured | No timing was measured, and no other target or compiler was read. |
+| Not measured, not run | No timing was measured, and no other target or compiler was read. The AArch64 form is the code of the x86-64 one on other instructions: its authors compiled it and did not run it, and the CI job on an AArch64 machine is its test. |
 
 ## Test evidence
 
@@ -449,11 +453,20 @@ values, which do not carry the same weight.
 | Values of **other implementations** | The 5G AKA chain from the TS 35.208 test set 1 MILENAGE outputs through KAUSF, XRES\*, HXRES\*, KSEAF, KAMF, the NAS keys, KgNB and NH, which `tests/five_g_aka_chain.py` derives with the HMAC-SHA-256 of Python's standard library; HASHMME on ATTACH REQUESTs and the values a network returned for them. |
 | Values **calculated** in the tests | The other 5GS KDFs, the EPS and interworking KDFs, and the NAS container, short and re-establishment MACs are compared with HMAC-SHA-256 or the MAC over the parameter layout as the test writes it. The identity encodings and the algorithm selection are compared with what the test writes too. These tests keep a layout from changing unnoticed; they are not independent vectors. |
 
+The two forms of SNOW 3G and ZUC, on vector instructions and in scalar
+code, are compared with each other: the keystream words of 400 keys and
+IVs, taken in pieces of every length, and the six algorithms on messages of
+every length up to 300 octets, in whole octets and at a length in bits.
+The 3GPP test data goes through the form that the processor of the test
+has. CI runs the tests on x86-64, on AArch64, and on 32-bit x86, which has
+the scalar code alone.
+
 CI also fuzzes what takes octets from a peer, a minute for each of four
 `cargo fuzz` targets under `fuzz/`: a SUCI, a scheme output and a NAI are
 read without a panic, what is concealed is deconcealed, an identity or a
 digit string that decodes encodes back to its octets, and every algorithm
-takes any message at any length in bits.
+takes any message at any length in bits and gives the same on vector
+instructions and in scalar code.
 
 ## Speed
 
@@ -476,40 +489,43 @@ The profile is one that Go's `pprof` reads. With `PROFILE=flamegraph` in
 the environment it is `flamegraph.svg`, in the same directory.
 
 These are the times of one call, on one core of an AMD Ryzen 7 5700G with
-Rust 1.98.1, while other cores of the machine did other work: each is the
-lowest median of four runs of the benchmark, and of two for 0.2.0, which
-the last two columns have from the same benchmark.
+Rust 1.98.1. Each is the lowest median of four runs of the benchmark, and
+of two for the scalar code and for 0.2.0, on a core that was idle, as its
+hyper-thread was; other cores of the machine did other work in some of the
+runs. The first two columns are what this processor runs, which has the
+vector instructions. The next two are the scalar code, which a processor
+without them runs, and the last two 0.2.0 in the same benchmark.
 
-| | 64 octets | 1500 octets | 0.2.0, 64 | 0.2.0, 1500 |
-|---|---|---|---|---|
-| 128-EEA1, 128-NEA1 (SNOW 3G) | 2.1 µs | 18.7 µs | 0.53 µs | 5.1 µs |
-| 128-EEA2, 128-NEA2 (AES-CTR) | 0.15 µs | 0.66 µs | 0.15 µs | 2.8 µs |
-| 128-EEA3, 128-NEA3 (ZUC) | 1.3 µs | 11.0 µs | 0.61 µs | 5.2 µs |
-| 128-EIA1, 128-NIA1 (SNOW 3G) | 1.7 µs | 4.7 µs | 0.75 µs | 8.4 µs |
-| 128-EIA2, 128-NIA2 (AES-CMAC) | 0.23 µs | 1.8 µs | 0.24 µs | 2.8 µs |
-| 128-EIA3, 128-NIA3 (ZUC) | 1.5 µs | 14.3 µs | 0.99 µs | 13.8 µs |
+| | 64 octets | 1500 octets | scalar code, 64 | scalar code, 1500 | 0.2.0, 64 | 0.2.0, 1500 |
+|---|---|---|---|---|---|---|
+| 128-EEA1, 128-NEA1 (SNOW 3G) | 0.35 µs | 2.5 µs | 2.0 µs | 17.3 µs | 0.53 µs | 5.1 µs |
+| 128-EEA2, 128-NEA2 (AES-CTR) | 0.15 µs | 0.69 µs | the same | the same | 0.15 µs | 2.8 µs |
+| 128-EEA3, 128-NEA3 (ZUC) | 0.42 µs | 3.2 µs | 1.3 µs | 11.0 µs | 0.61 µs | 5.2 µs |
+| 128-EIA1, 128-NIA1 (SNOW 3G) | 0.31 µs | 1.1 µs | 1.7 µs | 4.3 µs | 0.75 µs | 8.4 µs |
+| 128-EIA2, 128-NIA2 (AES-CMAC) | 0.22 µs | 1.8 µs | the same | the same | 0.24 µs | 2.8 µs |
+| 128-EIA3, 128-NIA3 (ZUC) | 0.47 µs | 4.1 µs | 1.5 µs | 13.4 µs | 0.99 µs | 13.8 µs |
 
-128-EEA1 takes 3.7 to 4 times as long as in 0.2.0, and 128-EEA3 a little
-over twice as long. 0.2.0 read its S-boxes from tables, at indices taken
-from the state of the generator: here no memory access depends on a
-secret, and the S-box SQ of SNOW 3G, which no instruction of a processor
-computes, is most of the time of 128-EEA1. The two MACs pay for it on a
-short message, which is mostly the initialization of the generator. On a
-long message their multiplications, now carry-less products, make up for
-it. AES-CTR encrypts eight counter blocks at a time.
+On the vector instructions SNOW 3G and ZUC are 1.4 to 2 times as fast as
+in 0.2.0 for ciphering, and 2 to 7 times for the MACs. 0.2.0 read its
+S-boxes from tables, at indices taken from the state of the generator. No
+memory access depends on a secret here, in either form, and the scalar
+code pays for it: the S-box SQ of SNOW 3G, which it reads whole, is most of
+its time. Its MACs are as fast as those of 0.2.0 on a long message,
+because their multiplications are carry-less products. AES-CTR encrypts
+eight counter blocks at a time.
 
 A key derivation, one HMAC-SHA-256, takes 0.22 µs, and 0.16 µs in 0.2.0,
 whose HMAC did not wipe its state. Wiping is also about half of an AES
 call on a short message: the `aes` crate wipes its key schedule one octet
-at a time.
-SUCI concealment takes 57 µs with Profile A and 285 µs with Profile B, and
-deconcealment 44 µs and 148 µs.
+at a time. SUCI concealment takes 55 µs with Profile A and 284 µs with
+Profile B, and deconcealment 43 µs and 147 µs.
 
 ## What it does not do
 
 | Subject | Limit |
 |---------|-------|
 | Audit | The crate has not had a security audit. Its timing has been read in the source and in one compiled build, not measured. |
+| `unsafe` | One module, `common::simd`, calls code that is compiled for instructions which the build does not assume, after it has seen that the processor has them. Nothing else in the crate is `unsafe`, and that code takes and returns values, never a pointer. |
 | State | It stores no keys, and it keeps neither the NAS COUNT nor replay state: those belong to the caller. |
 | AKA | It has no MILENAGE or TUAK: CK, IK, RES and SQN xor AK come from the caller. |
 | NAS messages | It protects octets. It does not encode a NAS message or its security header. |

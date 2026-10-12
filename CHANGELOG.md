@@ -185,14 +185,16 @@ and what a type cannot say is a `Result`. Every call below changes.
 - `thiserror` is no longer a dependency, nor the `derive` feature of
   `zeroize`: `SecurityError`, `Snow3G` and `Zuc` implement by hand what the
   macros gave them, with the same error texts.
-- The crate forbids `unsafe` code, of which it had none, and warns on a
-  public item without documentation. The 35 items that had none, among them
-  `Snow3G`, `Zuc` and the `SecurityError` variants, are documented.
+- The crate denies `unsafe` code outside one module, `common::simd`, and
+  warns on a public item without documentation. The 35 items that had none,
+  among them `Snow3G`, `Zuc` and the `SecurityError` variants, are
+  documented. 0.2.0 had no `unsafe` code.
 - SNOW 3G, ZUC, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor
   branch on a secret value. 0.2.0 read its S-boxes and its MULα and DIVα
   tables at indices taken from the key and the keystream, and its
   multiplications in GF(2^64) and GF(2^128) branched on their bits, which
-  showed both to whoever measures time or shares a cache. Now:
+  showed both to whoever measures time or shares a cache. Now, in scalar
+  code, which every target has:
   - S1 of SNOW 3G and the S-box S1 of ZUC are one round of AES, which the
     `aes` crate runs on the AES instructions of the processor or as a
     bitsliced routine;
@@ -207,18 +209,39 @@ and what a type cannot say is a `Result`. Every call below changes.
 
   The compiled code was read for x86-64 with Rust 1.98.1, and no timing
   was measured: the README says what was checked.
-- This costs time in 128-EEA1 and 128-EEA3, and in their MACs on a short
-  message. `benches/` measures it, on one core of an AMD Ryzen 7 5700G with
-  Rust 1.98.1 here, the lowest median of four runs, and of two for 0.2.0 in
-  the same benchmark. On a 1500-octet message 128-EEA1 takes 18.7 µs and
-  128-EEA3 11.0 µs, where 0.2.0 took 5.1 µs and 5.2 µs; 128-EIA1 takes
-  4.7 µs and 128-EIA3 14.3 µs, where 0.2.0 took 8.4 µs and 13.8 µs. On a
-  64-octet message the four take 1.3 µs to 2.1 µs, where 0.2.0 took 0.53 µs
-  to 0.99 µs.
+- SNOW 3G and ZUC also have a form on the vector instructions of the
+  processor, which runs when it has them: SSSE3, SSE4.1, AES-NI and
+  PCLMULQDQ on x86-64, and AES on AArch64. The crate looks at the processor
+  when the program runs. Nothing is asked of the build, and the scalar code
+  runs elsewhere. The property is the same:
+  - an S-box is read with shuffle instructions, whose index is an operand
+    and not an address;
+  - S1 of SNOW 3G and the S-box inside S1 of ZUC are the AES instruction,
+    and the products of 128-EIA1 and 128-EIA3 the carry-less multiplication
+    instruction;
+  - SNOW 3G is clocked three times at once, with one pass over the rows of
+    SQ for the three clocks.
+
+  The calls of this code, once the processor is seen to have the
+  instructions, are the `unsafe` code of the crate; the code itself takes
+  and returns values and is not `unsafe`. The tests compare the two forms.
+  The AArch64 form was compiled and not run by its authors: CI runs the
+  tests on an AArch64 machine.
+- `benches/` measures both forms, on one core of an AMD Ryzen 7 5700G with
+  Rust 1.98.1 here: the lowest median of four runs, and of two for the
+  scalar code and for 0.2.0 in the same benchmark. On the vector
+  instructions and a 1500-octet message, 128-EEA1 takes 2.5 µs and 128-EEA3
+  3.2 µs, where 0.2.0 took 5.1 µs and 5.2 µs; 128-EIA1 takes 1.1 µs and
+  128-EIA3 4.1 µs, where 0.2.0 took 8.4 µs and 13.8 µs. On a 64-octet
+  message the four take 0.31 µs to 0.47 µs, where 0.2.0 took 0.53 µs to
+  0.99 µs. The scalar code is slower than 0.2.0 for ciphering, which is the
+  cost of tables that are not read at a secret index: 17.3 µs for 128-EEA1
+  and 11.0 µs for 128-EEA3 on 1500 octets, 4.3 µs for 128-EIA1 and 13.4 µs
+  for 128-EIA3, and 1.3 µs to 2.0 µs for the four on 64 octets.
 - 128-EEA2 encrypts eight counter blocks in one call to the cipher, and
   128-EIA2 keeps its subkeys and its state in words. On a 1500-octet message
-  they take 0.66 µs and 1.8 µs, where 0.2.0 took 2.8 µs each; on a 64-octet
-  message 0.15 µs and 0.23 µs, where 0.2.0 took 0.15 µs and 0.24 µs.
+  they take 0.69 µs and 1.8 µs, where 0.2.0 took 2.8 µs each; on a 64-octet
+  message 0.15 µs and 0.22 µs, where 0.2.0 took 0.15 µs and 0.24 µs.
 - A key derivation takes 0.22 µs, where 0.2.0 took 0.16 µs: HMAC-SHA-256
   now wipes its hash states, its key block and its inner hash.
 
@@ -240,7 +263,8 @@ and what a type cannot say is a `Result`. Every call below changes.
   `suci` (a SUCI of a NAS message, a scheme output and a NAI from a peer),
   `suci_round_trip` (what is concealed is deconcealed), `identity` (5G-GUTI,
   5G-S-TMSI, PLMN and TBCD, each encoded back to its octets) and
-  `algorithms` (every algorithm at any length in bits).
+  `algorithms` (every algorithm at any length in bits, on vector
+  instructions and in scalar code).
 - `benches/`, a package of its own that times the algorithms, the key
   derivations and SUCI with criterion and profiles them with pprof. The
   published crate does not have it, and the crate has no dependency for it.
