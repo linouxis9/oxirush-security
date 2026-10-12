@@ -196,13 +196,13 @@
 //! - What the system copies of the memory of a process: swap, a core dump.
 //!
 //! On an AMD Ryzen 7 5700G the clearing adds about 13 ns to a message of
-//! AES with a keyed context, 17 to 21 ns to one from a key, 25 to 40 ns
-//! to a message of SNOW 3G or ZUC or to a derivation, and 110 to 240 ns
-//! to each algorithm of a batch that runs side by side. For 64 octets
-//! that is 5 to 12 % of SNOW 3G and of ZUC, and it doubles 128-EEA2 with
-//! a keyed context, from 13 ns to 26. A batch pays once for all its
-//! messages: sixteen of 128-EEA2 with their contexts take 290 ns, and 427
-//! one by one. `benches/README.md` in the repository has the figures.
+//! AES with a keyed context, 16 ns to one from a key, 30 ns to a message
+//! of SNOW 3G or ZUC or to a derivation, and 75 to 140 ns to each
+//! algorithm of a batch that runs side by side. For 64 octets that is 7 to
+//! 12 % of SNOW 3G and of ZUC, and it doubles 128-EEA2 with a keyed
+//! context, from 13 ns to 26. A batch pays once for all its messages:
+//! sixteen of 128-EEA2 with their contexts take 275 ns in one call, and
+//! 419 one by one. `benches/README.md` in the repository has the figures.
 //!
 //! A program that cannot afford it is built with
 //! `RUSTFLAGS="--cfg oxirush_security_unwiped"`. The named values are
@@ -212,15 +212,41 @@
 //!
 //! ## Timing
 //!
-//! | Subject | What the crate does |
-//! |---------|---------------------|
-//! | Secret-dependent indexing and branches | SNOW 3G, ZUC, AES, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor branch on a secret value, in any of their forms, for one message or for several. |
-//! | On vector instructions | On an x86-64 processor with SSSE3, SSE4.1, AES-NI and PCLMULQDQ, or an AArch64 one with AES, which the crate sees when the program runs and [`implementation`] reports: an S-box is read with shuffle instructions, whose index is an operand and not an address; S1 of SNOW 3G and the S-box inside S1 of ZUC are the AES instruction; the products of the two MACs are the carry-less multiplication instruction. SNOW 3G is clocked three times at once. The key expansion and the rounds of AES-128 are the AES instruction, eight counter blocks at a time. |
-//! | Several messages | [`nea_cipher_batch`] and [`nia_mac_batch`] clock four SNOW 3G or ZUC generators in the 32-bit words of a vector, and eight on an x86-64 processor with AVX2; the CBC-MAC chains of eight messages of 128-EIA2 advance together. What a generator or a chain does at a step depends on the lengths of the messages, and the time of a message on no octet or key of another. |
-//! | In scalar code | Elsewhere, and as the reference of the tests: S1 of SNOW 3G and the S-box S1 of ZUC are computed from one round of AES, which the `aes` crate runs as a bitsliced routine without the AES instructions. The S-box SQ of SNOW 3G is read whole and narrowed down through masks. S0 of ZUC is three four-bit S-boxes, each a word that is shifted. MULα, DIVα and the field multiplications of the two MACs are carry-less products, made with shifts and integer multiplications. A mask that a secret bit gives goes through `core::hint::black_box`. |
-//! | Checked in the compiled code | Without `black_box` the compiler turned the masked selection of SQ in the scalar code into conditional jumps on bits of the state. In the release build for x86-64 with Rust 1.98.1, the functions of SNOW 3G and ZUC in their forms, of AES on its instructions, of the six algorithms and of the two functions of several messages were read in the disassembly: their conditional jumps test a length, a loop counter, a place in a buffer, a feature of the processor, whether a generator has started or which message it works for, and none a secret. In the scalar code, shifts by a secret amount and multiplications of secret words remain. They take a time that does not depend on their operands on the x86-64 and AArch64 processors of today, and may not on a small processor whose multiplier stops early. |
-//! | Comparison | [`constant_time_eq`] compares RES\* with XRES\*, or HRES\* with HXRES\*, through `subtle`: its time depends on the lengths and not on where the values differ. |
-//! | Not measured | No timing was measured, and no other target or compiler was read. The AArch64 form is the code of the x86-64 one on other instructions: it runs on an emulated AArch64 processor, where it gives what its scalar code and the x86-64 code give, and CI runs the tests on an AArch64 machine. |
+//! SNOW 3G, ZUC, AES, 128-EIA1, 128-EIA3 and AES-CMAC neither index
+//! memory nor branch on a secret value, in any of their forms, for one
+//! message or for several. [`implementation`] says which form runs: the
+//! vector code on an x86-64 processor with SSSE3, SSE4.1, AES-NI and
+//! PCLMULQDQ or an AArch64 one with AES, and the scalar code elsewhere.
+//!
+//! | Code | How |
+//! |------|-----|
+//! | SNOW 3G and ZUC on vector instructions | An S-box is read with shuffle instructions, whose index is an operand and not an address. S1 of SNOW 3G and the S-box inside S1 of ZUC are the AES instruction. |
+//! | The two MACs of SNOW 3G and ZUC | Their products are the carry-less multiplication instruction. |
+//! | AES | The key expansion and the rounds are the AES instruction. Without it, AES is the bitsliced code of the `aes` crate. |
+//! | Several messages | What a generator or a chain does at a step depends on the lengths of the messages: the time of a message depends on no octet or key of another. |
+//! | SNOW 3G and ZUC in scalar code | The S-box SQ is read whole and narrowed down through masks. S0 of ZUC is three four-bit S-boxes, each a word that is shifted. MULα, DIVα and the products of the MACs are carry-less products, made with shifts and multiplications. |
+//! | A comparison | [`constant_time_eq`] goes through `subtle`: its time depends on the lengths, and not on where the values differ. |
+//!
+//! What was checked, and what was not:
+//!
+//! - The disassembly of the release build for x86-64 with Rust 1.98.1 was
+//!   read: SNOW 3G and ZUC in each form, AES on its instructions, the six
+//!   algorithms and the two functions of several messages. Their
+//!   conditional jumps test a length, a loop counter, a place in a buffer,
+//!   a feature of the processor, whether a generator has started or which
+//!   message it works for. None tests a secret.
+//! - That reading found one: the compiler had turned the masked selection
+//!   of SQ in the scalar code into jumps on bits of the state. A mask that
+//!   a secret bit gives now goes through `core::hint::black_box`.
+//! - The scalar code shifts by a secret amount and multiplies secret
+//!   words. Both take a time that does not depend on their operands on the
+//!   x86-64 and AArch64 processors of today, and may not on a small
+//!   processor whose multiplier stops early.
+//! - No timing was measured, and no other target or compiler was read.
+//!   The AArch64 form is the code of the x86-64 one on other instructions.
+//!   It runs on an emulated AArch64 processor, where it gives what its
+//!   scalar code and the x86-64 code give, and CI runs the tests on an
+//!   AArch64 machine.
 //!
 //! The `unsafe` code of the crate is in one private module, `common::simd`,
 //! and of two kinds. The first is the calls of the code that is compiled
@@ -258,8 +284,9 @@
 //! sets of the three ciphering algorithms, of 128-EIA1 and of 128-EIA3, and
 //! set 7 of 128-EIA2, also go through them in one batch.
 //!
-//! CI also fuzzes what takes octets from a peer, a minute for each of four
-//! `cargo fuzz` targets under `fuzz/`: a SUCI, a scheme output and a NAI
+//! CI also fuzzes what takes octets from a peer, with the four
+//! `cargo fuzz` targets under `fuzz/`, for a minute each at a push and for
+//! half an hour each week: a SUCI, a scheme output and a NAI
 //! are read without a panic, what is concealed is deconcealed, an identity
 //! or a digit string that decodes encodes back to its octets, and every
 //! algorithm takes any message at any length in bits and gives the same on

@@ -6,13 +6,63 @@ All notable changes to `oxirush-security` are recorded here.
 
 ### Breaking changes relative to 0.2.0
 
-No public function panics on its arguments any more. 0.2.0 took the
-algorithm, the direction, the bearer and the COUNT as integers and panicked
-on a value out of range, as its `# Panics` sections said. A value that a
-specification bounds now has a type that holds only the values in range,
-and what a type cannot say is a `Result`. Every call below changes.
+Every call changes. 0.2.0 took keys as arrays of octets and the algorithm,
+the direction, the bearer and the COUNT as integers, and panicked on a value
+out of range. In 0.3.0 a key has a type, a value that a specification
+bounds has a type that holds only the values in range, and what a type
+cannot say is a `Result`. No public function panics on its arguments.
 
-- **New types**, at the crate root and in `nas_5gs`, `nas_eps` and `common`:
+- **Where things are.** Each item has one path.
+
+  | Path | What is there |
+  |------|---------------|
+  | `oxirush_security::` | What both systems share: the algorithms (`nia_mac`, `nea_cipher` and their `*_bits` forms), the batches, the keyed contexts, `IntegrityAlgorithm`, `CipheringAlgorithm`, `Direction`, `Bearer`, `NasCount`, `AccessKeyCount`, `SecurityError`, `Ck`, `Ik`, `Rand`, `Autn`, `Plmn`, `tbcd_encode`, `tbcd_decode`, `Snow3G`, `Zuc`, `constant_time_eq`, the selection of the algorithms and `implementation` |
+  | `oxirush_security::kdf::` | `kdf`, `build_s` and `extract_128` of TS 33.220 |
+  | `oxirush_security::nas_5gs::` | The keys of TS 33.501 and their derivations, `nas_mac`, `nas_cipher`, `NasConnection`, `Supi`, `Suci`, `Guti`, `STmsi` |
+  | `oxirush_security::nas_eps::` | The keys of TS 33.401 and their derivations, `nas_mac`, `nas_cipher`, the short MAC, the re-establishment MAC, `compute_hash_mme` |
+
+  `common` is private, and so are `nas_5gs::kdf`, `nas_5gs::security`,
+  `nas_5gs::suci`, `nas_5gs::guti`, `nas_5gs::algo` and their counterparts
+  of `nas_eps`: `nas_5gs::kdf::derive_kamf` is `nas_5gs::derive_kamf`. The
+  crate root no longer has the 5GS functions under bare names:
+  `oxirush_security::derive_kamf` is `nas_5gs::derive_kamf`, and
+  `oxirush_security::nas_mac` is `nas_5gs::nas_mac`. The keys that one
+  system maps to the other are all in `nas_5gs`, where TS 33.501 defines
+  them: `nas_eps::derive_mapped_kamf_idle` and
+  `nas_eps::derive_mapped_kamf_handover` moved there.
+
+- **Keys.** A key has a type of its own, and a function takes the key that
+  its clause names: KNASenc does not compile where KNASint is expected.
+
+  | Module | 256 bits | 128 bits |
+  |--------|----------|----------|
+  | root | | `Ck`, `Ik` |
+  | `nas_5gs` | `KAusf`, `KSeaf`, `KAmf`, `KGnb`, `Nh`, `KN3iwf`, `KSn`, `KTnap`, `KIab` | `KNasInt`, `KNasEnc`, `KRrcInt`, `KRrcEnc`, `KUpInt`, `KUpEnc`, `ResStar`, `XresStar`, `HresStar`, `HxresStar` |
+  | `nas_eps` | `KAsme`, `KEnb`, `Nh`, `NasToken`, `LwipPsk`, `SKwt`, `Kn` | `KNasInt`, `KNasEnc`, `KRrcInt`, `KRrcEnc`, `KUpInt`, `KUpEnc`, `CkPrime`, `IkPrime`, `CkSrvcc`, `IkSrvcc` |
+
+  `K::new(&octets)` and `K::from_slice(&slice)?` make one, and
+  `key.as_octets()` gives the octets back. A key is wiped when it is
+  dropped, is not `Copy`, compares in constant time, and `{:?}` prints its
+  name without an octet. `Rand` and `Autn` are built and viewed the same
+  way; they travel in clear, are printed whole and are not wiped.
+
+  ```rust
+  // 0.2.0
+  let k_amf = derive_kamf(&k_seaf, "208930000000001", &[0, 0]);
+  let k_nas_int = extract_128(&derive_nas_key(&k_amf, 0x02, 2));
+  let mac = nas_mac(&k_nas_int, count, 1, 0, &message, 2);
+
+  // 0.3.0
+  let supi = Supi::imsi("208930000000001")?;
+  let k_amf = derive_kamf(&k_seaf, &supi, &[0, 0])?;
+  let k_nas_int = derive_knas_int(&k_amf, IntegrityAlgorithm::NIA2);
+  let mac = nas_mac(
+      &k_nas_int, NasCount::new(count)?, NasConnection::ThreeGpp, Direction::Uplink,
+      &message, IntegrityAlgorithm::NIA2,
+  );
+  ```
+
+- **Inputs.**
 
   | Type | Values | From an integer |
   |------|--------|-----------------|
@@ -21,381 +71,348 @@ and what a type cannot say is a `Result`. Every call below changes.
   | `Direction` | `Uplink` (0), `Downlink` (1) | `try_from(u8)` |
   | `NasCount` | 0 to 2^24 - 1 | `new(u32)`, `try_from(u32)`, `from_parts(overflow, sequence_number)` |
   | `AccessKeyCount` | `Nas(NasCount)`, or `Handover` for 2^32 - 1 | `try_from(u32)`; a `NasCount` converts into it |
-  | `NasConnection` (5GS) | `ThreeGpp` (1), `Non3Gpp` (2) | `try_from(u8)` |
+  | `nas_5gs::NasConnection` | `ThreeGpp` (1), `Non3Gpp` (2) | `try_from(u8)` |
   | `Bearer` | 0 to 31 | `new(u8)`, `try_from(u8)`; a `NasConnection` converts into it |
+  | `Plmn` | An MCC of three digits and an MNC of two or three | `new("208", "93")`, `from_octets(&[u8; 3])` |
 
-  `u8::from` and `u32::from` give the number back.
+  `u8::from` and `u32::from` give the number back. An algorithm prints as
+  `128-NIA2/128-EIA2`, and `name_5gs()` and `name_eps()` give one name.
 
-- **NAS integrity and ciphering.** `nas_mac` and `nas_cipher` take these
-  types and cannot fail:
-
-  ```rust
-  // 0.2.0
-  let mac = nas_5gs::nas_mac(&key, count, 1, 0, &message, 2);
-  nas_eps::nas_cipher(&key, count, 1, &mut data, 2);
-
-  // 0.3.0
-  let count = NasCount::new(count)?;
-  let mac = nas_5gs::nas_mac(
-      &key, count, NasConnection::ThreeGpp, Direction::Uplink, &message, IntegrityAlgorithm::NIA2,
-  );
-  nas_eps::nas_cipher(&key, count, Direction::Downlink, &mut data, CipheringAlgorithm::EEA2);
-  ```
-
-  `nas_container_mac`, `nas_eps::re_establishment_nas_mac`,
-  `service_request_short_mac` and `service_request_short_mac_with_header`
-  take them too. `re_establishment_nas_mac` returns a `Result`, for a cell
-  identity above 28 bits, and so does
+- **NAS integrity and ciphering.** `nas_5gs::nas_mac`, `nas_cipher` and
+  `nas_container_mac` take a `&KNasInt` or a `&KNasEnc`, a `NasCount`, a
+  `NasConnection`, a `Direction` and the algorithm, and cannot fail. Those
+  of `nas_eps` take no connection. `nas_eps::re_establishment_nas_mac`
+  returns a `Result`, for a cell identity above 28 bits, and so does
   `service_request_short_mac_with_header`, for a first octet that is not
   that of a SERVICE REQUEST.
 
-- **The algorithms.** `nas_mac` and `nas_cipher` at the crate root are now
-  those of `nas_5gs`, for a NAS message. In 0.2.0 the root had the
-  algorithms themselves under these names, which take any 32-bit COUNT and a
-  5-bit BEARER. They are renamed after what they are, in `common`, in
-  `common::nia` and `common::nea`, at the crate root, and in
-  `nas_5gs::security` and `nas_eps::security`:
+- **The algorithms.** In 0.2.0 `nas_mac` and `nas_cipher` at the crate root
+  were the algorithms themselves, with any 32-bit COUNT and a 5-bit BEARER.
+  They are named after what they are, and take a key of the algorithm,
+  which is any KNASint, KRRCint or KUPint for a MAC and any KNASenc,
+  KRRCenc or KUPenc for a cipher:
 
   | 0.2.0 | 0.3.0 |
   |-------|-------|
-  | `common::nas_mac(key, count, bearer: u8, direction: u8, message, algo_id: u8) -> u32` | `nia_mac(key, count, Bearer, Direction, message, IntegrityAlgorithm) -> u32` |
+  | `common::nas_mac(key, count, bearer: u8, direction: u8, message, algo_id: u8) -> u32` | `nia_mac(&key, count, Bearer, Direction, message, IntegrityAlgorithm) -> u32` |
   | `common::nas_mac_bits(.., bit_length, algo_id) -> u32` | `nia_mac_bits(.., bit_length, IntegrityAlgorithm) -> Result<u32, SecurityError>` |
-  | `common::nas_cipher(key, count, bearer, direction, data, algo_id)` | `nea_cipher(key, count, Bearer, Direction, data, CipheringAlgorithm)` |
+  | `common::nas_cipher(key, count, bearer, direction, data, algo_id)` | `nea_cipher(&key, count, Bearer, Direction, data, CipheringAlgorithm)` |
   | `common::nas_cipher_bits(.., bit_length, algo_id)` | `nea_cipher_bits(.., bit_length, CipheringAlgorithm) -> Result<(), SecurityError>` |
-  | `nia1_mac(.., message, bit_length) -> u32` | `nia1_mac_bits(.., message, bit_length) -> Result<u32, SecurityError>`; `nia1_mac(.., message) -> u32` is the MAC of whole octets |
-  | `nia3_mac(.., message, bit_length) -> u32` | `nia3_mac_bits(..)` and `nia3_mac(..)`, likewise |
-  | `nia2_mac_bits(..) -> u32` | `-> Result<u32, SecurityError>` |
-  | `nea1_cipher_bits`, `nea2_cipher_bits`, `nea3_cipher_bits` | `-> Result<(), SecurityError>` |
+  | `nia1_mac`, `nia2_mac`, `nia2_mac_bits`, `nia3_mac`, `nea1_cipher` to `nea3_cipher_bits` | `nia_mac`, `nia_mac_bits`, `nea_cipher` or `nea_cipher_bits` with the algorithm |
 
-  Each takes a `Bearer` and a `Direction` where 0.2.0 took two `u8`. The
-  whole-octet functions cannot fail. A `*_bits` function returns
+  The whole-octet functions cannot fail. A `*_bits` function returns
   `Err(BitLengthExceedsData)` for a length that the buffer does not hold.
-  Call `nia_mac` or `nea_cipher` where an input is outside NAS, such as the
-  test sets of TS 33.401 Annex C or a PDCP COUNT, and `nas_mac` or
-  `nas_cipher` for a NAS message.
+  A test set of TS 33.401 Annex C gives its key as octets:
+  `nas_eps::KNasInt::new(&octets)`.
 
-- **Algorithm keys.** A function for each key replaces `derive_nas_key`,
-  `derive_as_key` and `nas_eps::derive_sgnb_algorithm_key`, which took the
-  algorithm type distinguisher and the algorithm identity as two `u8`. Each
-  returns the 128-bit key, so the call to `extract_128` goes away:
+- **Key derivations.** Each takes and returns the types of its keys. Those
+  that 0.2.0 let panic return a `Result`.
+
+  | 0.2.0 | 0.3.0, in `nas_5gs` |
+  |-------|---------------------|
+  | `derive_kausf(&ck, &ik, sn_name, &sqn_xor_ak) -> [u8; 32]` | `derive_kausf(&Ck, &Ik, sn_name, &Autn) -> Result<KAusf, _>`, which reads SQN xor AK in the AUTN |
+  | `derive_kausf_standard`, deprecated since 0.1.0 | removed: `derive_kausf` |
+  | `derive_kseaf(&kausf, sn_name) -> [u8; 32]` | `derive_kseaf(&KAusf, sn_name) -> Result<KSeaf, _>` |
+  | `derive_kamf(&kseaf, supi_digits: &str, abba) -> [u8; 32]` | `derive_kamf(&KSeaf, &Supi, abba) -> Result<KAmf, _>` |
+  | `extract_128(&derive_nas_key(&kamf, 0x01, id))` | `derive_knas_enc(&KAmf, CipheringAlgorithm) -> KNasEnc` |
+  | `extract_128(&derive_nas_key(&kamf, 0x02, id))` | `derive_knas_int(&KAmf, IntegrityAlgorithm) -> KNasInt` |
+  | `extract_128(&derive_as_key(&kgnb, 0x03 to 0x06, id))` | `derive_krrc_enc`, `derive_krrc_int`, `derive_kup_enc`, `derive_kup_int`, from a `&KGnb` or a `&KSn` |
+  | `compute_xres_star(&ck, &ik, sn_name, &rand, xres) -> Vec<u8>` | `compute_xres_star(&Ck, &Ik, sn_name, &Rand, xres) -> Result<XresStar, _>` |
+  | `compute_hres_star(&rand, &res_star) -> [u8; 16]` | `compute_hres_star(&Rand, &ResStar) -> HresStar` |
+  | `derive_kgnb(&kamf, ul_nas_count: u32)` | `derive_kgnb(&KAmf, impl Into<AccessKeyCount>) -> KGnb`: a `NasCount`, or `AccessKeyCount::Handover` where 0.2.0 took `0xffff_ffff` |
+  | `derive_kn3iwf(&kamf, u32)` | `derive_kn3iwf(&KAmf, NasCount) -> KN3iwf` |
+  | `derive_nh(&kamf, &sync_input)` | `derive_nh(&KAmf, &KGnb or &Nh) -> Nh` |
+  | `derive_kng_ran_star(&base_key, pci, arfcn_dl) -> [u8; 32]` and its `_ng_enb` form | `(&KGnb or &Nh, pci, arfcn_dl) -> Result<KGnb, _>`, `OutOfRange` for a PCI or an ARFCN above its largest value |
+  | `derive_kamf_prime(&kamf, direction, u32) -> Result<[u8; 32], _>` and its `_idle` and `_handover` forms | `(&KAmf, .., NasCount) -> KAmf` |
+  | `derive_mapped_kasme_idle`, `derive_mapped_kasme_handover`, `derive_kasme_srvcc` | `(&KAmf, NasCount) -> nas_eps::KAsme` |
+  | `nas_eps::derive_mapped_kamf_idle(&kasme, u32)` | `nas_5gs::derive_mapped_kamf_idle(&nas_eps::KAsme, NasCount) -> KAmf` |
+  | `nas_eps::derive_mapped_kamf_handover(&kasme, &nh)` | `nas_5gs::derive_mapped_kamf_handover(&nas_eps::KAsme, &nas_eps::Nh) -> KAmf` |
+  | `derive_ksn(&base_key, sn_counter)` | `derive_ksn(&KGnb, sn_counter) -> KSn` |
+  | `derive_sor_mac_ausf`, `derive_sor_mac_ue`, `derive_upu_mac_ausf`, `derive_upu_mac_ue` | the same, from a `&KAusf` |
+  | `derive_tnap_usage_key(&base_key, usage)` | `derive_tnap_usage_key(&KN3iwf, usage) -> KTnap` |
+  | `derive_kiab(&base_key, donor, node)` | `derive_kiab(&KGnb, donor, node) -> KIab` |
+
+  | 0.2.0 | 0.3.0, in `nas_eps` |
+  |-------|---------------------|
+  | `derive_kasme(&ck, &ik, sn_id: &[u8; 3], &sqn_xor_ak) -> [u8; 32]` | `derive_kasme(&Ck, &Ik, Plmn, &Autn) -> KAsme` |
+  | `derive_kenb(&kasme, u32)` | `derive_kenb(&KAsme, impl Into<AccessKeyCount>) -> KEnb`. 0.2.0 took any 32-bit value, although the EPS NAS COUNT has 24 bits |
+  | `derive_nh`, `derive_kenb_star` | `derive_nh(&KAsme, &KEnb or &Nh) -> Nh`; `derive_kenb_star(&KEnb or &Nh, pci, earfcn_dl) -> Result<KEnb, _>` |
+  | `extract_128(&derive_nas_key(&kasme, type, id))` | `derive_knas_enc`, `derive_knas_int`, from a `&KAsme` |
+  | `extract_128(&derive_as_key(&kenb, type, id))` | `derive_krrc_enc`, `derive_krrc_int`, `derive_kup_enc`, `derive_kup_int`, from a `&KEnb` |
+  | `derive_sgnb_algorithm_key(&s_kgnb, type, id)` | `derive_skgnb(&KEnb, scg_counter) -> nas_5gs::KGnb`, then `nas_5gs::derive_krrc_enc` and the three beside it, the function of TS 33.501 Annex A.8 that TS 33.401 Annex A.19 names |
+  | `derive_ck_ik_handover`, `derive_ck_ik_idle_mobility(&kasme, u32) -> [u8; 32]` | `(&KAsme, NasCount) -> (CkPrime, IkPrime)` |
+  | `derive_ck_ik_srvcc(&kasme, u32) -> [u8; 32]` | `(&KAsme, NasCount) -> (CkSrvcc, IkSrvcc)` |
+  | `derive_nas_token(&kasme, u32) -> [u8; 2]`, `derive_nas_token_full` | `derive_nas_token(&KAsme, NasCount) -> NasToken`, whose `transmitted()` gives the 16 bits that are sent |
+  | `derive_kasme_handover`, `derive_kasme_idle_mobility` | the same, from a `&Ck` and a `&Ik`, to a `KAsme` |
+  | `derive_skenb`, `derive_lwip_psk`, `derive_skwt` | `(&KEnb, counter) -> KEnb`, `LwipPsk`, `SKwt` |
+  | `derive_kn(mk, f_n, imsi) -> [u8; 32]` | `-> Result<Kn, _>` |
+
+  `derive_kausf`, `derive_kseaf`, `derive_kamf`, `compute_xres_star`,
+  `nas_eps::derive_kn` and `kdf::build_s` return `InputTooLong` for a
+  parameter above 65535 octets, where 0.2.0 panicked. `compute_xres_star`
+  returns `InvalidParameter` for an XRES that is not 4 to 16 octets long,
+  and `derive_kamf` for an ABBA that is not 2 to 255.
+
+  `kdf::kdf` and `kdf::extract_128` return a `Zeroizing` array, which is
+  wiped when it is dropped and which `*` reads. For the 256 bits of an
+  algorithm key, or for an identity that is reserved, build the input:
+  `kdf(k_amf.as_octets(), &build_s(0x69, &[&[kind], &[id]])?)`.
+
+- **The SUPI.** `derive_kamf` took the SUPI as a string, and a string in
+  another form than the one of TS 33.501 Annex A.7.0 gave another KAMF
+  without an error. `nas_5gs::Supi` is the SUPI: `Supi::imsi(digits)`,
+  `Supi::network_specific(nai)`, `Supi::gli(nai)`, `Supi::gci(nai)`, or
+  `Supi::parse("imsi-208930000000001")` for the text of a service based
+  interface. `identity()` is what KAMF takes, and `{}` prints the text
+  with its type in front.
+
+- **The SUCI.** `nas_5gs::Suci` replaces the functions that took and
+  returned octets and strings. It holds the SUPI type, the home network,
+  the routing indicator, the protection scheme, the home network public
+  key identifier and the scheme output, each of which it gives, so that a
+  SIDF chooses its private key from what it read.
 
   | 0.2.0 | 0.3.0 |
   |-------|-------|
-  | `extract_128(&derive_nas_key(&k, 0x01, id))` | `derive_knas_enc(&k, CipheringAlgorithm)` |
-  | `extract_128(&derive_nas_key(&k, 0x02, id))` | `derive_knas_int(&k, IntegrityAlgorithm)` |
-  | `extract_128(&derive_as_key(&k, 0x03, id))` | `derive_krrc_enc(&k, CipheringAlgorithm)` |
-  | `extract_128(&derive_as_key(&k, 0x04, id))` | `derive_krrc_int(&k, IntegrityAlgorithm)` |
-  | `extract_128(&derive_as_key(&k, 0x05, id))` | `derive_kup_enc(&k, CipheringAlgorithm)` |
-  | `extract_128(&derive_as_key(&k, 0x06, id))` | `derive_kup_int(&k, IntegrityAlgorithm)` |
-  | `nas_eps::derive_sgnb_algorithm_key(&s_kgnb, type, id)` | `nas_5gs::derive_krrc_enc(&s_kgnb, ..)` and the three beside it, which are the function of TS 33.501 Annex A.8 that TS 33.401 Annex A.19 names |
+  | `msin_to_bcd`, `suci_scheme_output_a`, `suci_scheme_output_b`, `suci_conceal` | `Suci::conceal_imsi(plmn, msin, routing_indicator, Protection)`, then `to_nas()` |
+  | `suci_to_supi(&octets, Some(&key)) -> Option<String>` | `Suci::from_nas(&octets)?.deconceal(Some(&key)) -> Result<Supi, SuciError>` |
+  | `suci_decrypt_a`, `suci_decrypt_b` | `Suci::deconceal` |
+  | `suci_to_string(&octets)` | `Suci::from_nas(&octets)?` with `{}` |
+  | `parse_nai_suci`, `encode_nai_suci`, `NaiSuci` | `Suci::from_nai`, `Suci::to_nai` |
+  | `conceal_network_specific_supi`, `NaiProtectionScheme` | `Suci::conceal_nai(&supi, routing_indicator, Protection)` |
+  | `deconceal_nai_suci`, `deconceal_network_specific_suci` | `Suci::deconceal` |
+  | a home network key as octets | `HomeNetworkPrivateKey::profile_a`, `profile_b`, and its `public_key()`; `HomeNetworkPublicKey::profile_a`, `profile_b` |
+  | `SuciSchemeOutput` | `SchemeOutput`, from `Suci::scheme_output()` |
 
-  They exist in `nas_5gs` (from KAMF and KgNB) and in `nas_eps` (from KASME
-  and KeNB). For the 256-bit output, or for an identity that is reserved,
-  build the input yourself: `kdf(&k, &build_s(0x69, &[&[type], &[id]])?)`.
+  The errors are `SuciError`, which says which step failed: a truncated
+  identity, an unknown scheme, a missing key or one of the other profile,
+  a malformed point, a MAC that does not match, a plaintext that is no
+  identity. Its documentation says what a SIDF may tell a peer. A NAI that
+  is refused gives a `NaiError`, and one whose username or realm is above
+  253 octets is refused before it is normalized.
 
-- **Key derivations that take a NAS COUNT** take a `NasCount`:
-  `derive_kn3iwf`, `derive_mapped_kasme_idle`,
-  `derive_mapped_kasme_handover`, `derive_kasme_srvcc`, `derive_kamf_prime`
-  and its `_idle` and `_handover` forms, and in `nas_eps`
-  `derive_ck_ik_handover`, `derive_nas_token_full`, `derive_nas_token`,
-  `derive_ck_ik_srvcc`, `derive_ck_ik_idle_mobility` and
-  `derive_mapped_kamf_idle`. `derive_kamf_prime` and its two forms return
-  the key and no longer a `Result`.
+  De-concealment with Profile B refuses an uncompressed ephemeral public
+  key, which 0.2.0 accepted: Profile B always compresses the point
+  (TS 33.501 Annex C.3.4), and TS 33.514 §4.2.1.3 has the SIDF refuse such
+  a SUCI. Concealment refuses an empty MSIN or username, which 0.2.0
+  concealed into a scheme output that it then refused, and a home network
+  public key identifier of 0 or 255 with a profile, in both formats.
 
-- **KgNB and KeNB.** `derive_kgnb` and `nas_eps::derive_kenb` take a
-  `NasCount`, or `AccessKeyCount::Handover` where 0.2.0 took `0xffff_ffff`
-  for a handover (TS 33.501 §6.9.2.3.3, §8.3.2 and §8.4.2).
-  `AccessKeyCount::try_from(u32)` reads a stored value that is one or the
-  other. 0.2.0 let `derive_kenb` take any 32-bit value, although the EPS NAS
-  COUNT has 24 bits (TS 24.301 §4.4.3.1).
+- **5G-GUTI, 5G-S-TMSI, PLMN, TBCD.**
 
-- **Functions that return a `Result` where 0.2.0 panicked:**
+  | 0.2.0 | 0.3.0 |
+  |-------|-------|
+  | `build_guti_bytes(&plmn, region, set, pointer, tmsi) -> Vec<u8>` | `Guti::new(Plmn, region, set, pointer, tmsi)?.to_octets() -> [u8; 11]` |
+  | `parse_guti_tmsi(&identity) -> Option<u32>` | `Guti::from_octets(&identity)?`, with `tmsi()`, `plmn()`, `amf_region_id()`, `amf_set_id()`, `amf_pointer()`, `s_tmsi()` |
+  | `parse_s_tmsi(&identity) -> Option<u32>` | `STmsi::from_octets(&identity)?.tmsi()` |
+  | `mobile_identity_type(&identity) -> u8` | `MobileIdentityType::of(&identity) -> Option<MobileIdentityType>` |
+  | `plmn_to_bytes(mcc, mnc) -> Vec<u8>` | `Plmn::new(mcc, mnc)?.to_octets() -> [u8; 3]` |
+  | `plmn_from_bytes(&octets) -> Option<(String, String)>` | `Plmn::from_octets(&octets)?`, with `mcc()` and `mnc()` |
+  | `tbcd_encode(value) -> Vec<u8>` | `-> Result<Vec<u8>, SecurityError>` |
+  | `tbcd_decode(&octets) -> String`, `try_tbcd_decode` | `tbcd_decode(&octets) -> Result<String, SecurityError>` |
 
-  | Function | Error |
-  |----------|-------|
-  | `derive_kausf`, `derive_kseaf`, `derive_kamf`, `nas_eps::derive_kn`, `kdf::build_s` | `InputTooLong` for a parameter above 65535 octets |
-  | `compute_xres_star`, which now returns `[u8; 16]` and no longer a `Vec<u8>` | `InputTooLong`, and `InvalidParameter` for an XRES that is not 4 to 16 octets long |
-  | `derive_kng_ran_star`, `derive_kng_ran_star_ng_enb`, `nas_eps::derive_kenb_star` | `OutOfRange` for a PCI or an ARFCN above its largest value |
-  | `build_guti_bytes`, which takes the PLMN as `&[u8; 3]` and returns `[u8; 11]` | `OutOfRange` for an AMF Set ID above 10 bits or an AMF Pointer above 6 |
-  | `plmn_to_bytes`, which now returns `[u8; 3]` and no longer a `Vec<u8>` | `InvalidParameter` for an MCC or an MNC that is not decimal digits of the right number |
-  | `tbcd_encode`, `msin_to_bcd` | `InvalidParameter` for a character that the encoding does not have |
+  An identity is read whole and strictly: a length that is not that of the
+  identity, a type octet of another identity, a digit that is none, or a
+  filler before the end is an error, where 0.2.0 read what it could.
+  `tbcd_decode` decodes the TBCD-STRING of TS 29.002, in which 0xA to 0xE
+  are `*`, `#`, `a`, `b` and `c`; 0.2.0 dropped them, and a filler
+  anywhere.
+
+- **The NAS COUNT.** `NasCount` gives the next value and that of a
+  received message, so that a COUNT is not used twice by mistake:
+  `next()` and `estimate(sequence_number)` return
+  `Err(NasCountExhausted)` where the COUNT would wrap around,
+  `estimate_from_low_bits(low_bits, bits)` reads the five or four bits of
+  a short message, and the `wrapping_` forms are for a context with the
+  null integrity algorithm, which may wrap (TS 24.501 §4.4.3.1 and
+  §4.4.3.5, TS 24.301 §4.4.3.1 and §4.4.3.5).
 
 - **Algorithm selection.** `select_integrity_algo` and
   `select_ciphering_algo` return an `Option<IntegrityAlgorithm>` and an
-  `Option<CipheringAlgorithm>`, and their `*_with_preference` forms take the
-  preference as a slice of those. 0.2.0 ignored a preference above 3, which
-  can no longer be written.
+  `Option<CipheringAlgorithm>`, and their `*_with_preference` forms take
+  the preference as a slice of those.
 
-- **`SecurityError`** is `#[non_exhaustive]`, so a `match` on it needs a
-  wildcard arm, and has three more variants: `OutOfRange`,
-  `UnsupportedAlgorithm` and `BitLengthExceedsData`. It is now `Clone`,
-  `PartialEq` and `Eq`. `IntegrityAlgorithm`, `CipheringAlgorithm`,
-  `SupiType`, `SuciSchemeOutput`, `NaiProtectionScheme` and `TnapKeyUsage`
-  are `#[non_exhaustive]` too.
+- **`SecurityError`** is `#[non_exhaustive]`, `Clone`, `PartialEq` and
+  `Eq`. Its variants are `InvalidKeyLength`, `InvalidParameter`,
+  `InputTooLong`, `OutOfRange`, `UnsupportedAlgorithm`,
+  `BitLengthExceedsData` and `NasCountExhausted`; `Ecies` is gone, with
+  the errors of SUCI in `SuciError`. The public enums are
+  `#[non_exhaustive]` and the public structs have private fields.
 
 - **Keystream generators.** `Snow3G::generate` and `Zuc::generate`, which
-  returned a `Vec<u32>` of a length that the caller gave, are replaced by
-  `next_word()` and `fill(&mut [u32])`, which allocate nothing.
+  returned a `Vec<u32>`, are replaced by `next_word()` and
+  `fill(&mut [u32])`, which allocate nothing. `Snow3G::new` takes its key
+  and its IV by reference.
 
-- **Removed.** `derive_kausf_standard`, deprecated since 0.1.0: call
-  `derive_kausf`.
+- **Features.** `default-features = false` gives the crate without the
+  standard library, without an allocator and without SUCI: see Added.
 
-- **TBCD decoding.** `tbcd_decode` decodes the TS 29.002 TBCD-STRING: 0xA to
-  0xE are "*", "#", "a", "b" and "c", and the first 0xF filler ends the
-  value. 0.2.0 dropped those nibbles and a 0xF anywhere, so "12*3" decoded as
-  "123" and a filler in the middle joined the digits around it. Where the
-  value must be decimal, such as an IMSI or an MSIN, call
-  `plmn::try_tbcd_decode`, which returns `None` for anything else, or check
-  the string that `tbcd_decode` returns. `tbcd_encode` accepts the same
-  characters.
-- **Profile B ephemeral key.** Profile-B SUCI deconcealment (`suci_decrypt_b`,
-  `suci_to_supi`) rejects an uncompressed ephemeral public key, which 0.2.0
-  accepted: Profile B always applies point compression (TS 33.501 Annex
-  C.3.4) and TS 33.514 §4.2.1.3 has the SIDF reject such a SUCI. Expect
-  `SecurityError::Ecies` from `suci_decrypt_b` and `None` from `suci_to_supi`
-  for it. A caller that has to deconceal the 65-octet form all the same, in
-  a lab for instance, compresses the point before the call: `02` for an even
-  Y or `03` for an odd one, then X, which is the key that 0.2.0 gave the KDF.
-  A private key that is not 32 octets long is
-  `SecurityError::InvalidKeyLength` instead of a panic.
-- **SUCI concealment inputs.** `suci_scheme_output_a`, `suci_scheme_output_b`
-  and `suci_conceal` with Profile A or Profile B return
-  `SecurityError::Ecies` for an empty scheme input. 0.2.0 concealed it into a
-  scheme output without ciphertext, which `suci_decrypt_a` and
-  `suci_decrypt_b` refuse with that error. `suci_scheme_output_b` returns it
-  too for a home network public key that is neither a 33-octet compressed nor
-  a 65-octet uncompressed point, the two forms its documentation names; 0.2.0
-  also took the x-only SEC1 encoding of tag 0x05, which p256 decodes. Pass at
-  least one octet to conceal, and the key in one of the two forms.
+- **The stack.** Each operation that computes with a key needs the stack
+  that is cleared after it, 1280 to 16384 octets by kind of work and 49152
+  in a build with debug assertions: see Changed.
 
 ### Changed
 
-- The dependencies are those of the current RustCrypto generation: sha2
-  0.11, aes 0.9, p256 0.14 and x25519-dalek 3, where 0.2.0 had sha2 0.10,
-  aes 0.8, p256 0.13 and x25519-dalek 2. getrandom 0.4 gives the ephemeral
-  keys of SUCI; `hmac`, `cipher` and `rand_core` are no longer direct
-  dependencies. p256 is built without its default features, `aes` with its
-  `zeroize` and `hazmat` features, and the minimum versions are `aes` 0.9.2,
-  `zeroize` 1.9, `subtle` 2.6, `hex` 0.4.3, the first with an `alloc`
-  feature, and `unicode-normalization` 0.1.13, the first that builds without
-  the standard library. CI resolves the lowest versions and tests each set
-  of features with them, and builds those without `std` for a target that
-  has none. The minimum supported Rust version stays
-  1.88, for a project whose resolver chooses dependencies by Rust version,
-  as resolver 3 does: a dependency may publish a version that needs a newer
-  Rust.
+- **What an operation leaves.** The values that the code names were wiped
+  in part in 0.2.0: the HMAC-SHA-256 state of every derivation, the KDF
+  output and the keystream of SUCI, and the keystream blocks of 128-EEA2
+  stayed in memory. They are wiped now, and so is what the compiler puts
+  on the stack and in the registers: the work of each operation that
+  computes with a key runs in a frame of its own, and when it has returned
+  the stack below is set to zero over a fixed number of octets, with the
+  registers that a function need not give back on x86-64 and AArch64.
+
+  `leftovers/` in the repository runs every such operation on x86-64 and
+  looks for its key, its round keys, its subkeys, the stages of its
+  generator, its keystream and its HMAC values on the stack and in the
+  registers: it finds 1714 of them without the clearing and none with it,
+  in eleven optimized builds with Rust 1.98.1 and 1.88, and CI runs it.
+  `emulated-aarch64/` does the same for 22 operations on an emulated
+  AArch64 processor. The front page of the documentation says what stays:
+  what an operation returns, the copies that a program makes by moving a
+  key, and an unoptimized build without debug assertions.
+
+  The clearing adds about 13 ns to a message of AES with a keyed context,
+  16 ns from a key, 30 ns to a message of SNOW 3G or ZUC and to a
+  derivation, and 75 to 140 ns to each algorithm of a batch.
+  `RUSTFLAGS="--cfg oxirush_security_unwiped"` builds the crate without
+  it.
+
+- **Timing.** SNOW 3G, ZUC, AES, 128-EIA1, 128-EIA3 and AES-CMAC neither
+  index memory nor branch on a secret value. 0.2.0 read its S-boxes and
+  its MULα and DIVα tables at indices taken from the key and the
+  keystream, and its multiplications in GF(2^64) and GF(2^128) branched on
+  their bits, which showed both to whoever measures time or shares a
+  cache. In scalar code, which every target has, S1 of SNOW 3G and the
+  S-box S1 of ZUC are one round of AES, the S-box SQ is read whole and
+  narrowed down through masks, S0 of ZUC is three four-bit S-boxes, and
+  the multiplications are carry-less products. The compiled code was read
+  for x86-64 with Rust 1.98.1, and no timing was measured: the
+  documentation says what was checked.
+
+- **Vector and AES instructions.** SNOW 3G, ZUC and AES run on the vector,
+  AES and carry-less multiplication instructions of the processor when it
+  has them: SSSE3, SSE4.1, AES-NI and PCLMULQDQ on x86-64, and AES on
+  AArch64. The crate asks the processor when the program runs, with or
+  without the standard library, and `implementation()` says which code
+  runs. An S-box is read with shuffle instructions, whose index is an
+  operand and not an address; SNOW 3G is clocked three times at once; AES
+  is the crate's own key expansion and rounds, eight counter blocks at a
+  time. The calls of this code and the instructions that clear the stack
+  and the registers are the only `unsafe` code of the crate, in one
+  private module; 0.2.0 had none. The tests compare the vector code with
+  the scalar code, and `emulated-aarch64/` runs the AArch64 form on an
+  emulated processor, where it gives what the scalar code and the x86-64
+  code give. CI runs both, and the tests on an AArch64 machine.
+
+- **Speed.** On one core of an AMD Ryzen 7 5700G, with the clearing, a
+  1500-octet message takes 2.3 µs with 128-EEA1, 0.19 µs
+  with 128-EEA2 and 3.2 µs with 128-EEA3, where 0.2.0 took
+  5.1 µs, 2.8 µs and 5.2 µs; its MAC takes 0.41 µs,
+  0.98 µs and 3.6 µs, where 0.2.0 took 8.4 µs, 2.8 µs and
+  13.8 µs. A 64-octet message takes 0.052 µs to 0.50 µs for the six, where 0.2.0 took
+  0.15 µs to 0.99 µs. The scalar code is slower than 0.2.0 for ciphering
+  with SNOW 3G and ZUC, which is the cost of tables that are not read at a
+  secret index. A key derivation takes 0.24 µs, where 0.2.0 took
+  0.16 µs without wiping its HMAC state. `benches/README.md` has the
+  figures.
+
+- **Dependencies.** sha2 0.11, aes 0.9, p256 0.14 and x25519-dalek 3,
+  where 0.2.0 had sha2 0.10, aes 0.8, p256 0.13 and x25519-dalek 2.
+  getrandom 0.4 gives the ephemeral keys of SUCI. `hmac`, `cipher`,
+  `rand_core` and `thiserror` are no longer dependencies, nor the `derive`
+  feature of `zeroize`. The lowest versions that the manifest allows are
+  the lowest that build each set of features, and CI tests with them. The
+  minimum supported Rust version stays 1.88.
+
 - A failure of the system's random number generator while a SUCI is
-  concealed is `SecurityError::Ecies`, where 0.2.0 panicked.
-- `thiserror` is no longer a dependency, nor the `derive` feature of
-  `zeroize`: `SecurityError`, `Snow3G` and `Zuc` implement by hand what the
-  macros gave them, with the same error texts.
-- The crate denies `unsafe` code outside one module, `common::simd`, and
-  warns on a public item without documentation. The 35 items that had none,
-  among them `Snow3G`, `Zuc` and the `SecurityError` variants, are
-  documented. 0.2.0 had no `unsafe` code.
-- SNOW 3G, ZUC, AES, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory
-  nor branch on a secret value. 0.2.0 read its S-boxes and its MULα and DIVα
-  tables at indices taken from the key and the keystream, and its
-  multiplications in GF(2^64) and GF(2^128) branched on their bits, which
-  showed both to whoever measures time or shares a cache. Now, in scalar
-  code, which every target has:
-  - S1 of SNOW 3G and the S-box S1 of ZUC are one round of AES, which the
-    `aes` crate runs on the AES instructions of the processor or as a
-    bitsliced routine;
-  - the S-box SQ of SNOW 3G is read whole and narrowed down through masks,
-    and S0 of ZUC is three four-bit S-boxes, each a word that is shifted;
-  - MULα, DIVα, the multiplications of 128-EIA1 and the sums of 128-EIA3
-    are carry-less products, made with shifts and integer multiplications,
-    and the reduction modulo 2^31 - 1 of ZUC has no branch;
-  - a mask that a secret bit gives goes through `core::hint::black_box`:
-    without it the compiler turned the selection of SQ into conditional
-    jumps on bits of the state.
+  concealed is `SuciError::RandomSource`, where 0.2.0 panicked.
 
-  The compiled code was read for x86-64 with Rust 1.98.1, and no timing
-  was measured: the documentation says what was checked.
-- SNOW 3G and ZUC also have a form on the vector instructions of the
-  processor, which runs when it has them: SSSE3, SSE4.1, AES-NI and
-  PCLMULQDQ on x86-64, and AES on AArch64. The crate looks at the processor
-  when the program runs. Nothing is asked of the build, and the scalar code
-  runs elsewhere. The property is the same:
-  - an S-box is read with shuffle instructions, whose index is an operand
-    and not an address;
-  - S1 of SNOW 3G and the S-box inside S1 of ZUC are the AES instruction,
-    and the products of 128-EIA1 and 128-EIA3 the carry-less multiplication
-    instruction;
-  - SNOW 3G is clocked three times at once, with one pass over the rows of
-    SQ for the three clocks;
-  - 128-EIA1 evaluates its polynomial four blocks at a time, with the
-    powers of P, and 128-EIA3 takes four groups of 32 bits at a time.
-
-  The calls of this code, once the processor is seen to have the
-  instructions, are the `unsafe` code of the crate; the code itself takes
-  and returns values and is not `unsafe`. The tests compare the two forms.
-  The AArch64 form runs on an emulated processor: `emulated-aarch64/`
-  builds the crate for a bare AArch64 processor and runs it on Unicorn's,
-  where the vector code, the scalar code and the x86-64 code of the host
-  give the same on 3GPP test sets, keystreams, messages of 170 lengths and
-  batches. CI runs that, and the tests on an AArch64 machine.
-- `benches/` measures both forms, on one core of an AMD Ryzen 7 5700G with
-  Rust 1.98.1 here: the lowest median of four runs, and of two for the
-  scalar code and for 0.2.0 in the same benchmark. On the vector
-  instructions and a 1500-octet message, 128-EEA1 takes 2.5 µs and 128-EEA3
-  3.2 µs, where 0.2.0 took 5.1 µs and 5.2 µs; 128-EIA1 takes 0.40 µs and
-  128-EIA3 3.4 µs, where 0.2.0 took 8.4 µs and 13.8 µs. On a 64-octet
-  message the four take 0.30 µs to 0.45 µs, where 0.2.0 took 0.53 µs to
-  0.99 µs. The scalar code is slower than 0.2.0 for ciphering, which is the
-  cost of tables that are not read at a secret index: 16.8 µs for 128-EEA1
-  and 11.7 µs for 128-EEA3 on 1500 octets, 4.6 µs for 128-EIA1 and 14.1 µs
-  for 128-EIA3, and 1.4 µs to 2.0 µs for the four on 64 octets.
-- AES-128 is the crate's own key expansion and rounds on the AES
-  instructions of an x86-64 or AArch64 processor that has the vector code,
-  and the `aes` crate elsewhere. 128-EEA2 encrypts eight counter blocks at
-  a time, and 128-EIA2 keeps its subkeys and its blocks in words. On a
-  1500-octet message they take 0.17 µs and 0.94 µs, where 0.2.0 took
-  2.8 µs each; on a 64-octet message 0.034 µs and 0.10 µs, where 0.2.0 took
-  0.15 µs and 0.24 µs. The round keys are wiped a word at a time. The tests
-  have the examples of FIPS 197, and 128-EIA2 against AES-CMAC as RFC 4493
-  writes it at every length in bits up to 70 octets.
-- A key derivation takes 0.22 µs, where 0.2.0 took 0.16 µs: HMAC-SHA-256
-  now wipes its hash states, its key block and its inner hash.
+- The crate warns on a public item without documentation: the 35 that had
+  none are documented.
 
 ### Added
 
-- Cargo features, so that a caller who needs the key derivations and the
-  algorithms alone builds 14 crates and no procedural macro, without the
-  standard library and without an allocator:
+- **Cargo features.** The algorithms, the keys and their derivations build
+  without the standard library and without an allocator, with 14 crates
+  and no procedural macro; 0.2.0 had no feature and 76 crates.
 
-  | Feature | What the crate has | Needs |
-  |---------|--------------------|-------|
-  | none (`default-features = false`) | The algorithms, NAS integrity and ciphering, the key derivations, the selection of the algorithms, 5G-GUTI and `plmn_to_bytes` | `core` alone |
-  | `alloc` | And what returns a `Vec` or a `String`: `build_s`, `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes`, and `SecurityError::Ecies` | An allocator |
-  | `std`, a default | And, on an AArch64 system other than Linux, Android and Apple's, the choice of the code on the vector and AES instructions when the program runs | The standard library |
-  | `suci`, a default | And SUCI concealment and deconcealment with the null scheme, Profile A and Profile B, which bring X25519 and P-256: 41 crates | `alloc`, and a source of random numbers for `getrandom` |
-  | `nai`, a default | And the SUCI and SUPI of the NAI format, which bring Unicode normalization and IDNA: 71 crates | `suci` |
+  | Feature | The crate has | Needs |
+  |---------|---------------|-------|
+  | none (`default-features = false`) | The algorithms, the contexts and the batches, the keys and every derivation, NAS integrity and ciphering, the selection of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone |
+  | `alloc` | And what returns a `Vec` or a `String`: `kdf::build_s`, `tbcd_encode`, `tbcd_decode`, `Supi::into_owned` | An allocator |
+  | `std`, a default | And, on an AArch64 system other than Linux, Android and Apple's, the choice of the vector code when the program runs | The standard library |
+  | `suci`, a default | And `nas_5gs::Suci` with the null scheme, Profile A and Profile B: 41 crates | `alloc`, and a source of random numbers for `getrandom` |
+  | `nai`, a default | And the SUCI in the NAI format and that of a SUPI that is a NAI: 71 crates | `suci` |
 
-  The crate is `no_std` without `std`, and asks the processor what it has
-  all the same: by CPUID on x86-64, and through the auxiliary vector on
-  AArch64 Linux and Android, with `cpufeatures`, which `aes` has in the
-  tree already. On a target without an operating system it runs the
-  algorithms on the vector and AES instructions when the build enables
-  them, and on scalar code otherwise. CI builds each set of features for
-  `thumbv7em-none-eabihf` and `aarch64-unknown-none`.
+  On a target without an operating system the vector code runs when the
+  build enables its instructions. CI builds each set of features for
+  `thumbv7em-none-eabihf` and `aarch64-unknown-none`. The derivations give
+  the hasher their parameters part after part: the string S of TS 33.220
+  is not built, and a parameter that is a key has no copy to wipe.
 
-  The key derivations no longer build the string S of TS 33.220: its
-  parts go to the hasher one after the other, and a parameter that is a
-  key has no copy to wipe.
+- **Keyed contexts.** `IntegrityContext` and `CipheringContext` hold a key
+  with its algorithm and what the algorithm computes from the key alone,
+  the round keys of AES and the subkeys of CMAC: 240 and 208 octets. A
+  context serves both directions, takes the COUNT and the BEARER at each
+  message, and makes the job of a message for a batch. With a context
+  128-EEA2 takes 26 ns on 64 octets and 128-EIA2 81 ns,
+  where the functions that take a key take 52 ns and
+  121 ns.
 
-  0.2.0 had no feature and 76 crates. Without `nai`, `suci_to_supi` returns
-  `None` for a SUCI in a NAI format.
-- `nea_cipher_batch` and `nia_mac_batch`, for an AMF, an MME or a load
-  generator that ciphers or authenticates many messages at once. Each
-  message is a job, a `CipherJob` or a `MacJob`, which holds its own key,
-  COUNT, BEARER, DIRECTION and algorithm; `nas_5gs::cipher_job`,
-  `nas_5gs::mac_job` and their counterparts of `nas_eps` make the job of a
-  NAS message from a `NasCount`. The jobs of a batch need not have the same
-  algorithm or length, and each has what the function of one message gives
-  it. The module is `batch`, in `common` and at the crate root.
+- **Batches.** `nea_cipher_batch` and `nia_mac_batch` cipher or
+  authenticate many messages in one call. Each message is a `CipherJob` or
+  a `MacJob` with its own key, COUNT, BEARER, DIRECTION and algorithm;
+  `nas_5gs::cipher_job`, `nas_5gs::mac_job` and their counterparts of
+  `nas_eps` make the job of a NAS message. SNOW 3G and ZUC generators are
+  clocked side by side, four in a 128-bit vector and eight with AVX2, and
+  the CBC-MAC chains of eight messages of 128-EIA2 advance together. What
+  a generator or a chain does at a step depends on the lengths of the
+  messages alone. Sixteen messages of 1500 octets take 10.4 µs with
+  128-EEA1 and 13.9 µs with 128-EEA3 in one call, where sixteen calls
+  take 36.9 µs and 51.6 µs.
 
-  SNOW 3G and ZUC generators are clocked side by side, one in each 32-bit
-  word of a vector: four on the processors that have the vector code, and
-  eight on an x86-64 processor with AVX2, from five messages on. A
-  generator that has given its message its keystream takes the next
-  message. The CBC-MAC chains of eight messages of 128-EIA2 advance
-  together. 128-EEA2 is one message after the other. Elsewhere the two
-  functions call those of one message.
-
-  What a generator or a chain does at a step depends on the lengths of the
-  messages: no branch or address depends on a key or on a message, and the
-  time of a message on no octet of another. The compiled code was read as
-  that of the other functions was.
-
-  On the Ryzen 7 5700G, sixteen messages of 1500 octets take 11.5 µs with
-  128-EEA1 and 13.6 µs with 128-EEA3 in one call, where sixteen calls take
-  41.3 µs and 51.4 µs; their MACs take 3.9 µs, 4.0 µs and 18.5 µs with
-  128-EIA1, 128-EIA2 and 128-EIA3, where sixteen calls take 6.5 µs, 15.3 µs
-  and 56.9 µs. Sixteen messages of 64 octets take 1.8 µs and 2.1 µs to
-  cipher, where sixteen calls take 5.7 µs and 6.7 µs, and 2.2 µs, 0.92 µs
-  and 2.7 µs for their MACs, where sixteen calls take 4.9 µs, 1.7 µs and
-  7.5 µs. Four messages gain 1.4 to 3.3 times, and 128-EEA2 nothing.
-  `benches/README.md` has the table.
-
-  The tests compare a batch with its messages one by one, on batches of 0
-  to 40 messages of mixed algorithms and lengths, in whole octets and in
-  bits, with eight generators, with four and in scalar code, and run the
-  3GPP test sets of the three ciphering algorithms, of 128-EIA1 and of
-  128-EIA3, and set 7 of 128-EIA2, through one batch. The fuzz target
-  `algorithms` compares batches of up to twelve messages.
 - `implementation()` says which code the algorithms run on this processor:
-  `Implementation::Scalar`, `Vector128` or `Vector256`, with for each
-  algorithm its code for one message (`ciphering`, `integrity`, a `Code`)
-  and how many messages a batch works on side by side
-  (`ciphering_side_by_side`, `integrity_side_by_side`). A program logs it,
-  and a test requires it: `tests/implementation.rs` fails in a CI job whose
-  `OXIRUSH_SECURITY_EXPECT` names another implementation than the one that
-  ran.
-- Four `cargo fuzz` targets under `fuzz/`, which CI runs for a minute each:
-  `suci` (a SUCI of a NAS message, a scheme output and a NAI from a peer),
-  `suci_round_trip` (what is concealed is deconcealed), `identity` (5G-GUTI,
-  5G-S-TMSI, PLMN and TBCD, each encoded back to its octets) and
-  `algorithms` (every algorithm at any length in bits, on vector
-  instructions and in scalar code, alone and in a batch).
-- `benches/`, a package of its own that times the algorithms, the key
-  derivations and SUCI with criterion and profiles them with pprof. The
-  published crate does not have it, and the crate has no dependency for it.
-- A `SECURITY.md` that says how to report a vulnerability.
-- `constant_time_eq` compares two octet strings through `subtle`, in a time
-  that depends on their lengths and not on where they differ: RES* with
-  XRES*, HRES* with HXRES*, or another value derived from a key with the one
-  a peer sent. The documentation of `compute_xres_star` and
-  `compute_hres_star` points to it.
-- The examples of the README are compiled and run with the doctests, and
-  `tests/readme.rs` compares what each prints with the text under it.
-- Test vector for 128-EIA2 set 7 (TS 33.401 Annex C.2.7), the
-  non-byte-aligned set that 0.2.0 did not cover.
-- 128-EEA1 tests on the six UEA2 design conformance sets (TS 35.218), which
-  TS 33.401 Annex C.3 reuses for 128-EEA1.
-- A 5G AKA key chain test from the TS 35.208 test set 1 MILENAGE outputs
-  through KAUSF, XRES*, HXRES*, KSEAF, KAMF, KNASenc, KNASint, KgNB, and NH.
-  `tests/five_g_aka_chain.py` derives the same values with the HMAC-SHA-256
-  of Python's standard library. KSEAF, KAMF, the 5GS NAS keys,
-  NH, and XRES* had no test before.
-- SUCI tests on every TS 33.501 Annex C.4 data set, including the null
-  scheme and the ephemeral key, shared key, encryption key, ICB, MAC key,
-  ciphertext, and MAC tag of the Profile A and Profile B sets.
+  `Implementation::Scalar`, `Vector128` or `Vector256`, with the code of
+  each algorithm and how many messages a batch works on side by side.
+  `tests/implementation.rs` fails in a CI job that does not run the code
+  that the job names.
+
+- `NasCount::next`, `estimate`, `estimate_from_low_bits` and their
+  `wrapping_` forms; `nas_5gs::compute_res_star` and `compute_hxres_star`;
+  `XresStar::accepts` and `HxresStar::accepts`, which compare in constant
+  time; `nas_eps::derive_skgnb`; `constant_time_eq`.
+
+- Tests: 128-EIA2 set 7 of TS 33.401 Annex C.2.7, the six UEA2 design
+  conformance sets of TS 35.218 for 128-EEA1, every TS 33.501 Annex C.4
+  data set of SUCI with its intermediate values, and a 5G AKA key chain
+  from the TS 35.208 test set 1 outputs through KAUSF, XRES\*, HXRES\*,
+  KSEAF, KAMF, the NAS keys, KgNB and NH, which
+  `tests/five_g_aka_chain.py` derives with the HMAC-SHA-256 of Python.
+  KSEAF, KAMF, the 5GS NAS keys, NH and XRES\* had no test before. The
+  blocks of the README are compiled and run, and `tests/readme.rs`
+  compares what each prints with the text under it.
+
+- Four `cargo fuzz` targets under `fuzz/`, which CI runs for a minute each
+  at a push and for half an hour each week; `benches/`, which times the
+  algorithms, the derivations and SUCI with criterion; `leftovers/` and
+  `emulated-aarch64/`; a `SECURITY.md`; an advisory check in CI.
 
 ### Fixed
 
 - The algorithms count octets, not bits. On a 32-bit target the length of
-  a buffer of 512 MiB or more, multiplied by 8, overflowed `usize`: a debug
-  build panicked, and in a release build the whole-octet `nas_cipher`,
-  `nas_mac` and `nia2_mac` took the wrapped product for the length to
-  process. `nia1_mac` and `nia3_mac` converted the bit length with `as`,
-  which dropped its high bits.
-- `suci_to_supi` and `suci_to_string` ignore spare bit 4 of the first octet
-  of a binary SUCI, as they do spare bit 8 (TS 24.501 §9.11.3.4); a SUCI with
-  that bit set was not decoded.
-- The word copies of the key that 128-EEA1, 128-EIA1 and `Snow3G` make are
-  wiped.
-- Profile A checks X25519 contributory behavior with the dependency's
-  constant-time all-zero comparison.
-- Key material stayed in memory after use: the HMAC-SHA-256 state of every
-  KDF (hmac 0.12 and sha2 0.10 do not clear it), the SUCI ECIES KDF output,
-  hash state and AES-CTR keystream, the HRES* hash state, and the 128-EEA2
-  keystream blocks, which the README said were wiped. The KDFs, HRES* and
-  SUCI now use the SHA-256 of sha2 0.11 with its `zeroize` feature, which
-  wipes the chaining value and the block buffer when the hasher is dropped,
-  and the keystream blocks are wiped. HMAC is written in this crate over
-  that hasher and wipes the block of the key and the inner hash, which
-  hmac 0.13 leaves on the stack.
-- The 0.2.0 notes credited this crate with a NAS context and
-  `protect_re_establishment`, which oxirush-nas provides; the README said
-  NAS-context keys were wiped here. Both now describe this crate.
-- The `re_establishment_nas_mac` documentation says that the 28-bit reading
-  of the target Cell-ID is this crate's interpretation, for which no test
-  data or other implementation exists.
-- The `suci_to_supi` documentation says that a SUCI in a NAI format gives
-  the `username@realm` SUPI without a prefix; it promised
-  `imsi-<MCC><MNC><MSIN>` for every SUCI.
+  a buffer of 512 MiB or more, multiplied by 8, overflowed `usize`: a
+  debug build panicked, and a release build took the wrapped product for
+  the length to process.
+- A SUCI whose first octet has spare bit 4 set is read, as one with spare
+  bit 8 is (TS 24.501 §9.11.3.4).
+- Profile A checks the contributory behaviour of X25519 with the
+  constant-time comparison of its dependency.
+- The notes of 0.2.0 credited this crate with a NAS context and
+  `protect_re_establishment`, which oxirush-nas has.
+- The documentation of `re_establishment_nas_mac` says that the 28-bit
+  reading of the target Cell-ID is this crate's, for which no test data or
+  other implementation exists.
 
 ## 0.2.0 - 2026-09-27
 

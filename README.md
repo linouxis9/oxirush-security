@@ -40,8 +40,7 @@ KNASint 28ddb5356880149b9fee22f2367522a4
 ciphered b57dd5, MAC 83e4d009
 ```
 
-The text under a block is what the block prints. The blocks use the `hex`
-crate.
+The text under a block is what the block prints.
 
 > This page describes the unreleased 0.3.0. crates.io has 0.2.0, and the
 > [changelog](CHANGELOG.md) lists each change.
@@ -54,13 +53,14 @@ oxirush-security = "0.3"
 hex = "0.4" # for the examples of this page
 ```
 
-Until 0.3.0 is published, depend on the repository:
+Until 0.3.0 is on crates.io, the repository has it:
 `oxirush-security = { git = "https://github.com/linouxis9/oxirush-security" }`.
 
 ## Derive the keys of a 5G AKA run
 
 CK, IK, RES and SQN xor AK come from MILENAGE or TUAK, which the crate does
-not have. These are the outputs of TS 35.208 test set 1.
+not have: the [`milenage`](https://crates.io/crates/milenage) crate has
+MILENAGE. These are the outputs of TS 35.208 test set 1.
 
 ```rust
 use oxirush_security::nas_5gs::{
@@ -154,7 +154,7 @@ deciphered 7e0043, then from NAS COUNT 1
 
 ## Protect and check a NAS message in EPS
 
-`nas_eps` has the functions of EPS. Its `nas_mac` and `nas_cipher` take no
+The EPS functions are in `nas_eps`. Its `nas_mac` and `nas_cipher` take no
 NAS connection: the BEARER of EPS NAS is zero.
 
 ```rust
@@ -206,9 +206,9 @@ short MAC 7e95
 
 ## Protect the messages of many UEs in one call
 
-A job is a message with its own key, NAS COUNT and algorithm. Each gets
-what `nas_cipher` and `nas_mac` give it alone, from keystream generators
-and MAC chains that run side by side.
+A job is one message with its key, its NAS COUNT and its algorithm. A batch
+gives each job the result of `nas_cipher` or `nas_mac`, and runs the
+keystream generators and the MAC chains of several jobs side by side.
 
 ```rust
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, cipher_job, mac_job};
@@ -258,8 +258,8 @@ MAC 6a11a04f of 00e17ff3e0
 MAC c48d481a of 295c7b75e6ac69
 ```
 
-`CipherJob::new` and `MacJob::new` make a job from what the algorithms
-take: any COUNT and a BEARER.
+`CipherJob::new` and `MacJob::new` take any 32-bit COUNT and a BEARER, for
+a message that is not a NAS message.
 
 ## Keep the keys of a UE between its messages
 
@@ -337,8 +337,9 @@ KNG-RAN* 563d8aba7015f1ad77af632104b023d51c1cd410ef2ff46886aa2e02887e71d1
 KAMF'    ae5e2cb9cda5b1687556e9c3d889d0edb0aa4e7317d409e0315dac5597ad438a
 ```
 
-`nas_eps` has `derive_kenb`, `derive_nh` and `derive_kenb_star` for EPS, and
-both modules have the keys that one system maps to the other.
+`nas_eps` has `derive_kenb`, `derive_nh` and `derive_kenb_star` for EPS. The
+keys of a change of system are in `nas_5gs`: `derive_mapped_kasme_idle` and
+`derive_mapped_kamf_idle`, and those of a handover.
 
 ## Conceal and deconceal a SUCI
 
@@ -525,9 +526,25 @@ f202f83901004211223344 has 5G-TMSI 11223344
 02980300000000f1 is 208930000000001
 ```
 
-`examples/` has five programs, which `cargo run --example <name>` runs:
-`key_derivation_nas_5gs`, `key_derivation_nas_eps`, `integrity_nas_5gs`,
-`integrity_nas_eps` and `suci_conceal`.
+`examples/` has five programs: `key_derivation_nas_5gs`,
+`key_derivation_nas_eps`, `integrity_nas_5gs`, `integrity_nas_eps` and
+`suci_conceal`. Run one with `cargo run --example suci_conceal`.
+
+## What an operation leaves
+
+A key, a context and a generator are wiped when they are dropped, and
+`{:?}` prints no octet of a key. An identity and RAND and AUTN, which travel
+in clear, are printed whole.
+
+When an operation that computes with a key returns, the crate also sets to
+zero the stack that the work used and, on x86-64 and AArch64, the registers.
+[`leftovers/`](https://github.com/linouxis9/oxirush-security/tree/master/leftovers) looks for
+the keys, the round keys and the keystream after each operation and finds
+none. A copy that the program makes is its own: a key that is moved leaves
+its octets where it was, so make a key where it stays and pass references.
+
+The clearing takes 11 to 33 ns for a message, and a batch pays it once.
+`RUSTFLAGS="--cfg oxirush_security_unwiped"` builds the crate without it.
 
 ## Features
 
@@ -545,7 +562,9 @@ through the auxiliary vector on AArch64 Linux and Android. On a target
 without an operating system the code on the vector and AES instructions
 runs when the build enables them
 (`-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq`, or `+neon,+aes`).
-`implementation()` says which code runs.
+
+`oxirush_security::implementation()` says which code runs for each
+algorithm, scalar or on the instructions: log it when the program starts.
 
 ```toml
 # no_std, without an allocator
@@ -558,8 +577,10 @@ dependency at a version that 1.88 builds.
 
 ## What it does not do
 
-- AKA: it has no MILENAGE or TUAK.
-- State: it stores no key and keeps no NAS COUNT. The caller passes both.
+- AKA: it has no MILENAGE or TUAK. The
+  [`milenage`](https://crates.io/crates/milenage) crate has the first.
+- State: it stores no key and keeps no NAS COUNT. The caller passes both,
+  and `NasCount` gives the next one and the one of a received message.
 - NAS messages: it protects octets.
   [oxirush-nas](https://github.com/linouxis9/oxirush-nas) encodes the
   messages and their security header.
@@ -572,13 +593,13 @@ as one of sixteen in a call of `nea_cipher_batch` or `nia_mac_batch`:
 
 | | Cipher | MAC | Cipher, one of sixteen | MAC, one of sixteen |
 |---|---|---|---|---|
-| 128-NEA2, 128-NIA2 (AES) | 0.17 µs | 0.94 µs | 0.17 µs | 0.25 µs |
-| 128-NEA1, 128-NIA1 (SNOW 3G) | 2.5 µs | 0.40 µs | 0.72 µs | 0.24 µs |
-| 128-NEA3, 128-NIA3 (ZUC) | 3.2 µs | 3.4 µs | 0.85 µs | 1.2 µs |
+| 128-NEA2, 128-NIA2 (AES) | 0.19 µs | 0.98 µs | 0.18 µs | 0.26 µs |
+| 128-NEA1, 128-NIA1 (SNOW 3G) | 2.3 µs | 0.41 µs | 0.65 µs | 0.24 µs |
+| 128-NEA3, 128-NIA3 (ZUC) | 3.2 µs | 3.6 µs | 0.87 µs | 1.2 µs |
 
-A key derivation takes 0.22 µs, and SUCI concealment 55 µs with Profile A
-and 284 µs with Profile B. [`benches/`](benches/README.md) has the
-benchmarks, the other figures and how to profile.
+A key derivation takes 0.24 µs, and SUCI concealment 59 µs with Profile A
+and 286 µs with Profile B. [`benches/`](https://github.com/linouxis9/oxirush-security/tree/master/benches)
+has the benchmarks, the other figures and how to profile.
 
 ## Tests and fuzzing
 
@@ -589,19 +610,25 @@ and the other derivations with values that the tests calculate.
 
 SNOW 3G, ZUC and AES run on the AES, vector and carry-less multiplication
 instructions of an x86-64 or AArch64 processor that has them, and on scalar
-code elsewhere. None indexes memory or branches on a secret. The tests
-compare the two, and a batch with its messages one by one, and CI runs them
-on x86-64, AArch64 and 32-bit x86. The calls of the vector code are the
-crate's only `unsafe` code. CI also builds each set of features for two
-targets without the standard library, and runs the AArch64 code on an
-emulated processor ([`emulated-aarch64/`](emulated-aarch64/README.md)).
+code elsewhere. The source has no index into memory and no branch that
+depends on a secret, and the compiled code of one x86-64 build was read
+for it; no timing was measured. The tests compare the two forms, and a
+batch with its messages one by one. CI runs them on x86-64, AArch64 and
+32-bit x86, builds each set of features for two targets without the
+standard library, and runs the AArch64 code on an emulated processor
+([`emulated-aarch64/`](https://github.com/linouxis9/oxirush-security/tree/master/emulated-aarch64)).
+The crate's only `unsafe` code is the calls of the vector code and the
+instructions that clear the stack and the registers.
 
-CI fuzzes four `cargo fuzz` targets of [`fuzz/`](fuzz) for a minute each.
+CI fuzzes the four `cargo fuzz` targets of
+[`fuzz/`](https://github.com/linouxis9/oxirush-security/tree/master/fuzz) for a minute at each
+push and for half an hour each week.
 
-[The documentation](https://docs.rs/oxirush-security) has the terms, each
-function with its clause and the values it is tested against, the types of
-the inputs with their errors, what is wiped after use, and the checks of
-its timing. Until the release, `cargo doc --open` in a clone builds it.
+[The documentation](https://docs.rs/oxirush-security) has the terms, and
+each function with its clause and the values that it is tested against. It
+also has the types of the inputs with their errors, what an operation
+leaves, and how the timing was checked. Until the release,
+`cargo doc --open` in a clone builds it.
 
 ## The OxiRush family
 
