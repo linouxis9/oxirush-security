@@ -15,9 +15,9 @@
    limitations under the License.
 */
 
-//! AES-128 with its key: the crate's own key expansion and rounds on the
-//! AES instructions of a processor that has them with the vector code, and
-//! the `aes` crate elsewhere.
+//! AES-128 with a key: the round keys that a context keeps for the AES
+//! instructions of a processor that has them with the vector code, and the
+//! `aes` crate for a processor without them.
 //!
 //! A block that is a number has its first octet as the low one.
 
@@ -30,72 +30,95 @@ use zeroize::Zeroize;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use zeroize::Zeroizing;
 
-/// AES-128 with the round keys of one key, which are wiped with it.
-// The round keys of the `aes` crate are larger than the crate's own. A
-// context holds either, and there is no allocator to put the larger in.
-#[allow(clippy::large_enum_variant)]
-#[derive(Clone)]
-pub(crate) enum Aes128 {
-    /// On the AES instructions.
+/// The round keys of a key that a context keeps: those of the AES
+/// instructions, 176 octets, on a processor that has them. A context
+/// keeps none elsewhere: the round keys of the `aes` crate are four times
+/// as large, and it expands the key for each message.
+///
+/// A context has the two fields of this type beside its own, so that they
+/// take no more room than their octets.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) type Schedule = Zeroizing<AesSchedule>;
+/// The instructions, when the round keys of a context are those of its
+/// key.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) type Expanded = Option<Instructions>;
+
+/// On a target without the vector code, a context keeps no round keys.
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub(crate) type Schedule = ();
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub(crate) type Expanded = ();
+
+/// No round keys: those of a context whose algorithm is not AES.
+pub(crate) fn no_round_keys() -> (Expanded, Schedule) {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    Instructions(Instructions, Zeroizing<[AesSchedule; 1]>),
-    /// The `aes` crate, which wipes its round keys.
-    Crate(Aes128Enc),
+    return (None, Zeroizing::new([0; 11]));
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    ((), ())
 }
+
+/// The round keys of `key`, on a processor with the AES instructions.
+pub(crate) fn expand(key: &[u8; 16]) -> (Expanded, Schedule) {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if let Some(instructions) = Instructions::detect() {
+        let schedules = instructions.aes_schedules([key]);
+        return (Some(instructions), Zeroizing::new(schedules[0]));
+    }
+    let _ = key;
+    no_round_keys()
+}
+
+/// The round keys that a context keeps, as the functions of AES take
+/// them.
+#[derive(Clone, Copy)]
+pub(crate) struct RoundKeys<'a> {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    schedule: Option<(Instructions, &'a AesSchedule)>,
+    context: core::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> RoundKeys<'a> {
+    /// Those of the two fields of a context.
+    pub(crate) fn of(expanded: &'a Expanded, schedule: &'a Schedule) -> Self {
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let ((), ()) = (expanded, schedule);
+        Self {
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            schedule: expanded.map(|instructions| (instructions, &**schedule)),
+            context: core::marker::PhantomData,
+        }
+    }
+
+    /// The round keys on the AES instructions, when they were expanded.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn schedule(self) -> Option<(Instructions, &'a AesSchedule)> {
+        self.schedule
+    }
+}
+
+/// AES-128 of the `aes` crate with a key, for a processor without the AES
+/// instructions: it expands the key, and wipes its round keys.
+pub(crate) struct Aes128(Aes128Enc);
 
 impl Aes128 {
     pub(crate) fn new(key: &[u8; 16]) -> Self {
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if let Some(instructions) = Instructions::detect() {
-            return Self::Instructions(instructions, instructions.aes_schedules([key]));
-        }
-        Self::of_crate(key)
-    }
-
-    /// AES-128 of the `aes` crate, for a processor that is known not to
-    /// have the instructions.
-    pub(crate) fn of_crate(key: &[u8; 16]) -> Self {
-        Self::Crate(Aes128Enc::new(key.into()))
-    }
-
-    /// The round keys, on the AES instructions.
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    pub(crate) fn schedule(&self) -> Option<(Instructions, &AesSchedule)> {
-        match self {
-            Self::Instructions(instructions, schedules) => Some((*instructions, &schedules[0])),
-            Self::Crate(_) => None,
-        }
+        Self(Aes128Enc::new(key.into()))
     }
 
     /// Encrypt a block.
     pub(crate) fn encrypt(&self, block: u128) -> u128 {
-        match self {
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            Self::Instructions(instructions, schedules) => {
-                let mut blocks = [block];
-                instructions.aes_encrypt(schedules.each_ref(), &mut blocks);
-                blocks[0]
-            }
-            Self::Crate(cipher) => {
-                let mut octets = block.to_le_bytes();
-                cipher.encrypt_block((&mut octets).into());
-                let encrypted = u128::from_le_bytes(octets);
-                octets.zeroize();
-                encrypted
-            }
-        }
+        let mut octets = block.to_le_bytes();
+        self.0.encrypt_block((&mut octets).into());
+        let encrypted = u128::from_le_bytes(octets);
+        octets.zeroize();
+        encrypted
     }
 
     /// Counter mode, as 128-EEA2 has it: the counter blocks begin with the
     /// eight octets of `prefix` and end with their number, from zero.
     pub(crate) fn ctr(&self, prefix: [u8; 8], data: &mut [u8]) {
-        let cipher = match self {
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            Self::Instructions(instructions, schedules) => {
-                return instructions.aes_ctr(&schedules[0], u64::from_le_bytes(prefix), data);
-            }
-            Self::Crate(cipher) => cipher,
-        };
+        let cipher = &self.0;
 
         // The counter blocks of a group are encrypted in one call
         let mut keystream = [aes::Block::default(); CTR_GROUP];

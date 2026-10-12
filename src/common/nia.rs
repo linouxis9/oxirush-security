@@ -32,7 +32,7 @@
 //!
 //! For a NAS message use [`nas_5gs::nas_mac`](crate::nas_5gs::nas_mac) or
 //! [`nas_eps::nas_mac`](crate::nas_eps::nas_mac), which take a NAS COUNT.
-use crate::common::aes128::Aes128;
+use crate::common::aes128::{Aes128, RoundKeys};
 use crate::common::ct::{clmul64, clmul128, mask64};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, Direction, IntegrityAlgorithm, octets_of};
@@ -289,65 +289,61 @@ fn eia2(
     if let Some(instructions) = Instructions::detect() {
         return cmac_lanes(instructions, [key], &[blocks])[0];
     }
-    Cmac::of(Aes128::of_crate(key)).mac(&blocks)
+    let cipher = Aes128::new(key);
+    let (k1, k2) = subkeys(cipher.encrypt(0));
+    let last = Zeroizing::new(blocks.last_with(k1, k2));
+    cbc_mac(&cipher, &blocks, *last)
 }
 
-/// AES-CMAC with its key: the cipher and the two subkeys, which do not
-/// change from a message to the next (RFC 4493 §2.3).
-#[derive(Clone)]
-pub(crate) struct Cmac {
-    cipher: Aes128,
-    /// K1 and K2, each a number whose first octet is the low one.
-    k1: u128,
-    k2: u128,
-}
-
-impl Cmac {
-    pub(crate) fn new(key: &[u8; 16]) -> Self {
-        Self::of(Aes128::new(key))
-    }
-
-    /// AES-CMAC with a cipher that has its key.
-    fn of(cipher: Aes128) -> Self {
-        let (k1, k2) = subkeys(cipher.encrypt(0));
-        Self { cipher, k1, k2 }
-    }
-
-    /// The round keys, on the AES instructions.
+/// The subkeys K1 and K2 of AES-CMAC with a key, which do not change
+/// from a message to the next (RFC 4493 §2.3): each a number whose first
+/// octet is the low one. `round_keys` are those of the key.
+pub(crate) fn cmac_subkeys(key: &[u8; 16], round_keys: RoundKeys<'_>) -> [u128; 2] {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    pub(crate) fn schedule(&self) -> Option<(Instructions, &AesSchedule)> {
-        self.cipher.schedule()
+    if let Some((instructions, schedule)) = round_keys.schedule() {
+        let mut l = Zeroizing::new([0u128]);
+        instructions.aes_encrypt([schedule], &mut l);
+        let (k1, k2) = subkeys(l[0]);
+        return [k1, k2];
     }
-
-    /// The MAC of a message, from its blocks.
-    pub(crate) fn mac(&self, blocks: &CmacBlocks<'_>) -> u32 {
-        let last = Zeroizing::new(blocks.last_with(self.k1, self.k2));
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        if let Some((instructions, schedule)) = self.cipher.schedule() {
-            let (first, body) = ([blocks.first], [blocks.body]);
-            let mac = Zeroizing::new(instructions.aes_cbc_mac([schedule], first, body, &[*last]));
-            return (mac[0] as u32).swap_bytes();
-        }
-
-        // `state = AES(state XOR block)`, for each block
-        let mut state = Zeroizing::new(0u128);
-        if let Some(first) = blocks.first {
-            *state = self.cipher.encrypt(first);
-        }
-        for block in blocks.body {
-            *state = self.cipher.encrypt(*state ^ u128::from_le_bytes(*block));
-        }
-        *state = self.cipher.encrypt(*state ^ *last);
-        // The first four octets, the high one first
-        (*state as u32).swap_bytes()
-    }
+    let _ = round_keys;
+    let (k1, k2) = subkeys(Aes128::new(key).encrypt(0));
+    [k1, k2]
 }
 
-impl Drop for Cmac {
-    fn drop(&mut self) {
-        self.k1.zeroize();
-        self.k2.zeroize();
+/// AES-CMAC of a message, from its blocks, with a key, its round keys and
+/// its subkeys: the first four octets.
+pub(crate) fn cmac(
+    key: &[u8; 16],
+    round_keys: RoundKeys<'_>,
+    subkeys: &[u128; 2],
+    blocks: &CmacBlocks<'_>,
+) -> u32 {
+    let last = Zeroizing::new(blocks.last_with(subkeys[0], subkeys[1]));
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if let Some((instructions, schedule)) = round_keys.schedule() {
+        let (first, body) = ([blocks.first], [blocks.body]);
+        let mac = Zeroizing::new(instructions.aes_cbc_mac([schedule], first, body, &[*last]));
+        return (mac[0] as u32).swap_bytes();
     }
+    let _ = round_keys;
+    cbc_mac(&Aes128::new(key), blocks, *last)
+}
+
+/// The MAC of the CBC-MAC chain of a message with the `aes` crate, one
+/// block after the other. `last` is the last block with its subkey.
+fn cbc_mac(cipher: &Aes128, blocks: &CmacBlocks<'_>, last: u128) -> u32 {
+    // `state = AES(state XOR block)`, for each block
+    let mut state = Zeroizing::new(0u128);
+    if let Some(first) = blocks.first {
+        *state = cipher.encrypt(first);
+    }
+    for block in blocks.body {
+        *state = cipher.encrypt(*state ^ u128::from_le_bytes(*block));
+    }
+    *state = cipher.encrypt(*state ^ last);
+    // The first four octets, the high one first
+    (*state as u32).swap_bytes()
 }
 
 /// The subkeys K1 and K2 from `l`, the encryption of a block of zeros
@@ -471,7 +467,8 @@ pub(crate) fn cmac_lanes<const N: usize>(
 #[derive(Clone, Copy)]
 pub(crate) enum CmacKey<'a> {
     Octets(&'a [u8; 16]),
-    Keyed(&'a Cmac, &'a AesSchedule),
+    /// The round keys and the subkeys K1 and K2.
+    Keyed(&'a AesSchedule, &'a [u128; 2]),
 }
 
 /// AES-CMAC of several messages as [`cmac_lanes`] computes it, of which
@@ -503,9 +500,9 @@ pub(crate) fn cmac_lanes_keyed<const N: usize>(
     {
         let (k1, k2) = match key {
             CmacKey::Octets(_) => subkeys(*last),
-            CmacKey::Keyed(cmac, round_keys) => {
+            CmacKey::Keyed(round_keys, subkeys) => {
                 *schedule = round_keys;
-                (cmac.k1, cmac.k2)
+                (subkeys[0], subkeys[1])
             }
         };
         *last = blocks.last_with(k1, k2);

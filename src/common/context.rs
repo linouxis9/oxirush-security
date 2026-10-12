@@ -28,18 +28,26 @@
 //!   COUNT, BEARER and DIRECTION from its first step, so no part of it is
 //!   that of the key alone, and a context saves no time with them.
 //!
-//! A context serves both directions, which have the same key: the
-//! DIRECTION is an input of each call. It is wiped when it is dropped. Its
-//! values are those of [`nia_mac`](crate::nia_mac) and of
-//! [`nea_cipher`](crate::nea_cipher).
+//! A context serves both directions and every bearer, which have the same
+//! key: COUNT, BEARER and DIRECTION are inputs of each call. It is wiped
+//! when it is dropped. Its values are those of
+//! [`nia_mac`](crate::nia_mac) and of [`nea_cipher`](crate::nea_cipher).
+//!
+//! The round keys are kept on a processor with the AES instructions, where
+//! they are 176 octets: an [`IntegrityContext`] is 240 octets and a
+//! [`CipheringContext`] 208, whatever their algorithm, against 16 for a
+//! key. Elsewhere the `aes` crate expands the key for each message, and a
+//! context keeps the subkeys of CMAC alone. A program with very many
+//! security contexts keeps contexts for those of AES, where they save
+//! time, and keys for the others.
 
-use crate::common::aes128::Aes128;
+use crate::common::aes128::{Expanded, RoundKeys, Schedule, expand, no_round_keys};
 use crate::common::batch::{CipherJob, MacJob};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm};
 use crate::common::keys::{CipheringKey, IntegrityKey};
-use crate::common::nea::{cipher_bits, cipher_octets};
-use crate::common::nia::{BitString, Cmac, CmacBlocks, mac_of_bits};
+use crate::common::nea::{cipher_bits, cipher_octets, nea2_cipher_keyed};
+use crate::common::nia::{BitString, CmacBlocks, cmac, cmac_subkeys, mac_of_bits};
 use core::fmt;
 use zeroize::Zeroizing;
 
@@ -76,19 +84,28 @@ use zeroize::Zeroizing;
 pub struct IntegrityContext {
     algorithm: IntegrityAlgorithm,
     key: Zeroizing<[u8; 16]>,
-    /// AES-CMAC with the key, for 128-EIA2.
-    cmac: Option<Cmac>,
+    /// For 128-EIA2, the round keys of AES and the subkeys K1 and K2 of
+    /// CMAC; none and zeros for another algorithm.
+    expanded: Expanded,
+    schedule: Schedule,
+    subkeys: Zeroizing<[u128; 2]>,
 }
 
 impl IntegrityContext {
     /// The context of a key and its algorithm.
     pub fn new(key: &impl IntegrityKey, algorithm: IntegrityAlgorithm) -> Self {
         let key = Zeroizing::new(*key.key_octets());
-        let cmac = (algorithm == IntegrityAlgorithm::Aes).then(|| Cmac::new(&key));
+        let ((mut expanded, mut schedule), mut subkeys) = (no_round_keys(), Zeroizing::new([0; 2]));
+        if algorithm == IntegrityAlgorithm::Aes {
+            (expanded, schedule) = expand(&key);
+            *subkeys = cmac_subkeys(&key, RoundKeys::of(&expanded, &schedule));
+        }
         Self {
             algorithm,
             key,
-            cmac,
+            expanded,
+            schedule,
+            subkeys,
         }
     }
 
@@ -171,10 +188,16 @@ impl IntegrityContext {
         &self.key
     }
 
-    /// AES-CMAC with the key, when the algorithm is 128-EIA2.
+    fn round_keys(&self) -> RoundKeys<'_> {
+        RoundKeys::of(&self.expanded, &self.schedule)
+    }
+
+    /// The round keys on the AES instructions and the subkeys of CMAC,
+    /// when the context has them.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    pub(crate) fn cmac(&self) -> Option<&Cmac> {
-        self.cmac.as_ref()
+    pub(crate) fn cmac_key(&self) -> Option<crate::common::nia::CmacKey<'_>> {
+        let (_, schedule) = self.round_keys().schedule()?;
+        Some(crate::common::nia::CmacKey::Keyed(schedule, &self.subkeys))
     }
 
     /// The MAC of the first bits of a message, which are known to be
@@ -186,9 +209,12 @@ impl IntegrityContext {
         direction: Direction,
         message: BitString<'_>,
     ) -> u32 {
-        match &self.cmac {
-            Some(cmac) => cmac.mac(&CmacBlocks::new(count, bearer, direction, message)),
-            None => mac_of_bits(&self.key, count, bearer, direction, message, self.algorithm),
+        match self.algorithm {
+            IntegrityAlgorithm::Aes => {
+                let blocks = CmacBlocks::new(count, bearer, direction, message);
+                cmac(&self.key, self.round_keys(), &self.subkeys, &blocks)
+            }
+            algorithm => mac_of_bits(&self.key, count, bearer, direction, message, algorithm),
         }
     }
 }
@@ -229,19 +255,24 @@ impl fmt::Debug for IntegrityContext {
 pub struct CipheringContext {
     algorithm: CipheringAlgorithm,
     key: Zeroizing<[u8; 16]>,
-    /// AES with the key, for 128-EEA2.
-    aes: Option<Aes128>,
+    /// For 128-EEA2, the round keys of AES; none for another algorithm.
+    expanded: Expanded,
+    schedule: Schedule,
 }
 
 impl CipheringContext {
     /// The context of a key and its algorithm.
     pub fn new(key: &impl CipheringKey, algorithm: CipheringAlgorithm) -> Self {
         let key = Zeroizing::new(*key.key_octets());
-        let aes = (algorithm == CipheringAlgorithm::Aes).then(|| Aes128::new(&key));
+        let (expanded, schedule) = match algorithm {
+            CipheringAlgorithm::Aes => expand(&key),
+            _ => no_round_keys(),
+        };
         Self {
             algorithm,
             key,
-            aes,
+            expanded,
+            schedule,
         }
     }
 
@@ -325,13 +356,13 @@ impl CipheringContext {
         direction: Direction,
         data: &mut [u8],
     ) {
-        match &self.aes {
-            Some(_) if data.is_empty() => {}
-            Some(aes) => aes.ctr(
-                crate::common::nea::ctr_prefix(count, bearer, direction),
-                data,
-            ),
-            None => cipher_octets(&self.key, count, bearer, direction, data, self.algorithm),
+        match self.algorithm {
+            CipheringAlgorithm::Aes if data.is_empty() => {}
+            CipheringAlgorithm::Aes => {
+                let round_keys = RoundKeys::of(&self.expanded, &self.schedule);
+                nea2_cipher_keyed(&self.key, round_keys, count, bearer, direction, data)
+            }
+            algorithm => cipher_octets(&self.key, count, bearer, direction, data, algorithm),
         }
     }
 }
@@ -643,6 +674,10 @@ mod tests {
         // A context is shared between the threads of a server, and a copy
         // of it is a context of its own
         fn shared<T: Send + Sync + Clone>() {}
+        // The round keys that a context keeps are those of the AES
+        // instructions, and never the larger ones of the `aes` crate
+        assert!(size_of::<IntegrityContext>() <= 240);
+        assert!(size_of::<CipheringContext>() <= 208);
         shared::<IntegrityContext>();
         shared::<CipheringContext>();
     }

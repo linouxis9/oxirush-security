@@ -283,8 +283,7 @@ impl<'a> MacJob<'a> {
     /// instructions, when the job comes from a context that has them.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn keyed(&self) -> Option<crate::common::nia::CmacKey<'a>> {
-        let cmac = self.context.and_then(IntegrityContext::cmac)?;
-        Some(crate::common::nia::CmacKey::Keyed(cmac, cmac.schedule()?.1))
+        self.context.and_then(IntegrityContext::cmac_key)
     }
 
     /// The MAC, once [`nia_mac_batch`] has computed it: `None` before.

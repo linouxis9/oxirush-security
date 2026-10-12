@@ -35,7 +35,7 @@
 //! [`nas_5gs::nas_cipher`](crate::nas_5gs::nas_cipher) or
 //! [`nas_eps::nas_cipher`](crate::nas_eps::nas_cipher), which take a NAS
 //! COUNT.
-use crate::common::aes128::Aes128;
+use crate::common::aes128::{Aes128, RoundKeys};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, octets_of};
 use crate::common::keys::CipheringKey;
@@ -223,7 +223,26 @@ pub(crate) fn nea2_cipher(
         let schedules = instructions.aes_schedules([key]);
         return instructions.aes_ctr(&schedules[0], u64::from_le_bytes(prefix), data);
     }
-    Aes128::of_crate(key).ctr(prefix, data);
+    Aes128::new(key).ctr(prefix, data);
+}
+
+/// 128-EEA2 of octets, of which there are some, with a key and its round
+/// keys.
+pub(crate) fn nea2_cipher_keyed(
+    key: &[u8; 16],
+    round_keys: RoundKeys<'_>,
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    data: &mut [u8],
+) {
+    let prefix = ctr_prefix(count, bearer, direction);
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if let Some((instructions, schedule)) = round_keys.schedule() {
+        return instructions.aes_ctr(schedule, u64::from_le_bytes(prefix), data);
+    }
+    let _ = round_keys;
+    Aes128::new(key).ctr(prefix, data);
 }
 
 /// The upper eight octets of the counter blocks of a message, which are
