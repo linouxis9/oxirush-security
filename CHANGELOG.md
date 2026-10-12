@@ -176,7 +176,11 @@ and what a type cannot say is a `Result`. Every call below changes.
   keys of SUCI; `hmac`, `cipher` and `rand_core` are no longer direct
   dependencies. p256 is built without its default features, `aes` with its
   `zeroize` and `hazmat` features, and the minimum versions are `aes` 0.9.2,
-  `zeroize` 1.9 and `subtle` 2.6. The minimum supported Rust version stays
+  `zeroize` 1.9, `subtle` 2.6, `hex` 0.4.3, the first with an `alloc`
+  feature, and `unicode-normalization` 0.1.13, the first that builds without
+  the standard library. CI resolves the lowest versions and tests each set
+  of features with them, and builds those without `std` for a target that
+  has none. The minimum supported Rust version stays
   1.88, for a project whose resolver chooses dependencies by Rust version,
   as resolver 3 does: a dependency may publish a version that needs a newer
   Rust.

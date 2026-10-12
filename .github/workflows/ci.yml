@@ -86,14 +86,30 @@ jobs:
       - run: cargo test --release
       - run: cargo test --no-default-features
 
+  # The lowest version of each dependency that Cargo.toml allows: each set
+  # of features on the host, and those without `std` on a target without it
   minimal-versions:
     name: Minimal dependency versions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: thumbv7em-none-eabihf
       - run: cargo update -Z direct-minimal-versions
       - run: cargo test
+      - run: cargo test --no-default-features
+      - run: cargo test --no-default-features --features alloc
+      - run: cargo test --no-default-features --features std
+      - run: cargo test --no-default-features --features suci
+      - name: Build without std
+        env:
+          RUSTFLAGS: --cfg getrandom_backend="custom"
+        run: |
+          cargo build --target thumbv7em-none-eabihf --no-default-features
+          cargo build --target thumbv7em-none-eabihf --no-default-features --features alloc
+          cargo build --target thumbv7em-none-eabihf --no-default-features --features suci
+          cargo build --target thumbv7em-none-eabihf --no-default-features --features nai
 
   clippy:
     name: Clippy
