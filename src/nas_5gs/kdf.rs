@@ -20,7 +20,7 @@
 use crate::SecurityError;
 use crate::common::input::{AccessKeyCount, CipheringAlgorithm, IntegrityAlgorithm, NasCount};
 pub use crate::common::kdf::{build_s, extract_128, kdf};
-use crate::common::kdf::{checked_parameter, derive_algorithm_key, fixed_s};
+use crate::common::kdf::{checked_parameter, derive, derive_algorithm_key};
 use zeroize::Zeroizing;
 
 /// FC of the algorithm key derivation function (TS 33.501 Annex A.8).
@@ -44,8 +44,8 @@ pub fn derive_kausf(
     sn_name: &[u8],
     sqn_xor_ak: &[u8; 6],
 ) -> Result<[u8; 32], SecurityError> {
-    let s = fixed_s(0x6a, &[checked_parameter(sn_name)?, sqn_xor_ak]);
-    Ok(kdf(ck_ik(ck, ik).as_ref(), &s))
+    let sn_name = checked_parameter(sn_name)?;
+    Ok(derive(ck_ik(ck, ik).as_ref(), 0x6a, &[sn_name, sqn_xor_ak]))
 }
 
 /// Derive KSEAF from KAUSF (TS 33.501 Annex A.6, FC=0x6C).
@@ -53,7 +53,7 @@ pub fn derive_kausf(
 /// An `sn_name` longer than 65535 octets is
 /// [`SecurityError::InputTooLong`].
 pub fn derive_kseaf(kausf: &[u8; 32], sn_name: &[u8]) -> Result<[u8; 32], SecurityError> {
-    Ok(kdf(kausf, &fixed_s(0x6C, &[checked_parameter(sn_name)?])))
+    Ok(derive(kausf, 0x6C, &[checked_parameter(sn_name)?]))
 }
 
 /// Derive KAMF from KSEAF (TS 33.501 Annex A.7, FC=0x6D).
@@ -63,14 +63,8 @@ pub fn derive_kseaf(kausf: &[u8; 32], sn_name: &[u8]) -> Result<[u8; 32], Securi
 /// in the releases so far (Annex A.7.1). Either longer than 65535 octets is
 /// [`SecurityError::InputTooLong`].
 pub fn derive_kamf(kseaf: &[u8; 32], supi: &str, abba: &[u8]) -> Result<[u8; 32], SecurityError> {
-    let s = fixed_s(
-        0x6D,
-        &[
-            checked_parameter(supi.as_bytes())?,
-            checked_parameter(abba)?,
-        ],
-    );
-    Ok(kdf(kseaf, &s))
+    let supi = checked_parameter(supi.as_bytes())?;
+    Ok(derive(kseaf, 0x6D, &[supi, checked_parameter(abba)?]))
 }
 
 /// Derive KNASenc, the NAS ciphering key of `algorithm`, from KAMF
@@ -103,7 +97,7 @@ pub fn compute_hres_star(rand: &[u8; 16], res_star: &[u8; 16]) -> [u8; 16] {
 /// §8.4.2).
 pub fn derive_kgnb(kamf: &[u8; 32], ul_nas_count: impl Into<AccessKeyCount>) -> [u8; 32] {
     let count = ul_nas_count.into().get().to_be_bytes();
-    kdf(kamf, &fixed_s(0x6E, &[&count, &[0x01]]))
+    derive(kamf, 0x6E, &[&count, &[0x01]])
 }
 
 /// Derive KN3IWF, which is also KWAGF, KTNGF, and KTWIF, from KAMF and the
@@ -111,7 +105,7 @@ pub fn derive_kgnb(kamf: &[u8; 32], ul_nas_count: impl Into<AccessKeyCount>) -> 
 /// access type distinguisher 0x02).
 pub fn derive_kn3iwf(kamf: &[u8; 32], ul_nas_count: NasCount) -> [u8; 32] {
     let count = ul_nas_count.get().to_be_bytes();
-    kdf(kamf, &fixed_s(0x6E, &[&count, &[0x02]]))
+    derive(kamf, 0x6E, &[&count, &[0x02]])
 }
 
 /// Derive KRRCenc, the RRC ciphering key of `algorithm`, from KgNB
@@ -167,9 +161,10 @@ pub fn derive_kng_ran_star(
     if arfcn_dl > 3_279_165 {
         return Err(out_of_range("NR-ARFCN", 3_279_165, arfcn_dl));
     }
-    Ok(kdf(
+    Ok(derive(
         base_key,
-        &fixed_s(0x70, &[&pci.to_be_bytes(), &arfcn_dl.to_be_bytes()[1..]]),
+        0x70,
+        &[&pci.to_be_bytes(), &arfcn_dl.to_be_bytes()[1..]],
     ))
 }
 
@@ -191,9 +186,10 @@ pub fn derive_kng_ran_star_ng_enb(
     if earfcn_dl > 262_143 {
         return Err(out_of_range("EARFCN-DL", 262_143, earfcn_dl));
     }
-    Ok(kdf(
+    Ok(derive(
         base_key,
-        &fixed_s(0x71, &[&pci.to_be_bytes(), &earfcn_dl.to_be_bytes()[1..]]),
+        0x71,
+        &[&pci.to_be_bytes(), &earfcn_dl.to_be_bytes()[1..]],
     ))
 }
 
@@ -201,19 +197,18 @@ pub fn derive_kng_ran_star_ng_enb(
 ///
 /// `sync_input`: K_gNB (first NH) or previous NH (subsequent NHs).
 pub fn derive_nh(kamf: &[u8; 32], sync_input: &[u8; 32]) -> [u8; 32] {
-    let s = Zeroizing::new(fixed_s(0x6F, &[sync_input.as_ref()]));
-    kdf(kamf, &s)
+    derive(kamf, 0x6F, &[sync_input.as_ref()])
 }
 
 /// Map KAMF to KASME for idle 5GS to EPS mobility (TS 33.501 Annex A.14, FC=0x73).
 /// `ul_nas_count` is the COUNT used by the mobility-triggering 5GS NAS message.
 pub fn derive_mapped_kasme_idle(kamf: &[u8; 32], ul_nas_count: NasCount) -> [u8; 32] {
-    kdf(kamf, &fixed_s(0x73, &[&ul_nas_count.get().to_be_bytes()]))
+    derive(kamf, 0x73, &[&ul_nas_count.get().to_be_bytes()])
 }
 
 /// Map KAMF to KASME for connected 5GS to EPS handover (Annex A.14, FC=0x74).
 pub fn derive_mapped_kasme_handover(kamf: &[u8; 32], dl_nas_count: NasCount) -> [u8; 32] {
-    kdf(kamf, &fixed_s(0x74, &[&dl_nas_count.get().to_be_bytes()]))
+    derive(kamf, 0x74, &[&dl_nas_count.get().to_be_bytes()])
 }
 
 /// KAMF-to-KAMF' mobility direction (TS 33.501 Annex A.13).
@@ -235,10 +230,7 @@ pub fn derive_kamf_prime(
         KamfMobilityDirection::IdleMobility => [0x00],
         KamfMobilityDirection::Handover => [0x01],
     };
-    kdf(
-        kamf,
-        &fixed_s(0x72, &[&direction, &nas_count.get().to_be_bytes()]),
-    )
+    derive(kamf, 0x72, &[&direction, &nas_count.get().to_be_bytes()])
 }
 
 /// Derive KAMF' for idle mobility using the uplink NAS COUNT.
@@ -253,7 +245,7 @@ pub fn derive_kamf_prime_handover(kamf: &[u8; 32], dl_nas_count: NasCount) -> [u
 
 /// Derive KSN for dual connectivity (TS 33.501 Annex A.16, FC=0x79).
 pub fn derive_ksn(base_key: &[u8; 32], sn_counter: u16) -> [u8; 32] {
-    kdf(base_key, &fixed_s(0x79, &[&sn_counter.to_be_bytes()]))
+    derive(base_key, 0x79, &[&sn_counter.to_be_bytes()])
 }
 
 fn checked_procedure_counter(counter: u16) -> Result<[u8; 2], SecurityError> {
@@ -281,9 +273,9 @@ pub fn derive_sor_mac_ausf(
     let full = match p2 {
         Some(p2) => {
             let p2 = checked_parameter(p2)?;
-            kdf(kausf, &fixed_s(0x77, &[header, &counter, p2]))
+            derive(kausf, 0x77, &[header, &counter, p2])
         }
-        None => kdf(kausf, &fixed_s(0x77, &[header, &counter])),
+        None => derive(kausf, 0x77, &[header, &counter]),
     };
     Ok(extract_128(&full))
 }
@@ -291,10 +283,7 @@ pub fn derive_sor_mac_ausf(
 /// Derive SoR-MAC-IUE/XMAC-IUE (TS 33.501 Annex A.18, FC=0x78).
 pub fn derive_sor_mac_ue(kausf: &[u8; 32], counter: u16) -> Result<[u8; 16], SecurityError> {
     let counter = checked_procedure_counter(counter)?;
-    Ok(extract_128(&kdf(
-        kausf,
-        &fixed_s(0x78, &[&[0x01], &counter]),
-    )))
+    Ok(extract_128(&derive(kausf, 0x78, &[&[0x01], &counter])))
 }
 
 /// Derive UPU-MAC-IAUSF (TS 33.501 Annex A.19, FC=0x7B).
@@ -305,19 +294,13 @@ pub fn derive_upu_mac_ausf(
 ) -> Result<[u8; 16], SecurityError> {
     let upu_data = checked_parameter(upu_data)?;
     let counter = checked_procedure_counter(counter)?;
-    Ok(extract_128(&kdf(
-        kausf,
-        &fixed_s(0x7b, &[upu_data, &counter]),
-    )))
+    Ok(extract_128(&derive(kausf, 0x7b, &[upu_data, &counter])))
 }
 
 /// Derive UPU-MAC-IUE/XMAC-IUE (TS 33.501 Annex A.20, FC=0x7C).
 pub fn derive_upu_mac_ue(kausf: &[u8; 32], counter: u16) -> Result<[u8; 16], SecurityError> {
     let counter = checked_procedure_counter(counter)?;
-    Ok(extract_128(&kdf(
-        kausf,
-        &fixed_s(0x7c, &[&[0x01], &counter]),
-    )))
+    Ok(extract_128(&derive(kausf, 0x7c, &[&[0x01], &counter])))
 }
 
 /// Usage distinguisher for TS 33.501 Annex A.22 key derivation.
@@ -335,7 +318,7 @@ pub enum TnapKeyUsage {
 
 /// Derive KTIPSec, KTNAP, or KFT (TS 33.501 Annex A.22, FC=0x84).
 pub fn derive_tnap_usage_key(base_key: &[u8; 32], usage: TnapKeyUsage) -> [u8; 32] {
-    kdf(base_key, &fixed_s(0x84, &[&[usage as u8]]))
+    derive(base_key, 0x84, &[&[usage as u8]])
 }
 
 /// Typed IAB IP address used by TS 33.501 Annex A.23.
@@ -358,7 +341,7 @@ impl IabIpAddress {
 
 /// Derive KIAB from donor and IAB-node IP addresses (TS 33.501 Annex A.23).
 pub fn derive_kiab(base_key: &[u8; 32], donor: IabIpAddress, node: IabIpAddress) -> [u8; 32] {
-    kdf(base_key, &fixed_s(0x83, &[donor.octets(), node.octets()]))
+    derive(base_key, 0x83, &[donor.octets(), node.octets()])
 }
 
 /// Derive KASME_SRVCC from KAMF for SRVCC to UTRAN CS (TS 33.501 Annex A.21,
@@ -366,7 +349,7 @@ pub fn derive_kiab(base_key: &[u8; 32], donor: IabIpAddress, node: IabIpAddress)
 /// then increments it, and the UE estimates it from four LSBs (Annex J,
 /// steps 2 and 10).
 pub fn derive_kasme_srvcc(kamf: &[u8; 32], dl_nas_count: NasCount) -> [u8; 32] {
-    kdf(kamf, &fixed_s(0x7D, &[&dl_nas_count.get().to_be_bytes()]))
+    derive(kamf, 0x7D, &[&dl_nas_count.get().to_be_bytes()])
 }
 
 /// Compute XRES* for 5G-AKA (TS 33.501 Annex A.4, FC=0x6B)
@@ -389,8 +372,12 @@ pub fn compute_xres_star(
             "XRES must be 4 to 16 octets long",
         ));
     }
-    let s = fixed_s(0x6B, &[checked_parameter(sn_name)?, rand.as_ref(), xres]);
-    let mut full = kdf(ck_ik(ck, ik).as_ref(), &s);
+    let sn_name = checked_parameter(sn_name)?;
+    let mut full = derive(
+        ck_ik(ck, ik).as_ref(),
+        0x6B,
+        &[sn_name, rand.as_ref(), xres],
+    );
     let xres_star = extract_128(&full);
     zeroize::Zeroize::zeroize(&mut full);
     Ok(xres_star)

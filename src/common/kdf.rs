@@ -32,10 +32,15 @@ pub fn kdf(key: &[u8], s: &[u8]) -> [u8; 32] {
 /// A parameter longer than 65535 octets, which the two-octet L cannot
 /// express, is [`SecurityError::InputTooLong`].
 pub fn build_s(fc: u8, params: &[&[u8]]) -> Result<Vec<u8>, SecurityError> {
+    // Exact capacity: the vector never reallocates, so a caller that wipes
+    // S leaves no copy of a key parameter in freed memory.
+    let mut s = Vec::with_capacity(1 + params.iter().map(|p| p.len() + 2).sum::<usize>());
+    s.push(fc);
     for parameter in params {
-        checked_parameter(parameter)?;
+        s.extend_from_slice(checked_parameter(parameter)?);
+        s.extend_from_slice(&(parameter.len() as u16).to_be_bytes());
     }
-    Ok(fixed_s(fc, params))
+    Ok(s)
 }
 
 /// A KDF parameter, or the error for one longer than its L can express.
@@ -50,19 +55,23 @@ pub(crate) fn checked_parameter(parameter: &[u8]) -> Result<&[u8], SecurityError
     }
 }
 
-/// S of parameters that are known to fit their L: arrays, and slices that
-/// went through [`checked_parameter`].
-pub(crate) fn fixed_s(fc: u8, params: &[&[u8]]) -> Vec<u8> {
-    // Exact capacity: the vector never reallocates, so a caller that wipes
-    // S leaves no copy of a key parameter in freed memory.
-    let mut s = Vec::with_capacity(1 + params.iter().map(|p| p.len() + 2).sum::<usize>());
-    s.push(fc);
-    for p in params {
-        debug_assert!(p.len() <= MAXIMUM_PARAMETER);
-        s.extend_from_slice(p);
-        s.extend_from_slice(&(p.len() as u16).to_be_bytes());
-    }
-    s
+/// The key that `key` and the S of `fc` and `params` give: HMAC-SHA-256 of
+/// FC || (P_i || L_i)*, which goes to the hasher part after part. S is
+/// never in memory, on the heap or elsewhere: a parameter that is a key
+/// has no copy to wipe.
+///
+/// The parameters are known to fit their L: arrays, and slices that went
+/// through [`checked_parameter`].
+pub(crate) fn derive(key: &[u8], fc: u8, params: &[&[u8]]) -> [u8; 32] {
+    use sha2::Digest;
+    super::sha256::hmac_sha256_of(key, |s| {
+        s.update([fc]);
+        for parameter in params {
+            debug_assert!(parameter.len() <= MAXIMUM_PARAMETER);
+            s.update(parameter);
+            s.update((parameter.len() as u16).to_be_bytes());
+        }
+    })
 }
 
 /// Derive a 128-bit algorithm key with the parameter layout that TS 33.501
@@ -70,7 +79,7 @@ pub(crate) fn fixed_s(fc: u8, params: &[&[u8]]) -> Vec<u8> {
 /// distinguisher, then the algorithm identity. The key is the 128 least
 /// significant bits of the 256 derived.
 pub(crate) fn derive_algorithm_key(key: &[u8; 32], fc: u8, algo_type: u8, algo_id: u8) -> [u8; 16] {
-    let mut full = kdf(key, &fixed_s(fc, &[&[algo_type], &[algo_id]]));
+    let mut full = derive(key, fc, &[&[algo_type], &[algo_id]]);
     let algorithm_key = extract_128(&full);
     zeroize::Zeroize::zeroize(&mut full);
     algorithm_key
@@ -98,6 +107,25 @@ mod tests {
             ])
         );
         assert_eq!(build_s(0x10, &[]), Ok(vec![0x10]));
+    }
+
+    /// The derivations give the hasher FC and the parameters part after
+    /// part: the key is that of the S that `build_s` lays out.
+    #[test]
+    fn a_key_is_derived_from_s_without_s_in_memory() {
+        let key = [0x4b; 32];
+        let long = vec![0xa5; 300];
+        let sets: [&[&[u8]]; 5] = [
+            &[],
+            &[&[]],
+            &[b"5G:mnc093.mcc208.3gppnetwork.org", &[0x55; 6]],
+            &[&[0x01], &[0x02], &[], &[0x03; 32]],
+            &[&long, &[0xff; 64], &long[..63]],
+        ];
+        for (fc, params) in (0x10..).zip(sets) {
+            let s = build_s(fc, params).unwrap();
+            assert_eq!(derive(&key, fc, params), kdf(&key, &s), "FC {fc:#x}");
+        }
     }
 
     #[test]

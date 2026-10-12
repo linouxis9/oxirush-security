@@ -19,7 +19,7 @@
 
 use crate::SecurityError;
 use crate::common::input::{AccessKeyCount, CipheringAlgorithm, IntegrityAlgorithm, NasCount};
-use crate::common::kdf::{checked_parameter, derive_algorithm_key, fixed_s, kdf};
+use crate::common::kdf::{checked_parameter, derive, derive_algorithm_key, kdf};
 use zeroize::Zeroizing;
 
 /// FC of the algorithm key derivation function (TS 33.401 Annex A.7).
@@ -43,7 +43,7 @@ pub fn derive_kasme(
     sn_id: &[u8; 3],
     sqn_xor_ak: &[u8; 6],
 ) -> [u8; 32] {
-    kdf(ck_ik(ck, ik).as_ref(), &fixed_s(0x10, &[sn_id, sqn_xor_ak]))
+    derive(ck_ik(ck, ik).as_ref(), 0x10, &[sn_id, sqn_xor_ak])
 }
 
 /// Derive KeNB from KASME and the uplink NAS COUNT (Annex A.3, FC=0x11).
@@ -53,12 +53,12 @@ pub fn derive_kasme(
 /// [`AccessKeyCount::Handover`] (TS 33.501 §8.3.2).
 pub fn derive_kenb(kasme: &[u8; 32], ul_nas_count: impl Into<AccessKeyCount>) -> [u8; 32] {
     let count = ul_nas_count.into().get().to_be_bytes();
-    kdf(kasme, &fixed_s(0x11, &[&count]))
+    derive(kasme, 0x11, &[&count])
 }
 
 /// Derive NH from KASME and KeNB or the previous NH (Annex A.4, FC=0x12).
 pub fn derive_nh(kasme: &[u8; 32], sync_input: &[u8; 32]) -> [u8; 32] {
-    kdf(kasme, &Zeroizing::new(fixed_s(0x12, &[sync_input])))
+    derive(kasme, 0x12, &[sync_input])
 }
 
 /// Derive KeNB* for a target cell (Annex A.5, FC=0x13).
@@ -93,9 +93,10 @@ pub fn derive_kenb_star(
     } else {
         &earfcn[1..]
     };
-    Ok(kdf(
+    Ok(derive(
         base_key,
-        &fixed_s(0x13, &[&pci.to_be_bytes(), encoded_earfcn]),
+        0x13,
+        &[&pci.to_be_bytes(), encoded_earfcn],
     ))
 }
 
@@ -142,13 +143,13 @@ pub fn derive_kup_int(kenb: &[u8; 32], algorithm: IntegrityAlgorithm) -> [u8; 16
 
 /// Map KASME to CK' || IK' at handover (TS 33.401 Annex A.8, FC=0x16).
 pub fn derive_ck_ik_handover(kasme: &[u8; 32], dl_nas_count: NasCount) -> [u8; 32] {
-    kdf(kasme, &fixed_s(0x16, &[&dl_nas_count.get().to_be_bytes()]))
+    derive(kasme, 0x16, &[&dl_nas_count.get().to_be_bytes()])
 }
 
 /// Derive the full NAS token KDF output (Annex A.9, FC=0x17).
 /// The two least significant octets are sent on the wire.
 pub fn derive_nas_token_full(kasme: &[u8; 32], ul_nas_count: NasCount) -> [u8; 32] {
-    kdf(kasme, &fixed_s(0x17, &[&ul_nas_count.get().to_be_bytes()]))
+    derive(kasme, 0x17, &[&ul_nas_count.get().to_be_bytes()])
 }
 
 /// Derive the two-octet NAS token transmitted during inter-RAT mobility.
@@ -159,10 +160,7 @@ pub fn derive_nas_token(kasme: &[u8; 32], ul_nas_count: NasCount) -> [u8; 2] {
 
 /// Map CK || IK to K'ASME at handover (Annex A.10, FC=0x18).
 pub fn derive_kasme_handover(ck: &[u8; 16], ik: &[u8; 16], nonce_mme: u32) -> [u8; 32] {
-    kdf(
-        ck_ik(ck, ik).as_ref(),
-        &fixed_s(0x18, &[&nonce_mme.to_be_bytes()]),
-    )
+    derive(ck_ik(ck, ik).as_ref(), 0x18, &[&nonce_mme.to_be_bytes()])
 }
 
 /// Map CK || IK to K'ASME at idle mobility (Annex A.11, FC=0x19).
@@ -172,30 +170,31 @@ pub fn derive_kasme_idle_mobility(
     nonce_ue: u32,
     nonce_mme: u32,
 ) -> [u8; 32] {
-    kdf(
+    derive(
         ck_ik(ck, ik).as_ref(),
-        &fixed_s(0x19, &[&nonce_ue.to_be_bytes(), &nonce_mme.to_be_bytes()]),
+        0x19,
+        &[&nonce_ue.to_be_bytes(), &nonce_mme.to_be_bytes()],
     )
 }
 
 /// Derive CKSRVCC || IKSRVCC from KASME or KASME_SRVCC (Annex A.12, FC=0x1A).
 pub fn derive_ck_ik_srvcc(kasme: &[u8; 32], dl_nas_count: NasCount) -> [u8; 32] {
-    kdf(kasme, &fixed_s(0x1a, &[&dl_nas_count.get().to_be_bytes()]))
+    derive(kasme, 0x1a, &[&dl_nas_count.get().to_be_bytes()])
 }
 
 /// Map KASME to CK' || IK' at idle mobility (Annex A.13, FC=0x1B).
 pub fn derive_ck_ik_idle_mobility(kasme: &[u8; 32], ul_nas_count: NasCount) -> [u8; 32] {
-    kdf(kasme, &fixed_s(0x1b, &[&ul_nas_count.get().to_be_bytes()]))
+    derive(kasme, 0x1b, &[&ul_nas_count.get().to_be_bytes()])
 }
 
 /// Derive S-KeNB or S-KgNB for dual connectivity (Annex A.15, FC=0x1C).
 pub fn derive_skenb(kenb: &[u8; 32], scg_counter: u16) -> [u8; 32] {
-    kdf(kenb, &fixed_s(0x1c, &[&scg_counter.to_be_bytes()]))
+    derive(kenb, 0x1c, &[&scg_counter.to_be_bytes()])
 }
 
 /// Derive LWIP-PSK for LTE/WLAN integration (Annex A.16, FC=0x1E).
 pub fn derive_lwip_psk(kenb: &[u8; 32], lwip_counter: u16) -> [u8; 32] {
-    kdf(kenb, &fixed_s(0x1e, &[&lwip_counter.to_be_bytes()]))
+    derive(kenb, 0x1e, &[&lwip_counter.to_be_bytes()])
 }
 
 /// Derive K_n for IOPS subscriber key separation (Annex A.17, FC=0x1D).
@@ -204,27 +203,24 @@ pub fn derive_lwip_psk(kenb: &[u8; 32], lwip_counter: u16) -> [u8; 32] {
 /// An `f_n` or an `imsi` longer than 65535 octets is
 /// [`SecurityError::InputTooLong`].
 pub fn derive_kn(mk: &[u8], f_n: &[u8], imsi: &[u8]) -> Result<[u8; 32], SecurityError> {
-    let s = fixed_s(0x1d, &[checked_parameter(f_n)?, checked_parameter(imsi)?]);
-    Ok(kdf(mk, &s))
+    let (f_n, imsi) = (checked_parameter(f_n)?, checked_parameter(imsi)?);
+    Ok(derive(mk, 0x1d, &[f_n, imsi]))
 }
 
 /// Derive S-KWT for LTE/WLAN aggregation (Annex A.18, FC=0x1F).
 pub fn derive_skwt(kenb: &[u8; 32], wt_counter: u16) -> [u8; 32] {
-    kdf(kenb, &fixed_s(0x1f, &[&wt_counter.to_be_bytes()]))
+    derive(kenb, 0x1f, &[&wt_counter.to_be_bytes()])
 }
 
 /// Map KASME to KAMF for idle EPS to 5GS mobility (TS 33.501 Annex A.15, FC=0x75).
 /// The new 5GS NAS COUNTs start at zero after the context is installed.
 pub fn derive_mapped_kamf_idle(kasme: &[u8; 32], tau_ul_nas_count: NasCount) -> [u8; 32] {
-    kdf(
-        kasme,
-        &fixed_s(0x75, &[&tau_ul_nas_count.get().to_be_bytes()]),
-    )
+    derive(kasme, 0x75, &[&tau_ul_nas_count.get().to_be_bytes()])
 }
 
 /// Map KASME to KAMF for connected EPS to 5GS handover (Annex A.15, FC=0x76).
 pub fn derive_mapped_kamf_handover(kasme: &[u8; 32], nh: &[u8; 32]) -> [u8; 32] {
-    kdf(kasme, &Zeroizing::new(fixed_s(0x76, &[nh])))
+    derive(kasme, 0x76, &[nh])
 }
 
 /// Compute HASHMME or HASHUE over a plain ATTACH REQUEST or TRACKING AREA

@@ -51,6 +51,12 @@ pub(crate) fn sha256(parts: &[&[u8]]) -> Zeroizing<[u8; 32]> {
 
 /// HMAC-SHA-256 (RFC 2104).
 pub(crate) fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+    hmac_sha256_of(key, |message| message.update(data))
+}
+
+/// HMAC-SHA-256 of the message that `write` gives the hasher, part after
+/// part: the message is nowhere else in memory.
+pub(crate) fn hmac_sha256_of(key: &[u8], write: impl FnOnce(&mut Sha256)) -> [u8; 32] {
     // The key, hashed when it is longer than a block, then padded with zeros
     let mut pad = Zeroizing::new([0u8; 64]);
     if key.len() > pad.len() {
@@ -62,7 +68,11 @@ pub(crate) fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     for octet in pad.iter_mut() {
         *octet ^= 0x36;
     }
-    let inner = sha256(&[pad.as_ref(), data]);
+    let mut hash = Sha256::new();
+    hash.update(pad.as_ref());
+    write(&mut hash);
+    let mut inner = Zeroizing::new([0u8; 32]);
+    hash.finalize_into((&mut *inner).into());
 
     for octet in pad.iter_mut() {
         *octet ^= 0x36 ^ 0x5c;
