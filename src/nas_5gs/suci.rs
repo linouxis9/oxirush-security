@@ -28,6 +28,7 @@
 use crate::error::SecurityError;
 use aes::Aes128Enc;
 use aes::cipher::{BlockCipherEncrypt, KeyInit};
+use alloc::{format, string::String, vec::Vec};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, Zeroizing};
 

@@ -13,27 +13,36 @@ readme = "README.md"
 exclude = [".github/", ".gitignore", "benches/", "fuzz/"]
 
 [features]
-default = ["suci", "nai"]
+default = ["std", "suci", "nai"]
+# The standard library: the vector code of SNOW 3G and ZUC is chosen when the
+# program runs, from what the processor has. Without it the crate is
+# `no_std`, and the vector code is that of the target features of the build.
+std = ["alloc"]
+# An allocator: the functions that return a `Vec` or a `String` (`build_s`,
+# `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes`) and `SecurityError::Ecies`.
+# The algorithms and the key derivations need none.
+alloc = ["zeroize/alloc"]
 # SUCI concealment and deconcealment with the null scheme, Profile A (X25519)
-# and Profile B (P-256), TS 33.501 Annex C
-suci = ["dep:x25519-dalek", "dep:p256", "dep:getrandom"]
+# and Profile B (P-256), TS 33.501 Annex C. Concealment draws a key with
+# `getrandom`, which needs a source of random numbers for the target.
+suci = ["alloc", "dep:x25519-dalek", "dep:p256", "dep:getrandom"]
 # SUCI and SUPI in the NAI format, TS 23.003 clause 28.7.3: network specific
 # identifiers, GCI and GLI. It brings Unicode normalization and IDNA.
 nai = ["suci", "dep:unicode-normalization", "dep:idna", "dep:base64", "dep:hex"]
 
 [dependencies]
 # KDF and SUCI: SHA-256 whose state is wiped on drop
-sha2 = { version = "0.11", features = ["zeroize"] }
+sha2 = { version = "0.11", default-features = false, features = ["zeroize"] }
 
 # NIA2 (AES-CMAC) + NEA2 (AES-CTR), with key schedules wiped on drop, and
 # the AES round that is S1 of SNOW 3G and gives the S-box S1 of ZUC
 aes = { version = "0.9.2", features = ["hazmat", "zeroize"] }
 
 # Key material zeroization
-zeroize = "1.9"
+zeroize = { version = "1.9", default-features = false }
 
 # Constant-time comparison for SUCI MAC and constant_time_eq
-subtle = "2.6"
+subtle = { version = "2.6", default-features = false }
 
 # `suci`: ECIES over X25519 and P-256 (TS 33.501 Annex C.3)
 x25519-dalek = { version = "3", features = ["static_secrets"], optional = true }
@@ -42,10 +51,10 @@ getrandom = { version = "0.4", optional = true }
 
 # `nai`: RFC 7542 requires NFC-normalized UTF-8 NAIs and RFC 5891 realms; the
 # keys and the ciphertext of a NAI are hexadecimal, and a GLI is base64.
-unicode-normalization = { version = "0.1", optional = true }
-idna = { version = "1", optional = true }
-base64 = { version = "0.22", optional = true }
-hex = { version = "0.4", optional = true }
+unicode-normalization = { version = "0.1", default-features = false, optional = true }
+idna = { version = "1", default-features = false, features = ["alloc", "compiled_data"], optional = true }
+base64 = { version = "0.22", default-features = false, features = ["alloc"], optional = true }
+hex = { version = "0.4", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
 hex = "0.4"

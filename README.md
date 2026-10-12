@@ -414,13 +414,22 @@ f202f83901004211223344 has 5G-TMSI 11223344
 
 ## Features
 
-| Features | The crate has | Crates in its tree |
-|----------|---------------|--------------------|
-| none | the key derivations, the algorithms, NAS integrity and ciphering, 5G-GUTI, PLMN and TBCD | 15 |
-| `suci` | and SUCI with the null scheme, Profile A (X25519) and Profile B (P-256) | 41 |
-| `suci` and `nai`, the default | and the SUCI and SUPI of the NAI format, with Unicode normalization and IDNA | 71 |
+| Feature | The crate has | Needs |
+|---------|---------------|-------|
+| none | the algorithms, NAS integrity and ciphering, the key derivations, the selection of the algorithms, 5G-GUTI and `plmn_to_bytes` | `core` alone: no allocator |
+| `alloc` | and what returns a `Vec` or a `String`: `build_s`, `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes` | an allocator |
+| `std` | and the choice of the vector code of SNOW 3G and ZUC when the program runs | the standard library |
+| `suci` | and SUCI with the null scheme, Profile A (X25519) and Profile B (P-256) | `alloc`, and a source of random numbers that `getrandom` has for the target |
+| `nai` | and the SUCI and SUPI of the NAI format, with Unicode normalization and IDNA | `suci` |
+
+`std`, `suci` and `nai` are the default. Without `std` the crate is
+`no_std`: on x86-64 and AArch64 it then runs SNOW 3G and ZUC on the vector
+instructions when the build enables them for its target
+(`-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq`, or `+neon,+aes`), and
+on scalar code otherwise.
 
 ```toml
+# no_std, without an allocator
 oxirush-security = { version = "0.3", default-features = false }
 ```
 
@@ -462,7 +471,8 @@ SNOW 3G and ZUC run on the AES, vector and carry-less multiplication
 instructions of an x86-64 or AArch64 processor that has them, and on scalar
 code elsewhere. Neither indexes memory or branches on a secret. The tests
 compare the two, and CI runs them on x86-64, AArch64 and 32-bit x86. The
-calls of the vector code are the crate's only `unsafe` code.
+calls of the vector code are the crate's only `unsafe` code. CI also builds
+each set of features for two targets without the standard library.
 
 CI fuzzes four `cargo fuzz` targets of [`fuzz/`](fuzz) for a minute each.
 

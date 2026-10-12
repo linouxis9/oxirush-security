@@ -19,8 +19,11 @@
 
 use crate::SecurityError;
 use crate::common::input::{AccessKeyCount, CipheringAlgorithm, IntegrityAlgorithm, NasCount};
-pub use crate::common::kdf::{build_s, extract_128, kdf};
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+pub use crate::common::kdf::build_s;
 use crate::common::kdf::{checked_parameter, derive, derive_algorithm_key};
+pub use crate::common::kdf::{extract_128, kdf};
 use zeroize::Zeroizing;
 
 /// FC of the algorithm key derivation function (TS 33.501 Annex A.8).

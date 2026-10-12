@@ -37,7 +37,9 @@ pub enum SecurityError {
     /// is too short, a protection scheme other than the null scheme,
     /// Profile A and Profile B, or a failure of the system's random number
     /// generator. The text says which.
-    Ecies(String),
+    #[cfg(feature = "alloc")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+    Ecies(alloc::string::String),
     /// The MAC tag of a SUCI scheme output is not the one computed over its
     /// ciphertext.
     MacMismatch,
@@ -81,6 +83,7 @@ impl core::fmt::Display for SecurityError {
             Self::InvalidKeyLength { expected, got } => {
                 write!(f, "invalid key length: expected {expected}, got {got}")
             }
+            #[cfg(feature = "alloc")]
             Self::Ecies(reason) => write!(f, "ECIES error: {reason}"),
             Self::MacMismatch => f.write_str("MAC verification failed"),
             Self::InvalidParameter(reason) => write!(f, "invalid parameter: {reason}"),
@@ -103,7 +106,7 @@ impl core::fmt::Display for SecurityError {
     }
 }
 
-impl std::error::Error for SecurityError {}
+impl core::error::Error for SecurityError {}
 
 #[cfg(test)]
 mod tests {
@@ -120,6 +123,7 @@ mod tests {
                 },
                 "invalid key length: expected 32, got 31",
             ),
+            #[cfg(feature = "alloc")]
             (
                 SecurityError::Ecies("scheme output too short".into()),
                 "ECIES error: scheme output too short",
@@ -159,7 +163,7 @@ mod tests {
             assert_eq!(error.to_string(), text);
         }
         // It is an error type that crosses threads and boxes
-        fn is_an_error<T: std::error::Error + Send + Sync + 'static>() {}
+        fn is_an_error<T: core::error::Error + Send + Sync + 'static>() {}
         is_an_error::<SecurityError>();
     }
 }

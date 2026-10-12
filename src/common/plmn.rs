@@ -18,6 +18,8 @@
 //! PLMN and TBCD encoding/decoding utilities per 3GPP TS 24.301 and TS 24.501.
 
 use crate::common::error::SecurityError;
+#[cfg(feature = "alloc")]
+use alloc::{format, string::String, vec::Vec};
 
 /// Encode an MCC and an MNC as the three octets of a PLMN identity
 /// (TS 24.501 §9.11.3.4, TS 24.301 §9.9.3.12).
@@ -55,6 +57,8 @@ pub fn plmn_to_bytes(mcc: &str, mnc: &str) -> Result<[u8; 3], SecurityError> {
 }
 
 /// Decode PLMN bytes back to (MCC, MNC) strings.
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub fn plmn_from_bytes(bytes: &[u8]) -> Option<(String, String)> {
     if bytes.len() < 3 {
         return None;
@@ -89,6 +93,8 @@ pub fn plmn_from_bytes(bytes: &[u8]) -> Option<(String, String)> {
 /// 0 to 9 decode as digits and 0xA to 0xE as "*", "#", "a", "b" and "c".
 /// Use [`try_tbcd_decode`] for a decimal value, such as an IMSI, that must
 /// have only a final filler.
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub fn tbcd_decode(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -99,6 +105,8 @@ pub fn tbcd_decode(bytes: &[u8]) -> String {
 }
 
 /// Decode decimal TBCD with only a final high-nibble filler permitted.
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub fn try_tbcd_decode(bytes: &[u8]) -> Option<String> {
     let mut digits = String::with_capacity(bytes.len() * 2);
     for (index, byte) in bytes.iter().copied().enumerate() {
@@ -127,6 +135,8 @@ pub fn try_tbcd_decode(bytes: &[u8]) -> Option<String> {
 ///
 /// A character other than a decimal digit, "*", "#", "a", "b" or "c" is
 /// [`SecurityError::InvalidParameter`].
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub fn tbcd_encode(value: &str) -> Result<Vec<u8>, SecurityError> {
     let mut result = Vec::with_capacity(value.len().div_ceil(2));
     for pair in value.as_bytes().chunks(2) {
@@ -153,6 +163,7 @@ pub fn tbcd_encode(value: &str) -> Result<Vec<u8>, SecurityError> {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn plmn_2digit_mnc_roundtrip() {
         let bytes = plmn_to_bytes("208", "93").unwrap();
@@ -162,6 +173,7 @@ mod tests {
         assert_eq!(mnc, "93");
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn plmn_3digit_mnc_roundtrip() {
         let bytes = plmn_to_bytes("999", "070").unwrap();
@@ -205,16 +217,19 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn plmn_from_bytes_too_short() {
         assert!(plmn_from_bytes(&[0x02, 0xF8]).is_none());
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn tbcd_decode_even() {
         assert_eq!(tbcd_decode(&[0x21, 0x43]), "1234");
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn tbcd_decode_odd() {
         assert_eq!(tbcd_decode(&[0x21, 0xF3]), "123");
@@ -222,6 +237,7 @@ mod tests {
 
     /// The TBCD-STRING of TS 29.002 codes 1010 to 1110 as "*", "#", "a",
     /// "b" and "c", and 1111 as the filler that ends the digits.
+    #[cfg(feature = "alloc")]
     #[test]
     fn tbcd_decode_keeps_non_decimal_characters_and_stops_at_the_filler() {
         assert_eq!(tbcd_decode(&[0xa1, 0xcb, 0xed]), "1*#abc");
@@ -231,6 +247,7 @@ mod tests {
 
     /// What `tbcd_decode` returns for a peer's octets goes back through
     /// `tbcd_encode`.
+    #[cfg(feature = "alloc")]
     #[test]
     fn tbcd_round_trips_every_character() {
         let octets = [0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe];
@@ -238,17 +255,20 @@ mod tests {
         assert_eq!(tbcd_encode("0123456789*#abc").unwrap(), octets);
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn tbcd_encode_even() {
         assert_eq!(tbcd_encode("1234"), Ok(vec![0x21, 0x43]));
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn tbcd_encode_odd() {
         assert_eq!(tbcd_encode("123"), Ok(vec![0x21, 0xF3]));
         assert_eq!(tbcd_encode(""), Ok(vec![]));
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn tbcd_encode_refuses_other_characters() {
         for value in ["12d4", "12 4", "A", "1\u{e9}"] {
@@ -259,6 +279,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn tbcd_roundtrip() {
         let encoded = tbcd_encode("9876543210").unwrap();

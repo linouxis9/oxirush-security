@@ -27,6 +27,7 @@ use super::{
     suci_decrypt_a, suci_decrypt_b, suci_scheme_output_a, suci_scheme_output_b,
 };
 use crate::error::SecurityError;
+use alloc::{borrow::ToOwned, format, string::String, vec::Vec};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use unicode_normalization::UnicodeNormalization;
 
@@ -266,7 +267,7 @@ fn validate_nai_suci(value: &NaiSuci) -> Result<(), SecurityError> {
     }
     match &value.scheme_output {
         SuciSchemeOutput::Null(output) => {
-            let username = std::str::from_utf8(output).map_err(|_| invalid_nai())?;
+            let username = core::str::from_utf8(output).map_err(|_| invalid_nai())?;
             if value.home_network_public_key_id.is_some()
                 || !valid_null_scheme_output(value.supi_type, username)
             {
@@ -407,7 +408,7 @@ pub fn encode_nai_suci(suci: &NaiSuci) -> Result<String, SecurityError> {
     let username = match &suci.scheme_output {
         SuciSchemeOutput::Null(output) => format!(
             "{prefix}.schid0.userid{}",
-            std::str::from_utf8(output).map_err(|_| invalid_nai())?
+            core::str::from_utf8(output).map_err(|_| invalid_nai())?
         ),
         SuciSchemeOutput::ProfileA(output) => {
             let key_id = suci.home_network_public_key_id.ok_or_else(invalid_nai)?;
@@ -567,7 +568,7 @@ pub(super) fn nas_nai_suci_to_supi(
         3 => SupiType::Gli,
         _ => return None,
     };
-    let parsed = parse_nai_suci(std::str::from_utf8(nai).ok()?).ok()?;
+    let parsed = parse_nai_suci(core::str::from_utf8(nai).ok()?).ok()?;
     if parsed.supi_type != expected_textual_type {
         return None;
     }

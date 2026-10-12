@@ -219,15 +219,30 @@
 //!
 //! # Features
 //!
-//! Both are on by default.
+//! `std`, `suci` and `nai` are on by default.
 //!
-//! | Feature | Adds |
-//! |---------|------|
-//! | `suci` | `nas_5gs::suci`: SUCI concealment and deconcealment with the null scheme, Profile A (X25519) and Profile B (P-256) |
-//! | `nai` | The SUCI and SUPI of the NAI format: network specific identifiers, GCI and GLI. It needs `suci`, and brings Unicode normalization and IDNA |
+//! | Feature | Adds | Needs |
+//! |---------|------|-------|
+//! | none | The algorithms, NAS integrity and ciphering, every key derivation, the selection of the algorithms, the types of the inputs, 5G-GUTI and `plmn_to_bytes` | `core` alone: no allocator. 14 crates in its tree, and no procedural macro |
+//! | `alloc` | What returns a `Vec` or a `String`: `build_s`, `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes`; and `SecurityError::Ecies`, which has a text | An allocator |
+//! | `std` | The choice of the vector code of SNOW 3G and ZUC when the program runs, from what its processor has | The standard library. It brings `alloc` |
+//! | `suci` | `nas_5gs::suci`: SUCI concealment and deconcealment with the null scheme, Profile A (X25519) and Profile B (P-256) | `alloc`, which it brings, and a source of random numbers that `getrandom` has for the target: concealment draws a key. 41 crates |
+//! | `nai` | The SUCI and SUPI of the NAI format: network specific identifiers, GCI and GLI | `suci`, which it brings, with Unicode normalization and IDNA. 71 crates |
 //!
-//! Without them the crate has the key derivations and the algorithms, and
-//! depends on `sha2`, `aes`, `zeroize` and `subtle` alone.
+//! Without `std` the crate is `no_std`. The key derivations give the
+//! hasher their parameters part after part: the string S of TS 33.220 is
+//! not built, and nothing is allocated.
+//!
+//! Without `std` nothing asks the processor what it has. On x86-64 and
+//! AArch64 the vector code of SNOW 3G and ZUC then runs when the build
+//! enables its instructions for every processor of the target, with
+//! `-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq` or `+neon,+aes`, or
+//! with a `-C target-cpu` that has them, and the scalar code otherwise. The
+//! values are the same.
+//!
+//! On a target without an operating system, `getrandom` has no source of
+//! random numbers of its own: the program that uses `suci` gives it one, as
+//! the documentation of `getrandom` says for its custom backend.
 //!
 //! # Specifications
 //!
@@ -238,10 +253,17 @@
 //! | TS 35.215, 35.216, 35.217, 35.218 | SNOW 3G modes, core, and test data |
 //! | TS 35.221, 35.222, 35.223 | ZUC modes, core, and test data |
 
+// The tests use the standard library, whatever the features of the build.
+#![cfg_attr(not(test), no_std)]
 // `unsafe` is allowed in one module, `common::simd`, which says why
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+#[cfg(all(feature = "std", not(test)))]
+extern crate std;
 
 pub mod common;
 pub mod nas_5gs;
@@ -262,9 +284,12 @@ pub use common::{
     SecurityError, constant_time_eq, extract_128, nea_cipher, nea_cipher_bits, nea1_cipher,
     nea1_cipher_bits, nea2_cipher, nea2_cipher_bits, nea3_cipher, nea3_cipher_bits, nia_mac,
     nia_mac_bits, nia1_mac, nia1_mac_bits, nia2_mac, nia2_mac_bits, nia3_mac, nia3_mac_bits,
-    plmn_from_bytes, plmn_to_bytes, tbcd_decode, tbcd_encode,
+    plmn_to_bytes,
 };
 pub use common::{error, input, nea, nia, plmn, snow3g, zuc};
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+pub use common::{plmn_from_bytes, tbcd_decode, tbcd_encode};
 #[cfg(feature = "suci")]
 #[cfg_attr(docsrs, doc(cfg(feature = "suci")))]
 pub use nas_5gs::suci;
@@ -294,7 +319,7 @@ pub use nas_5gs::{
 
 /// What `cargo fuzz` drives beside the public functions. It builds the
 /// crate with `--cfg fuzzing`; no other build has this module.
-#[cfg(fuzzing)]
+#[cfg(all(fuzzing, feature = "std"))]
 #[doc(hidden)]
 pub mod fuzzing {
     /// Run `work` without the vector instructions of the processor, on the

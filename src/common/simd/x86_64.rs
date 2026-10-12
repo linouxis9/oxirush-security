@@ -31,12 +31,22 @@ use core::arch::x86_64::*;
 pub(super) type V = __m128i;
 
 /// Whether the processor has the instructions that this module is compiled
-/// for.
+/// for. With the standard library it is asked, when the program runs.
+/// Without, it has them when the build says that every processor of its
+/// target does (`-C target-feature`, `-C target-cpu`).
 pub(super) fn detected() -> bool {
-    std::arch::is_x86_feature_detected!("ssse3")
+    #[cfg(feature = "std")]
+    return std::arch::is_x86_feature_detected!("ssse3")
         && std::arch::is_x86_feature_detected!("sse4.1")
         && std::arch::is_x86_feature_detected!("aes")
-        && std::arch::is_x86_feature_detected!("pclmulqdq")
+        && std::arch::is_x86_feature_detected!("pclmulqdq");
+    #[cfg(not(feature = "std"))]
+    cfg!(all(
+        target_feature = "ssse3",
+        target_feature = "sse4.1",
+        target_feature = "aes",
+        target_feature = "pclmulqdq"
+    ))
 }
 
 macro_rules! operations {

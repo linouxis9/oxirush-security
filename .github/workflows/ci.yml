@@ -21,8 +21,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test
       - run: cargo test --release
-      # Each set of features: neither, `suci` alone, and both (the default)
+      # Each set of features. Without `std` the tests run the scalar code
       - run: cargo test --no-default-features
+      - run: cargo test --no-default-features --features alloc
+      - run: cargo test --no-default-features --features std
       - run: cargo test --no-default-features --features suci
 
   # SNOW 3G and ZUC have a form on the vector instructions of AArch64, which
@@ -36,6 +38,29 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test
       - run: cargo test --release
+
+  # Targets without the standard library: the crate and each set of features
+  # that is `no_std` build there. A library needs no source of random
+  # numbers to be built: the program that links it names one.
+  no-std:
+    name: Build without std (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [thumbv7em-none-eabihf, aarch64-unknown-none]
+    env:
+      RUSTFLAGS: --cfg getrandom_backend="custom"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --target ${{ matrix.target }} --no-default-features
+      - run: cargo build --target ${{ matrix.target }} --no-default-features --features alloc
+      - run: cargo build --target ${{ matrix.target }} --no-default-features --features suci
+      - run: cargo build --target ${{ matrix.target }} --no-default-features --features nai
 
   # A target that has the scalar code alone, and 32-bit lengths
   scalar:

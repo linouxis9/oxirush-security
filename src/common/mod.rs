@@ -50,4 +50,7 @@ pub use nia::{
     nia_mac, nia_mac_bits, nia1_mac, nia1_mac_bits, nia2_mac, nia2_mac_bits, nia3_mac,
     nia3_mac_bits,
 };
-pub use plmn::{plmn_from_bytes, plmn_to_bytes, tbcd_decode, tbcd_encode};
+pub use plmn::plmn_to_bytes;
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+pub use plmn::{plmn_from_bytes, tbcd_decode, tbcd_encode};

@@ -31,10 +31,13 @@ pub fn kdf(key: &[u8], s: &[u8]) -> [u8; 32] {
 ///
 /// A parameter longer than 65535 octets, which the two-octet L cannot
 /// express, is [`SecurityError::InputTooLong`].
-pub fn build_s(fc: u8, params: &[&[u8]]) -> Result<Vec<u8>, SecurityError> {
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+pub fn build_s(fc: u8, params: &[&[u8]]) -> Result<alloc::vec::Vec<u8>, SecurityError> {
     // Exact capacity: the vector never reallocates, so a caller that wipes
     // S leaves no copy of a key parameter in freed memory.
-    let mut s = Vec::with_capacity(1 + params.iter().map(|p| p.len() + 2).sum::<usize>());
+    let mut s =
+        alloc::vec::Vec::with_capacity(1 + params.iter().map(|p| p.len() + 2).sum::<usize>());
     s.push(fc);
     for parameter in params {
         s.extend_from_slice(checked_parameter(parameter)?);
@@ -92,7 +95,7 @@ pub fn extract_128(full: &[u8; 32]) -> [u8; 16] {
     key
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 mod tests {
     use super::*;
 

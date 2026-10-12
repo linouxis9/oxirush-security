@@ -247,15 +247,26 @@ and what a type cannot say is a `Result`. Every call below changes.
 
 ### Added
 
-- Two Cargo features, both on by default, so that a caller who needs the
-  key derivations and the algorithms alone builds 15 crates and no
-  procedural macro:
+- Cargo features, so that a caller who needs the key derivations and the
+  algorithms alone builds 14 crates and no procedural macro, without the
+  standard library and without an allocator:
 
-  | Features | What the crate has | Crates in its tree |
-  |----------|--------------------|--------------------|
-  | none (`default-features = false`) | The key derivations, the algorithms, NAS integrity and ciphering, 5G-GUTI, PLMN and TBCD | 15 |
-  | `suci` | And SUCI concealment and deconcealment with the null scheme, Profile A and Profile B, which bring X25519 and P-256 | 41 |
-  | `suci` and `nai`, the default | And the SUCI and SUPI of the NAI format, which bring Unicode normalization and IDNA | 71 |
+  | Feature | What the crate has | Needs |
+  |---------|--------------------|-------|
+  | none (`default-features = false`) | The algorithms, NAS integrity and ciphering, the key derivations, the selection of the algorithms, 5G-GUTI and `plmn_to_bytes` | `core` alone |
+  | `alloc` | And what returns a `Vec` or a `String`: `build_s`, `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes`, and `SecurityError::Ecies` | An allocator |
+  | `std`, a default | And the choice of the vector code of SNOW 3G and ZUC when the program runs | The standard library |
+  | `suci`, a default | And SUCI concealment and deconcealment with the null scheme, Profile A and Profile B, which bring X25519 and P-256: 41 crates | `alloc`, and a source of random numbers for `getrandom` |
+  | `nai`, a default | And the SUCI and SUPI of the NAI format, which bring Unicode normalization and IDNA: 71 crates | `suci` |
+
+  The crate is `no_std` without `std`. It then runs SNOW 3G and ZUC on
+  vector instructions when the build enables them for its target, and on
+  scalar code otherwise. CI builds each set of features for
+  `thumbv7em-none-eabihf` and `aarch64-unknown-none`.
+
+  The key derivations no longer build the string S of TS 33.220: its
+  parts go to the hasher one after the other, and a parameter that is a
+  key has no copy to wipe.
 
   0.2.0 had no feature and 76 crates. Without `nai`, `suci_to_supi` returns
   `None` for a SUCI in a NAI format.

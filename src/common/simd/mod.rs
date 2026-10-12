@@ -47,15 +47,15 @@ mod arch;
 #[path = "x86_64.rs"]
 mod arch;
 
-#[cfg(any(test, fuzzing))]
-thread_local! {
+#[cfg(any(test, all(fuzzing, feature = "std")))]
+std::thread_local! {
     /// Set by [`scalar`] for the thread that compares the two paths.
     static SCALAR_ONLY: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
 }
 
 /// Run `work` with the vector paths turned off in this thread, as on a
 /// processor without the instructions.
-#[cfg(any(test, fuzzing))]
+#[cfg(any(test, all(fuzzing, feature = "std")))]
 pub(crate) fn scalar<R>(work: impl FnOnce() -> R) -> R {
     let before = SCALAR_ONLY.replace(true);
     let result = work();
@@ -70,7 +70,7 @@ static DETECTED: AtomicU8 = AtomicU8::new(0);
 /// Whether the processor has the instructions of the vector paths.
 #[inline]
 pub(crate) fn available() -> bool {
-    #[cfg(any(test, fuzzing))]
+    #[cfg(any(test, all(fuzzing, feature = "std")))]
     if SCALAR_ONLY.get() {
         return false;
     }
