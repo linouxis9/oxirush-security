@@ -59,6 +59,25 @@ jobs:
           RUSTFLAGS: -C target-feature=+neon,+aes
         run: cargo test --no-default-features
 
+  # The vector code of AArch64 on an emulated processor: Unicorn, which its
+  # crate builds from its source, runs the crate as a program for a bare
+  # AArch64 processor with NEON and the AES instructions, and the program
+  # compares that code with its scalar code and with this machine's
+  emulated-aarch64:
+    name: AArch64 code on an emulated processor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-none
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            emulated-aarch64/guest
+            emulated-aarch64/host
+      - run: emulated-aarch64/run.sh
+
   # Targets without the standard library: the crate and each set of features
   # that is `no_std` build there. A library needs no source of random
   # numbers to be built: the program that links it names one.
@@ -175,6 +194,8 @@ jobs:
       - run: cargo fmt --check
       - run: cargo fmt --check --manifest-path fuzz/Cargo.toml
       - run: cargo fmt --check --manifest-path benches/Cargo.toml
+      - run: cargo fmt --check --manifest-path emulated-aarch64/guest/Cargo.toml
+      - run: cargo fmt --check --manifest-path emulated-aarch64/host/Cargo.toml
 
   fuzz:
     name: Fuzz ${{ matrix.target }} (1 minute)

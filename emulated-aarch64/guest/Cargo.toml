@@ -1,0 +1,21 @@
+# The program that runs under emulation: the crate for a bare AArch64
+# processor with NEON and AES, and the workload that the host runs too.
+[package]
+name = "oxirush-security-emulated-guest"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+oxirush-security = { path = "../..", default-features = false }
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+
+[profile.dev]
+panic = "abort"
+
+# Not a member of a workspace that the crate may be in.
+[workspace]

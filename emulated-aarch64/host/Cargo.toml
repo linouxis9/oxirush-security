@@ -1,0 +1,17 @@
+# The host of the emulation: Unicorn, built from its source by its crate,
+# runs the guest program on an AArch64 processor with NEON, AES and PMULL.
+# Unicorn is GPL-2.0: this package is a test tool, is not published, and
+# nothing of it is linked into the crate.
+[package]
+name = "oxirush-security-emulated-host"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+oxirush-security = { path = "../..", default-features = false }
+unicorn-engine = { version = "2.1", default-features = false, features = ["arch_aarch64"] }
+
+# Not a member of a workspace that the crate may be in.
+[workspace]

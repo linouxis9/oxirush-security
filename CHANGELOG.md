@@ -231,8 +231,11 @@ and what a type cannot say is a `Result`. Every call below changes.
   The calls of this code, once the processor is seen to have the
   instructions, are the `unsafe` code of the crate; the code itself takes
   and returns values and is not `unsafe`. The tests compare the two forms.
-  The AArch64 form was compiled and not run by its authors: CI runs the
-  tests on an AArch64 machine.
+  The AArch64 form runs on an emulated processor: `emulated-aarch64/`
+  builds the crate for a bare AArch64 processor and runs it on Unicorn's,
+  where the vector code, the scalar code and the x86-64 code of the host
+  give the same on 3GPP test sets, keystreams, messages of 170 lengths and
+  batches. CI runs that, and the tests on an AArch64 machine.
 - `benches/` measures both forms, on one core of an AMD Ryzen 7 5700G with
   Rust 1.98.1 here: the lowest median of four runs, and of two for the
   scalar code and for 0.2.0 in the same benchmark. On the vector

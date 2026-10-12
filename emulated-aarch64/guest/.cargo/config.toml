@@ -1,0 +1,11 @@
+# The crate with its vector code on NEON and the AES instructions, and with
+# the hooks that turn that code off so that both run in one program.
+[build]
+target = "aarch64-unknown-none"
+
+[target.aarch64-unknown-none]
+rustflags = [
+    "-C", "target-feature=+neon,+aes",
+    "--cfg", "oxirush_security_hooks",
+    "-C", "link-arg=--entry=check",
+]

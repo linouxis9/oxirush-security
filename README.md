@@ -533,7 +533,8 @@ code elsewhere. None indexes memory or branches on a secret. The tests
 compare the two, and a batch with its messages one by one, and CI runs them
 on x86-64, AArch64 and 32-bit x86. The calls of the vector code are the
 crate's only `unsafe` code. CI also builds each set of features for two
-targets without the standard library.
+targets without the standard library, and runs the AArch64 code on an
+emulated processor ([`emulated-aarch64/`](emulated-aarch64/README.md)).
 
 CI fuzzes four `cargo fuzz` targets of [`fuzz/`](fuzz) for a minute each.
 
