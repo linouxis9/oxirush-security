@@ -203,3 +203,62 @@ pub(super) const ZUC_L_OF_BITS: [[u8; 16]; 3] = [
 pub(super) const ZUC_S0_OCTETS: [u8; 16] = [
     0, 0xff, 0, 0xff, 0, 0xff, 0, 0xff, 0, 0xff, 0, 0xff, 0, 0xff, 0, 0xff,
 ];
+
+/// An octet with its bits in the reverse order is the reverse of its low
+/// nibble, as the high nibble, and the reverse of its high nibble: the
+/// table of the low nibble, then that of the high one.
+pub(super) const REVERSED_BITS: ([u8; 16], [u8; 16]) = {
+    let (mut of_low, mut of_high) = ([0; 16], [0; 16]);
+    let mut nibble = 0;
+    while nibble < 16 {
+        let reversed = (nibble as u8).reverse_bits() >> 4;
+        of_low[nibble] = reversed << 4;
+        of_high[nibble] = reversed;
+        nibble += 1;
+    }
+    (of_low, of_high)
+};
+
+/// The shuffle that exchanges the two words of each half.
+pub(super) const EXCHANGED_WORDS: [u8; 16] = [4, 5, 6, 7, 0, 1, 2, 3, 12, 13, 14, 15, 8, 9, 10, 11];
+
+/// The shuffles that leave one word, as the low word, and zero elsewhere.
+pub(super) const WORD_ALONE: [[u8; 16]; 4] = {
+    let mut shuffles = [[NONE; 16]; 4];
+    let mut index = 0;
+    while index < 16 {
+        shuffles[index / 4][index % 4] = index as u8;
+        index += 1;
+    }
+    shuffles
+};
+
+/// The shuffle that reverses the octets of each half: eight octets of a
+/// message become the word that they are with the high octet first.
+pub(super) const REVERSED_HALVES: [u8; 16] = [7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8];
+
+/// The round constants of the key expansion of AES-128 (FIPS 197 §5.2).
+pub(super) const AES_ROUND_CONSTANTS: [u32; 10] =
+    [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36];
+
+/// The shuffle that fills every word with the last one, rotated by an
+/// octet as RotWord of the key expansion rotates it.
+pub(super) const AES_ROTATED_LAST_WORD: [u8; 16] = [
+    13, 14, 15, 12, 13, 14, 15, 12, 13, 14, 15, 12, 13, 14, 15, 12,
+];
+
+/// The shuffles that move the words up by one, by two and by three, with
+/// zero in the words that they leave.
+pub(super) const WORDS_MOVED_UP: [[u8; 16]; 3] = {
+    let mut shuffles = [[NONE; 16]; 3];
+    let mut words = 1;
+    while words <= 3 {
+        let mut index = 4 * words;
+        while index < 16 {
+            shuffles[words - 1][index] = (index - 4 * words) as u8;
+            index += 1;
+        }
+        words += 1;
+    }
+    shuffles
+};

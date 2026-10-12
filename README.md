@@ -418,13 +418,13 @@ f202f83901004211223344 has 5G-TMSI 11223344
 |---------|---------------|-------|
 | none | the algorithms, NAS integrity and ciphering, the key derivations, the selection of the algorithms, 5G-GUTI and `plmn_to_bytes` | `core` alone: no allocator |
 | `alloc` | and what returns a `Vec` or a `String`: `build_s`, `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes` | an allocator |
-| `std` | and the choice of the vector code of SNOW 3G and ZUC when the program runs | the standard library |
+| `std` | and the choice of the code on the vector and AES instructions when the program runs | the standard library |
 | `suci` | and SUCI with the null scheme, Profile A (X25519) and Profile B (P-256) | `alloc`, and a source of random numbers that `getrandom` has for the target |
 | `nai` | and the SUCI and SUPI of the NAI format, with Unicode normalization and IDNA | `suci` |
 
 `std`, `suci` and `nai` are the default. Without `std` the crate is
-`no_std`: on x86-64 and AArch64 it then runs SNOW 3G and ZUC on the vector
-instructions when the build enables them for its target
+`no_std`: on x86-64 and AArch64 it then runs the algorithms on the vector
+and AES instructions when the build enables them for its target
 (`-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq`, or `+neon,+aes`), and
 on scalar code otherwise.
 
@@ -452,9 +452,9 @@ On one core of an AMD Ryzen 7 5700G, a message of 1500 octets:
 
 | | Cipher | MAC |
 |---|---|---|
-| 128-NEA2, 128-NIA2 (AES) | 0.69 µs | 1.8 µs |
-| 128-NEA1, 128-NIA1 (SNOW 3G) | 2.5 µs | 1.1 µs |
-| 128-NEA3, 128-NIA3 (ZUC) | 3.2 µs | 4.1 µs |
+| 128-NEA2, 128-NIA2 (AES) | 0.17 µs | 0.94 µs |
+| 128-NEA1, 128-NIA1 (SNOW 3G) | 2.5 µs | 0.40 µs |
+| 128-NEA3, 128-NIA3 (ZUC) | 3.2 µs | 3.4 µs |
 
 A key derivation takes 0.22 µs, and SUCI concealment 55 µs with Profile A
 and 284 µs with Profile B. [`benches/`](benches/README.md) has the
@@ -467,9 +467,9 @@ for its key derivations: the 5G AKA chain is compared with a second
 implementation, [`tests/five_g_aka_chain.py`](tests/five_g_aka_chain.py),
 and the other derivations with values that the tests calculate.
 
-SNOW 3G and ZUC run on the AES, vector and carry-less multiplication
+SNOW 3G, ZUC and AES run on the AES, vector and carry-less multiplication
 instructions of an x86-64 or AArch64 processor that has them, and on scalar
-code elsewhere. Neither indexes memory or branches on a secret. The tests
+code elsewhere. None indexes memory or branches on a secret. The tests
 compare the two, and CI runs them on x86-64, AArch64 and 32-bit x86. The
 calls of the vector code are the crate's only `unsafe` code. CI also builds
 each set of features for two targets without the standard library.

@@ -139,12 +139,12 @@
 //!
 //! | Subject | What the crate does |
 //! |---------|---------------------|
-//! | Wiped after use | Explicit buffers and owned state: CK‖IK buffers, key-bearing KDF input buffers, the SHA-256 state and the key block and inner hash of HMAC-SHA-256, SUCI ECIES KDF buffers, cipher state including the AES key schedule, and keystream buffers. The hasher and the AES cipher are those of the `sha2` and `aes` crates, built with their `zeroize` features: the crate does not compile without them. |
+//! | Wiped after use | Explicit buffers and owned state: CK‖IK buffers, key-bearing KDF input buffers, the SHA-256 state and the key block and inner hash of HMAC-SHA-256, SUCI ECIES KDF buffers, cipher state including the AES round keys, and keystream buffers. The hasher is that of the `sha2` crate, and AES that of the `aes` crate on a processor without AES instructions, both built with their `zeroize` features: the crate does not compile without them. |
 //! | Not wiped | Temporary copies and compiler-generated spills, which the wiping above does not all cover. Returned keys and deconcealed identities belong to the caller, who clears them when their lifetime ends. |
-//! | Secret-dependent indexing and branches | SNOW 3G, ZUC, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor branch on a secret value, in either of the two forms that SNOW 3G and ZUC have. |
-//! | On vector instructions | On an x86-64 processor with SSSE3, SSE4.1, AES-NI and PCLMULQDQ, or an AArch64 one with AES, which the crate sees when the program runs: an S-box is read with shuffle instructions, whose index is an operand and not an address; S1 of SNOW 3G and the S-box inside S1 of ZUC are the AES instruction; the products of the two MACs are the carry-less multiplication instruction. SNOW 3G is clocked three times at once. |
+//! | Secret-dependent indexing and branches | SNOW 3G, ZUC, AES, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor branch on a secret value, in any of their forms. |
+//! | On vector instructions | On an x86-64 processor with SSSE3, SSE4.1, AES-NI and PCLMULQDQ, or an AArch64 one with AES, which the crate sees when the program runs: an S-box is read with shuffle instructions, whose index is an operand and not an address; S1 of SNOW 3G and the S-box inside S1 of ZUC are the AES instruction; the products of the two MACs are the carry-less multiplication instruction. SNOW 3G is clocked three times at once. The key expansion and the rounds of AES-128 are the AES instruction, eight counter blocks at a time. |
 //! | In scalar code | Elsewhere, and as the reference of the tests: S1 of SNOW 3G and the S-box S1 of ZUC are computed from one round of AES, which the `aes` crate runs as a bitsliced routine without the AES instructions. The S-box SQ of SNOW 3G is read whole and narrowed down through masks. S0 of ZUC is three four-bit S-boxes, each a word that is shifted. MULα, DIVα and the field multiplications of the two MACs are carry-less products, made with shifts and integer multiplications. A mask that a secret bit gives goes through `core::hint::black_box`. |
-//! | Checked in the compiled code | Without `black_box` the compiler turned the masked selection of SQ in the scalar code into conditional jumps on bits of the state. In the release build for x86-64 with Rust 1.98.1, the functions of SNOW 3G and ZUC in both forms and of the six algorithms were read in the disassembly: their conditional jumps test a length, a loop counter, a place in a buffer, a feature of the processor or whether the generator has started, and none a secret. In the scalar code, shifts by a secret amount and multiplications of secret words remain. They take a time that does not depend on their operands on the x86-64 and AArch64 processors of today, and may not on a small processor whose multiplier stops early. |
+//! | Checked in the compiled code | Without `black_box` the compiler turned the masked selection of SQ in the scalar code into conditional jumps on bits of the state. In the release build for x86-64 with Rust 1.98.1, the functions of SNOW 3G and ZUC in both forms, of AES on its instructions and of the six algorithms were read in the disassembly: their conditional jumps test a length, a loop counter, a place in a buffer, a feature of the processor or whether the generator has started, and none a secret. In the scalar code, shifts by a secret amount and multiplications of secret words remain. They take a time that does not depend on their operands on the x86-64 and AArch64 processors of today, and may not on a small processor whose multiplier stops early. |
 //! | Comparison | [`constant_time_eq`] compares RES\* with XRES\*, or HRES\* with HXRES\*, through `subtle`: its time depends on the lengths and not on where the values differ. |
 //! | Not measured | No timing was measured, and no other target or compiler was read. The AArch64 form is the code of the x86-64 one on other instructions; CI runs the tests on an AArch64 machine. |
 //!
@@ -161,7 +161,7 @@
 //! | Kind | What is tested against it |
 //! |------|---------------------------|
 //! | **3GPP** test data | 128-EEA1/2/3 and 128-EIA1/2/3 on the TS 33.401 Annex C, TS 35.217, TS 35.218 and TS 35.223 sets, including non-byte-aligned EEA1, EEA2, EEA3, EIA1, EIA2 and EIA3 inputs; the SNOW 3G and ZUC keystreams; SUCI on every TS 33.501 Annex C.4 data set. |
-//! | **RFC and FIPS** test data | HMAC-SHA-256, which is this crate's over the SHA-256 of `sha2`, on test cases 1, 2, 3, 6 and 7 of RFC 4231; SHA-256 on the examples of FIPS 180-4; the subkeys of AES-CMAC on the example of RFC 4493. |
+//! | **RFC and FIPS** test data | HMAC-SHA-256, which is this crate's over the SHA-256 of `sha2`, on test cases 1, 2, 3, 6 and 7 of RFC 4231; SHA-256 on the examples of FIPS 180-4; the subkeys of AES-CMAC on the example of RFC 4493; the key expansion and the cipher of AES on its instructions on the examples of FIPS 197. |
 //! | Values of **other implementations** | The 5G AKA chain from the TS 35.208 test set 1 MILENAGE outputs through KAUSF, XRES\*, HXRES\*, KSEAF, KAMF, the NAS keys, KgNB and NH, which `tests/five_g_aka_chain.py` derives with the HMAC-SHA-256 of Python's standard library over the inputs that TS 33.501 Annex A lays out; HASHMME on ATTACH REQUESTs and the values a network returned for them. |
 //! | Values **calculated** in the tests | The other 5GS KDFs, the EPS and interworking KDFs, and the NAS container, short and re-establishment MACs are compared with HMAC-SHA-256 or the MAC over the parameter layout as the test writes it. The identity encodings and the algorithm selection are compared with what the test writes too. These tests keep a layout from changing unnoticed; they are not independent vectors. |
 //!
@@ -169,9 +169,11 @@
 //! code, are compared with each other: the keystream words of 400 keys and
 //! IVs, taken in pieces of every length, and the six algorithms on messages
 //! of every length up to 300 octets, in whole octets and at a length in
-//! bits. The 3GPP test data goes through the form that the processor of the
-//! test has. CI runs the tests on x86-64, on AArch64, and on 32-bit x86,
-//! which has the scalar code alone.
+//! bits. AES on its instructions is compared with the `aes` crate in the
+//! same way, and 128-EIA2 with AES-CMAC as RFC 4493 writes it, at every
+//! length in bits up to 70 octets. The 3GPP test data goes through the form
+//! that the processor of the test has. CI runs the tests on x86-64, on
+//! AArch64, and on 32-bit x86, which has the scalar code alone.
 //!
 //! CI also fuzzes what takes octets from a peer, a minute for each of four
 //! `cargo fuzz` targets under `fuzz/`: a SUCI, a scheme output and a NAI
@@ -225,7 +227,7 @@
 //! |---------|------|-------|
 //! | none | The algorithms, NAS integrity and ciphering, every key derivation, the selection of the algorithms, the types of the inputs, 5G-GUTI and `plmn_to_bytes` | `core` alone: no allocator. 14 crates in its tree, and no procedural macro |
 //! | `alloc` | What returns a `Vec` or a `String`: `build_s`, `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes`; and `SecurityError::Ecies`, which has a text | An allocator |
-//! | `std` | The choice of the vector code of SNOW 3G and ZUC when the program runs, from what its processor has | The standard library. It brings `alloc` |
+//! | `std` | The choice of the code on the vector and AES instructions when the program runs, from what its processor has | The standard library. It brings `alloc` |
 //! | `suci` | `nas_5gs::suci`: SUCI concealment and deconcealment with the null scheme, Profile A (X25519) and Profile B (P-256) | `alloc`, which it brings, and a source of random numbers that `getrandom` has for the target: concealment draws a key. 41 crates |
 //! | `nai` | The SUCI and SUPI of the NAI format: network specific identifiers, GCI and GLI | `suci`, which it brings, with Unicode normalization and IDNA. 71 crates |
 //!
@@ -234,11 +236,11 @@
 //! not built, and nothing is allocated.
 //!
 //! Without `std` nothing asks the processor what it has. On x86-64 and
-//! AArch64 the vector code of SNOW 3G and ZUC then runs when the build
-//! enables its instructions for every processor of the target, with
+//! AArch64 the code on the vector and AES instructions then runs when the
+//! build enables them for every processor of the target, with
 //! `-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq` or `+neon,+aes`, or
-//! with a `-C target-cpu` that has them, and the scalar code otherwise. The
-//! values are the same.
+//! with a `-C target-cpu` that has them, and the scalar code otherwise.
+//! The values are the same.
 //!
 //! On a target without an operating system, `getrandom` has no source of
 //! random numbers of its own: the program that uses `suci` gives it one, as

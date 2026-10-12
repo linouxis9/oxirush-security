@@ -158,16 +158,43 @@ operations! {
         _mm_aesenclast_si128(state, _mm_setzero_si128())
     }
 
-    /// The carry-less product of two words, low word then high word.
-    fn clmul(x: u64, y: u64) -> (u64, u64) {
-        let product = _mm_clmulepi64_si128::<0>(
-            _mm_cvtsi64_si128(x as i64),
-            _mm_cvtsi64_si128(y as i64),
-        );
+    /// A round of AES and its round key.
+    fn aes_round_key(state: V, key: V) -> V {
+        _mm_aesenc_si128(state, key)
+    }
+
+    /// The last round of AES and its round key.
+    fn aes_last_round_key(state: V, key: V) -> V {
+        _mm_aesenclast_si128(state, key)
+    }
+
+    /// A word in the low half, and zero in the high half.
+    fn from_u64(word: u64) -> V {
+        _mm_cvtsi64_si128(word as i64)
+    }
+
+    /// The low half and the high half of a vector.
+    fn from_u64s(low: u64, high: u64) -> V {
+        _mm_set_epi64x(high as i64, low as i64)
+    }
+
+    /// The low half and the high half.
+    fn to_u64s(vector: V) -> (u64, u64) {
         (
-            _mm_cvtsi128_si64(product) as u64,
-            _mm_extract_epi64::<1>(product) as u64,
+            _mm_cvtsi128_si64(vector) as u64,
+            _mm_extract_epi64::<1>(vector) as u64,
         )
+    }
+
+    /// The carry-less product of the low halves.
+    fn clmul_low(a: V, b: V) -> V {
+        _mm_clmulepi64_si128::<0x00>(a, b)
+    }
+
+    /// The carry-less product of the high half of `a` and the low half of
+    /// `b`.
+    fn clmul_high_low(a: V, b: V) -> V {
+        _mm_clmulepi64_si128::<0x01>(a, b)
     }
 }
 

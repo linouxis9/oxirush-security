@@ -158,10 +158,43 @@ operations! {
         vaeseq_u8(state, vdupq_n_u8(0))
     }
 
-    /// The carry-less product of two words, low word then high word.
-    fn clmul(x: u64, y: u64) -> (u64, u64) {
-        let product = vmull_p64(x, y);
-        (product as u64, (product >> 64) as u64)
+    /// A round of AES and its round key.
+    fn aes_round_key(state: V, key: V) -> V {
+        veorq_u8(vaesmcq_u8(vaeseq_u8(state, vdupq_n_u8(0))), key)
+    }
+
+    /// The last round of AES and its round key.
+    fn aes_last_round_key(state: V, key: V) -> V {
+        veorq_u8(vaeseq_u8(state, vdupq_n_u8(0)), key)
+    }
+
+    /// A word in the low half, and zero in the high half.
+    fn from_u64(word: u64) -> V {
+        vreinterpretq_u8_u64(vcombine_u64(vcreate_u64(word), vcreate_u64(0)))
+    }
+
+    /// The low half and the high half of a vector.
+    fn from_u64s(low: u64, high: u64) -> V {
+        vreinterpretq_u8_u64(vcombine_u64(vcreate_u64(low), vcreate_u64(high)))
+    }
+
+    /// The low half and the high half.
+    fn to_u64s(vector: V) -> (u64, u64) {
+        let vector = vreinterpretq_u64_u8(vector);
+        (vgetq_lane_u64::<0>(vector), vgetq_lane_u64::<1>(vector))
+    }
+
+    /// The carry-less product of the low halves.
+    fn clmul_low(a: V, b: V) -> V {
+        let (a, b) = (vreinterpretq_u64_u8(a), vreinterpretq_u64_u8(b));
+        vreinterpretq_u8_p128(vmull_p64(vgetq_lane_u64::<0>(a), vgetq_lane_u64::<0>(b)))
+    }
+
+    /// The carry-less product of the high half of `a` and the low half of
+    /// `b`.
+    fn clmul_high_low(a: V, b: V) -> V {
+        let (a, b) = (vreinterpretq_u64_u8(a), vreinterpretq_u64_u8(b));
+        vreinterpretq_u8_p128(vmull_p64(vgetq_lane_u64::<1>(a), vgetq_lane_u64::<0>(b)))
     }
 }
 

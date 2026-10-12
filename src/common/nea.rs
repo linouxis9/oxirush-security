@@ -37,6 +37,8 @@
 //! COUNT.
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, octets_of};
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+use crate::common::simd::Instructions;
 use crate::snow3g::Snow3G;
 use crate::zuc::Zuc;
 use aes::Aes128Enc;
@@ -152,6 +154,18 @@ pub fn nea1_cipher(
         return;
     }
 
+    let (k, iv) = eea1_key_and_iv(key, count, bearer, direction);
+    let mut snow = Snow3G::new(*k, iv);
+    xor_keystream(data, |words| snow.fill(words));
+}
+
+/// The key words and the IV of SNOW 3G for 128-EEA1.
+pub(crate) fn eea1_key_and_iv(
+    key: &[u8; 16],
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+) -> (Zeroizing<[u32; 4]>, [u32; 4]) {
     let bearer_dir = (u32::from(bearer.get()) << 27) | (u32::from(u8::from(direction)) << 26);
 
     // The key words are loaded last word first (UEA2 §3.4).
@@ -162,10 +176,7 @@ pub fn nea1_cipher(
         u32::from_be_bytes(words[1]),
         u32::from_be_bytes(words[0]),
     ]);
-    let iv = [bearer_dir, count, bearer_dir, count];
-
-    let mut snow = Snow3G::new(*k, iv);
-    xor_keystream(data, |words| snow.fill(words));
+    (k, [bearer_dir, count, bearer_dir, count])
 }
 
 /// Cipher or decipher the first `bit_length` bits with 128-NEA1 /
@@ -208,22 +219,22 @@ pub fn nea2_cipher(
     if data.is_empty() {
         return;
     }
+    let prefix = ctr_prefix(count, bearer, direction);
 
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if let Some(instructions) = Instructions::detect() {
+        let schedules = instructions.aes_schedules([key]);
+        return instructions.aes_ctr(&schedules[0], u64::from_le_bytes(prefix), data);
+    }
+
+    // The counter blocks of a group are encrypted in one call
     let cipher = Aes128Enc::new(key.into());
-
-    // The upper eight octets of a counter block are fixed
-    let mut fixed = [0u8; 8];
-    fixed[0..4].copy_from_slice(&count.to_be_bytes());
-    fixed[4] = (bearer.get() << 3) | (u8::from(direction) << 2);
-
-    // The counter blocks of a group are encrypted in one call, which the AES
-    // instructions of a processor run side by side
     let mut keystream = [aes::Block::default(); CTR_GROUP];
     let mut counter = 0u64;
     for group in data.chunks_mut(16 * CTR_GROUP) {
         let blocks = &mut keystream[..group.len().div_ceil(16)];
         for block in blocks.iter_mut() {
-            block[..8].copy_from_slice(&fixed);
+            block[..8].copy_from_slice(&prefix);
             block[8..].copy_from_slice(&counter.to_be_bytes());
             counter += 1;
         }
@@ -243,7 +254,16 @@ pub fn nea2_cipher(
     }
 }
 
-/// The number of counter blocks that [`nea2_cipher`] encrypts in one call.
+/// The upper eight octets of the counter blocks of a message, which are
+/// fixed: COUNT, BEARER and DIRECTION.
+pub(crate) fn ctr_prefix(count: u32, bearer: Bearer, direction: Direction) -> [u8; 8] {
+    let mut prefix = [0u8; 8];
+    prefix[0..4].copy_from_slice(&count.to_be_bytes());
+    prefix[4] = (bearer.get() << 3) | (u8::from(direction) << 2);
+    prefix
+}
+
+/// The number of counter blocks that 128-EEA2 encrypts in one call.
 const CTR_GROUP: usize = 8;
 
 /// Cipher or decipher the first `bit_length` bits with 128-NEA2 /
@@ -289,14 +309,18 @@ pub fn nea3_cipher(
         return;
     }
 
+    let mut zuc = Zuc::new(key, &eea3_iv(count, bearer, direction));
+    xor_keystream(data, |words| zuc.fill(words));
+}
+
+/// The IV of ZUC for 128-EEA3.
+pub(crate) fn eea3_iv(count: u32, bearer: Bearer, direction: Direction) -> [u8; 16] {
     let mut iv = [0u8; 16];
     iv[0..4].copy_from_slice(&count.to_be_bytes());
     iv[4] = (bearer.get() << 3) | (u8::from(direction) << 2);
     // The upper half repeats the lower one
     iv.copy_within(0..8, 8);
-
-    let mut zuc = Zuc::new(key, &iv);
-    xor_keystream(data, |words| zuc.fill(words));
+    iv
 }
 
 /// Cipher or decipher the first `bit_length` bits with 128-NEA3 /

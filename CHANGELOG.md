@@ -189,8 +189,8 @@ and what a type cannot say is a `Result`. Every call below changes.
   warns on a public item without documentation. The 35 items that had none,
   among them `Snow3G`, `Zuc` and the `SecurityError` variants, are
   documented. 0.2.0 had no `unsafe` code.
-- SNOW 3G, ZUC, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor
-  branch on a secret value. 0.2.0 read its S-boxes and its MULα and DIVα
+- SNOW 3G, ZUC, AES, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory
+  nor branch on a secret value. 0.2.0 read its S-boxes and its MULα and DIVα
   tables at indices taken from the key and the keystream, and its
   multiplications in GF(2^64) and GF(2^128) branched on their bits, which
   showed both to whoever measures time or shares a cache. Now, in scalar
@@ -220,7 +220,9 @@ and what a type cannot say is a `Result`. Every call below changes.
     and the products of 128-EIA1 and 128-EIA3 the carry-less multiplication
     instruction;
   - SNOW 3G is clocked three times at once, with one pass over the rows of
-    SQ for the three clocks.
+    SQ for the three clocks;
+  - 128-EIA1 evaluates its polynomial four blocks at a time, with the
+    powers of P, and 128-EIA3 takes four groups of 32 bits at a time.
 
   The calls of this code, once the processor is seen to have the
   instructions, are the `unsafe` code of the crate; the code itself takes
@@ -231,17 +233,22 @@ and what a type cannot say is a `Result`. Every call below changes.
   Rust 1.98.1 here: the lowest median of four runs, and of two for the
   scalar code and for 0.2.0 in the same benchmark. On the vector
   instructions and a 1500-octet message, 128-EEA1 takes 2.5 µs and 128-EEA3
-  3.2 µs, where 0.2.0 took 5.1 µs and 5.2 µs; 128-EIA1 takes 1.1 µs and
-  128-EIA3 4.1 µs, where 0.2.0 took 8.4 µs and 13.8 µs. On a 64-octet
-  message the four take 0.31 µs to 0.47 µs, where 0.2.0 took 0.53 µs to
+  3.2 µs, where 0.2.0 took 5.1 µs and 5.2 µs; 128-EIA1 takes 0.40 µs and
+  128-EIA3 3.4 µs, where 0.2.0 took 8.4 µs and 13.8 µs. On a 64-octet
+  message the four take 0.30 µs to 0.45 µs, where 0.2.0 took 0.53 µs to
   0.99 µs. The scalar code is slower than 0.2.0 for ciphering, which is the
-  cost of tables that are not read at a secret index: 17.3 µs for 128-EEA1
-  and 11.0 µs for 128-EEA3 on 1500 octets, 4.3 µs for 128-EIA1 and 13.4 µs
-  for 128-EIA3, and 1.3 µs to 2.0 µs for the four on 64 octets.
-- 128-EEA2 encrypts eight counter blocks in one call to the cipher, and
-  128-EIA2 keeps its subkeys and its state in words. On a 1500-octet message
-  they take 0.69 µs and 1.8 µs, where 0.2.0 took 2.8 µs each; on a 64-octet
-  message 0.15 µs and 0.22 µs, where 0.2.0 took 0.15 µs and 0.24 µs.
+  cost of tables that are not read at a secret index: 16.8 µs for 128-EEA1
+  and 11.7 µs for 128-EEA3 on 1500 octets, 4.6 µs for 128-EIA1 and 14.1 µs
+  for 128-EIA3, and 1.4 µs to 2.0 µs for the four on 64 octets.
+- AES-128 is the crate's own key expansion and rounds on the AES
+  instructions of an x86-64 or AArch64 processor that has the vector code,
+  and the `aes` crate elsewhere. 128-EEA2 encrypts eight counter blocks at
+  a time, and 128-EIA2 keeps its subkeys and its blocks in words. On a
+  1500-octet message they take 0.17 µs and 0.94 µs, where 0.2.0 took
+  2.8 µs each; on a 64-octet message 0.034 µs and 0.10 µs, where 0.2.0 took
+  0.15 µs and 0.24 µs. The round keys are wiped a word at a time. The tests
+  have the examples of FIPS 197, and 128-EIA2 against AES-CMAC as RFC 4493
+  writes it at every length in bits up to 70 octets.
 - A key derivation takes 0.22 µs, where 0.2.0 took 0.16 µs: HMAC-SHA-256
   now wipes its hash states, its key block and its inner hash.
 
@@ -255,13 +262,13 @@ and what a type cannot say is a `Result`. Every call below changes.
   |---------|--------------------|-------|
   | none (`default-features = false`) | The algorithms, NAS integrity and ciphering, the key derivations, the selection of the algorithms, 5G-GUTI and `plmn_to_bytes` | `core` alone |
   | `alloc` | And what returns a `Vec` or a `String`: `build_s`, `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes`, and `SecurityError::Ecies` | An allocator |
-  | `std`, a default | And the choice of the vector code of SNOW 3G and ZUC when the program runs | The standard library |
+  | `std`, a default | And the choice of the code on the vector and AES instructions when the program runs | The standard library |
   | `suci`, a default | And SUCI concealment and deconcealment with the null scheme, Profile A and Profile B, which bring X25519 and P-256: 41 crates | `alloc`, and a source of random numbers for `getrandom` |
   | `nai`, a default | And the SUCI and SUPI of the NAI format, which bring Unicode normalization and IDNA: 71 crates | `suci` |
 
-  The crate is `no_std` without `std`. It then runs SNOW 3G and ZUC on
-  vector instructions when the build enables them for its target, and on
-  scalar code otherwise. CI builds each set of features for
+  The crate is `no_std` without `std`. It then runs the algorithms on the
+  vector and AES instructions when the build enables them for its target,
+  and on scalar code otherwise. CI builds each set of features for
   `thumbv7em-none-eabihf` and `aarch64-unknown-none`.
 
   The key derivations no longer build the string S of TS 33.220: its

@@ -30,7 +30,7 @@
 #![allow(unsafe_code)]
 
 use core::sync::atomic::{AtomicU8, Ordering};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 #[macro_use]
 #[deny(unsafe_code)]
@@ -172,6 +172,91 @@ impl Zeroize for Zuc {
         self.lfsr.zeroize();
         self.at.zeroize();
         self.r.zeroize();
+    }
+}
+
+/// The eleven round keys of AES-128. The first octet of a round key, as of
+/// a block, is the low one of the number.
+pub(crate) type AesSchedule = [u128; 11];
+
+/// The instructions of the vector code, seen on this processor: what the
+/// functions that need them ask for.
+#[derive(Clone, Copy)]
+pub(crate) struct Instructions(());
+
+impl Instructions {
+    /// `None` on a processor without the instructions.
+    pub(crate) fn detect() -> Option<Self> {
+        available().then_some(Self(()))
+    }
+
+    /// 128-EIA3 over whole groups of 32 bits of a message, with the
+    /// keystream word that follows each: the tag and the window after
+    /// them.
+    pub(crate) fn eia3_groups(
+        self,
+        tag: u32,
+        window: u64,
+        groups: &[[u8; 4]],
+        words: &[u32],
+    ) -> (u32, u64) {
+        // SAFETY: `self` was made by `detect`, which found the
+        // instructions that the function is compiled for.
+        unsafe { arch::eia3_groups(tag, window, groups, words) }
+    }
+
+    /// The round keys of each key of AES-128. They are wiped with what
+    /// holds them.
+    pub(crate) fn aes_schedules<const N: usize>(
+        self,
+        keys: [&[u8; 16]; N],
+    ) -> Zeroizing<[AesSchedule; N]> {
+        let mut schedules = Zeroizing::new([[0; 11]; N]);
+        // SAFETY: `self` was made by `detect`, which found the
+        // instructions that the function is compiled for.
+        unsafe { arch::aes_schedules(keys, &mut schedules) };
+        schedules
+    }
+
+    /// Encrypt each block with its round keys.
+    pub(crate) fn aes_encrypt<const N: usize>(
+        self,
+        schedules: [&AesSchedule; N],
+        blocks: &mut [u128; N],
+    ) {
+        // SAFETY: `self` was made by `detect`, which found the
+        // instructions that the function is compiled for.
+        unsafe { arch::aes_encrypt(schedules, blocks) }
+    }
+
+    /// The CBC-MAC of each message with its round keys: its block `first`,
+    /// if it has one, the blocks of its `body` and its block `last`.
+    pub(crate) fn aes_cbc_mac<const N: usize>(
+        self,
+        schedules: [&AesSchedule; N],
+        first: [Option<u128>; N],
+        body: [&[[u8; 16]]; N],
+        last: &[u128; N],
+    ) -> [u128; N] {
+        // SAFETY: `self` was made by `detect`, which found the
+        // instructions that the function is compiled for.
+        unsafe { arch::aes_cbc_mac(schedules, first, body, last) }
+    }
+
+    /// AES in counter mode on one message, whose counter blocks begin
+    /// with the eight octets of `prefix` and end with their number.
+    pub(crate) fn aes_ctr(self, schedule: &AesSchedule, prefix: u64, data: &mut [u8]) {
+        // SAFETY: `self` was made by `detect`, which found the
+        // instructions that the function is compiled for.
+        unsafe { arch::aes_ctr(schedule, prefix, data) }
+    }
+
+    /// 128-EIA1 over the blocks of 64 bits of a message, the last of which
+    /// is `last`: their evaluation at P, times P.
+    pub(crate) fn eia1_blocks(self, p: u64, blocks: &[[u8; 8]], last: Option<u64>) -> u64 {
+        // SAFETY: `self` was made by `detect`, which found the
+        // instructions that the function is compiled for.
+        unsafe { arch::eia1_blocks(p, blocks, last) }
     }
 }
 
@@ -337,6 +422,49 @@ mod tests {
             };
             assert_eq!(clmul128(x, y), scalar(|| clmul128(x, y)), "{x:#x} {y:#x}");
             assert_eq!(clmul64(x, y), scalar(|| clmul64(x, y)), "{x:#x} {y:#x}");
+        }
+    }
+
+    /// The key expansion and the cipher of FIPS 197, Appendices A.1 and
+    /// C.1, and several keys side by side against the `aes` crate.
+    #[test]
+    fn aes_on_the_instructions_is_that_of_fips_197() {
+        use aes::Aes128Enc;
+        use aes::cipher::{BlockCipherEncrypt, KeyInit};
+        let Some(instructions) = super::Instructions::detect() else {
+            eprintln!("this processor has no AES instructions: nothing is compared");
+            return;
+        };
+
+        let key = 0x2b7e_1516_28ae_d2a6_abf7_1588_09cf_4f3cu128.to_be_bytes();
+        let schedules = instructions.aes_schedules([&key]);
+        let round_key = |round: usize| u128::from_be_bytes(schedules[0][round].to_le_bytes());
+        assert_eq!(round_key(0), u128::from_be_bytes(key));
+        assert_eq!(round_key(1), 0xa0fa_fe17_8854_2cb1_23a3_3939_2a6c_7605);
+        assert_eq!(round_key(10), 0xd014_f9a8_c9ee_2589_e13f_0cc8_b663_0ca6);
+
+        let key = 0x0001_0203_0405_0607_0809_0a0b_0c0d_0e0fu128.to_be_bytes();
+        let plaintext = 0x0011_2233_4455_6677_8899_aabb_ccdd_eeffu128.to_be_bytes();
+        let schedules = instructions.aes_schedules([&key]);
+        let mut block = [u128::from_le_bytes(plaintext)];
+        instructions.aes_encrypt(schedules.each_ref(), &mut block);
+        assert_eq!(
+            u128::from_be_bytes(block[0].to_le_bytes()),
+            0x69c4_e0d8_6a7b_0430_d8cd_b780_70b4_c55a
+        );
+
+        let mut next = random(0x510e_527f_ade6_82d1);
+        for _ in 0..200 {
+            let keys: [[u8; 16]; 8] = core::array::from_fn(|_| octets(&mut next));
+            let blocks: [[u8; 16]; 8] = core::array::from_fn(|_| octets(&mut next));
+            let schedules = instructions.aes_schedules(keys.each_ref());
+            let mut encrypted = blocks.map(u128::from_le_bytes);
+            instructions.aes_encrypt(schedules.each_ref(), &mut encrypted);
+            for ((key, block), encrypted) in keys.iter().zip(blocks).zip(encrypted) {
+                let mut expected = block;
+                Aes128Enc::new(key.into()).encrypt_block((&mut expected).into());
+                assert_eq!(encrypted.to_le_bytes(), expected, "key {key:02x?}");
+            }
         }
     }
 
