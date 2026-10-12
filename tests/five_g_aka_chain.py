@@ -9,12 +9,14 @@ shares no code with the crate.
 
     python3 tests/five_g_aka_chain.py
 
-It prints each value and exits with an error if one differs from what the
-crate's test expects.
+It prints each value and exits with an error if one is not the value that
+the crate's test expects, which it reads in the source of the test.
 """
 
 import hashlib
 import hmac
+import pathlib
+import re
 import sys
 
 
@@ -54,21 +56,27 @@ k_nas_int = kdf(k_amf, 0x69, b"\x02", b"\x02")[16:]
 k_gnb = kdf(k_amf, 0x6E, (0).to_bytes(4, "big"), b"\x01")
 nh = kdf(k_amf, 0x6F, k_gnb)
 
-EXPECTED = {
-    "KAUSF": (k_ausf, "f2e35260f85194d4f891504d02111e56689ac23dd393bee3abbcc5bfbc013ef9"),
-    "XRES*": (xres_star, "5cc9527f4d21c43bee83a15443acf1c4"),
-    "HXRES*": (hxres_star, "6970075e3c8245fdc2073003cf166279"),
-    "KSEAF": (k_seaf, "cfddde483bd1318a412e98870f556410905be4fb7500abed93ee16af71bbb3fa"),
-    "KAMF": (k_amf, "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4"),
-    "KNASenc": (k_nas_enc, "f47ae570afde775373d1b313d2176f54"),
-    "KNASint": (k_nas_int, "28ddb5356880149b9fee22f2367522a4"),
-    "KgNB": (k_gnb, "c18166e13cfde1dea842c708f6e0b3372b6896664df4e865c0c78bd270852005"),
-    "NH": (nh, "383c6b76bf2a99aa2ca4c5136d4122a2b942301f0b9e07439786939cd30c4a4b"),
+DERIVED = {
+    "KAUSF": k_ausf,
+    "XRES*": xres_star,
+    "HXRES*": hxres_star,
+    "KSEAF": k_seaf,
+    "KAMF": k_amf,
+    "KNASenc": k_nas_enc,
+    "KNASint": k_nas_int,
+    "KgNB": k_gnb,
+    "NH": nh,
 }
 
+# What the crate's test expects: the hexadecimal strings that its source
+# compares the keys of the chain with
+test = (pathlib.Path(__file__).parent.parent / "src" / "nas_5gs" / "kdf.rs").read_text()
+start = test.index("fn five_g_aka_key_chain_matches_another_implementation")
+expected = set(re.findall(r'"([0-9a-f]{32,64})"', test[start : test.index("#[test]", start)]))
+
 failed = False
-for name, (value, expected) in EXPECTED.items():
-    same = value.hex() == expected
+for name, value in DERIVED.items():
+    same = value.hex() in expected
     failed |= not same
-    print(f"{name:8} {value.hex()} {'' if same else '!= ' + expected}")
+    print(f"{name:8} {value.hex()} {'' if same else 'is not in the test of the crate'}")
 sys.exit(1 if failed else 0)

@@ -4,6 +4,11 @@ on:
   push:
     branches: [master]
   pull_request:
+  # Each Monday: an advisory may be new although nothing has changed here,
+  # and the fuzz targets then run for half an hour each
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -138,6 +143,28 @@ jobs:
       - run: cargo run ${{ matrix.arguments }}
       - run: cargo clippy --all-targets -- -D warnings
 
+  # The 5G AKA chain from another implementation: the HMAC-SHA-256 of
+  # Python's standard library derives the values, and the script fails
+  # when one is not the value that the crate's test expects
+  reference-values:
+    name: The 5G AKA chain from another implementation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tests/five_g_aka_chain.py
+
+  # The advisories of RustSec against the versions that a new user of the
+  # crate gets today
+  advisories:
+    name: Advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo generate-lockfile
+      - run: cargo audit --deny warnings
+
   # Targets without the standard library: the crate and each set of features
   # that is `no_std` build there. A library needs no source of random
   # numbers to be built: the program that links it names one.
@@ -262,8 +289,9 @@ jobs:
       - run: cargo fmt --check --manifest-path emulated-aarch64/host/Cargo.toml
       - run: cargo fmt --check --manifest-path leftovers/Cargo.toml
 
+  # A minute for each target at a push, half an hour each Monday
   fuzz:
-    name: Fuzz ${{ matrix.target }} (1 minute)
+    name: Fuzz ${{ matrix.target }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -285,7 +313,9 @@ jobs:
       - run: >
           cargo fuzz run ${{ matrix.target }}
           fuzz/corpus/${{ matrix.target }} fuzz/seeds/${{ matrix.target }}
-          -- -max_total_time=60 -max_len=512
+          --
+          -max_total_time=${{ github.event_name == 'schedule' && 1800 || 60 }}
+          -max_len=512
 
   bench:
     name: Benchmarks run
