@@ -346,5 +346,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      # No cache: its action looks for build directories under `tests/` of
+      # the unpacked package, and reports each one that is missing as an
+      # error of the job
       - run: cargo publish --dry-run
