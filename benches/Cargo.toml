@@ -18,6 +18,10 @@ pprof = { version = "0.15", features = ["criterion", "protobuf-codec", "flamegra
 name = "algorithms"
 harness = false
 
+[[bench]]
+name = "batch"
+harness = false
+
 # Symbols for the profiles.
 [profile.bench]
 debug = true

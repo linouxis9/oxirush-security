@@ -6,8 +6,9 @@ algorithms, the key derivations and SUCI with
 [pprof](https://crates.io/crates/pprof).
 
 ```bash
-cargo bench --bench algorithms                # every benchmark
+cargo bench --bench algorithms                # every benchmark of one message
 cargo bench --bench algorithms -- 128-EEA2    # those whose name has it
+cargo bench --bench batch -- 16x64            # sixteen messages of 64 octets
 
 # Ten seconds of one benchmark under the profiler, then where the time went
 cargo bench --bench algorithms -- --profile-time 10 cipher/128-EEA1/1500
