@@ -145,7 +145,7 @@ MAC 83e4d009, as received: true
 deciphered 7e0043
 ```
 
-## Protect a NAS message in EPS
+## Protect and check a NAS message in EPS
 
 `nas_eps` has the functions of EPS. Its `nas_mac` and `nas_cipher` take no
 NAS connection: the BEARER of EPS NAS is zero.
@@ -175,6 +175,12 @@ let protected = [&[count.sequence_number()][..], &message].concat();
 let mac = nas_mac(&knas_int, count, uplink, &protected, eia2);
 println!("ciphered {}, MAC {mac:08x}", hex::encode(message));
 
+// The MME computes the same MAC over what it received, then deciphers
+let received = [&[count.sequence_number()][..], &message].concat();
+println!("MAC as sent: {}", nas_mac(&knas_int, count, uplink, &received, eia2) == mac);
+nas_cipher(&knas_enc, count, uplink, &mut message, eea2);
+println!("deciphered {}", hex::encode(message));
+
 // The short MAC of a SERVICE REQUEST with NAS COUNT 1: KSI 0 and sequence
 // number 1 in its second octet
 let count = NasCount::new(1).unwrap();
@@ -184,6 +190,8 @@ println!("short MAC {short_mac:04x}");
 
 ```text
 ciphered b02c47, MAC 190af1e7
+MAC as sent: true
+deciphered 076003
 short MAC 7e95
 ```
 
@@ -460,8 +468,8 @@ CI fuzzes four `cargo fuzz` targets of [`fuzz/`](fuzz) for a minute each.
 
 [The documentation](https://docs.rs/oxirush-security) has the terms, each
 function with its clause and the values it is tested against, the types of
-the inputs with their errors, what is wiped after use, and what was checked
-about timing. Until the release, `cargo doc --open` in a clone builds it.
+the inputs with their errors, what is wiped after use, and the checks of
+its timing. Until the release, `cargo doc --open` in a clone builds it.
 
 ## The OxiRush family
 

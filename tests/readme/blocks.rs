@@ -162,6 +162,12 @@ fn block_4() {
     let mac = nas_mac(&knas_int, count, uplink, &protected, eia2);
     println!("ciphered {}, MAC {mac:08x}", hex::encode(message));
 
+    // The MME computes the same MAC over what it received, then deciphers
+    let received = [&[count.sequence_number()][..], &message].concat();
+    println!("MAC as sent: {}", nas_mac(&knas_int, count, uplink, &received, eia2) == mac);
+    nas_cipher(&knas_enc, count, uplink, &mut message, eea2);
+    println!("deciphered {}", hex::encode(message));
+
     // The short MAC of a SERVICE REQUEST with NAS COUNT 1: KSI 0 and sequence
     // number 1 in its second octet
     let count = NasCount::new(1).unwrap();
