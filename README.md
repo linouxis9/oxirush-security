@@ -195,6 +195,63 @@ deciphered 076003
 short MAC 7e95
 ```
 
+## Protect the messages of many UEs in one call
+
+A job is a message with its own key, NAS COUNT and algorithm. Each gets
+what `nas_cipher` and `nas_mac` give it alone, from keystream generators
+and MAC chains that run side by side.
+
+```rust
+use oxirush_security::nas_5gs::{
+    CipheringAlgorithm, Direction, IntegrityAlgorithm, NasConnection, NasCount, cipher_job,
+    mac_job, nea_cipher_batch, nia_mac_batch,
+};
+
+// Three UEs: the NAS keys, the downlink NAS COUNT and the algorithms of each
+let k_nas_enc = [[0x11; 16], [0x22; 16], [0x33; 16]];
+let k_nas_int = [[0x44; 16], [0x55; 16], [0x66; 16]];
+let counts = [7, 0, 41].map(|count| NasCount::new(count).unwrap());
+let nea = [CipheringAlgorithm::NEA2, CipheringAlgorithm::NEA1, CipheringAlgorithm::NEA2];
+let nia = [IntegrityAlgorithm::NIA2, IntegrityAlgorithm::NIA1, IntegrityAlgorithm::NIA2];
+let (access, downlink) = (NasConnection::ThreeGpp, Direction::Downlink);
+
+// The sequence number and the message of each
+let mut messages = [
+    vec![7, 0x7e, 0x00, 0x54, 0x43, 0x90],
+    vec![0, 0x7e, 0x00, 0x5d, 0x02],
+    vec![41, 0x7e, 0x00, 0x68, 0x01, 0x00, 0x2e],
+];
+
+let mut jobs: Vec<_> = (messages.iter_mut().enumerate())
+    .map(|(ue, message)| {
+        let (key, count) = (&k_nas_enc[ue], counts[ue]);
+        cipher_job(key, count, access, downlink, &mut message[1..], nea[ue])
+    })
+    .collect();
+nea_cipher_batch(&mut jobs);
+
+// The MAC is over the sequence number and the ciphered message
+let mut jobs: Vec<_> = (messages.iter().enumerate())
+    .map(|(ue, message)| {
+        let (key, count) = (&k_nas_int[ue], counts[ue]);
+        mac_job(key, count, access, downlink, message, nia[ue])
+    })
+    .collect();
+nia_mac_batch(&mut jobs);
+for (job, message) in jobs.iter().zip(&messages) {
+    println!("MAC {:08x} of {}", job.mac().unwrap(), hex::encode(message));
+}
+```
+
+```text
+MAC afc53a82 of 076b4a2c14c2
+MAC 6a11a04f of 00e17ff3e0
+MAC c48d481a of 295c7b75e6ac69
+```
+
+`CipherJob::new` and `MacJob::new` make a job from what the algorithms
+take: any COUNT and a BEARER.
+
 ## Derive the keys of a handover
 
 ```rust
@@ -448,13 +505,14 @@ dependency at a version that 1.88 builds.
 
 ## Performance
 
-On one core of an AMD Ryzen 7 5700G, a message of 1500 octets:
+On one core of an AMD Ryzen 7 5700G, a message of 1500 octets, alone and
+as one of sixteen in a call of `nea_cipher_batch` or `nia_mac_batch`:
 
-| | Cipher | MAC |
-|---|---|---|
-| 128-NEA2, 128-NIA2 (AES) | 0.17 µs | 0.94 µs |
-| 128-NEA1, 128-NIA1 (SNOW 3G) | 2.5 µs | 0.40 µs |
-| 128-NEA3, 128-NIA3 (ZUC) | 3.2 µs | 3.4 µs |
+| | Cipher | MAC | Cipher, one of sixteen | MAC, one of sixteen |
+|---|---|---|---|---|
+| 128-NEA2, 128-NIA2 (AES) | 0.17 µs | 0.94 µs | 0.17 µs | 0.25 µs |
+| 128-NEA1, 128-NIA1 (SNOW 3G) | 2.5 µs | 0.40 µs | 0.72 µs | 0.24 µs |
+| 128-NEA3, 128-NIA3 (ZUC) | 3.2 µs | 3.4 µs | 0.85 µs | 1.2 µs |
 
 A key derivation takes 0.22 µs, and SUCI concealment 55 µs with Profile A
 and 284 µs with Profile B. [`benches/`](benches/README.md) has the
@@ -470,9 +528,10 @@ and the other derivations with values that the tests calculate.
 SNOW 3G, ZUC and AES run on the AES, vector and carry-less multiplication
 instructions of an x86-64 or AArch64 processor that has them, and on scalar
 code elsewhere. None indexes memory or branches on a secret. The tests
-compare the two, and CI runs them on x86-64, AArch64 and 32-bit x86. The
-calls of the vector code are the crate's only `unsafe` code. CI also builds
-each set of features for two targets without the standard library.
+compare the two, and a batch with its messages one by one, and CI runs them
+on x86-64, AArch64 and 32-bit x86. The calls of the vector code are the
+crate's only `unsafe` code. CI also builds each set of features for two
+targets without the standard library.
 
 CI fuzzes four `cargo fuzz` targets of [`fuzz/`](fuzz) for a minute each.
 

@@ -18,6 +18,7 @@
 //! EPS NAS integrity and ciphering (TS 33.401 §8.1 and §8.2): the
 //! algorithms with BEARER 0 and a 24-bit NAS COUNT.
 
+use crate::common::batch::{CipherJob, MacJob};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
 pub use crate::common::{
@@ -56,6 +57,38 @@ pub fn nas_cipher(
     algorithm: CipheringAlgorithm,
 ) {
     nea_cipher(key, count.get(), Bearer::ZERO, direction, data, algorithm);
+}
+
+/// An EPS NAS message to cipher or decipher with others: what
+/// [`nas_cipher`] takes, as a job of
+/// [`nea_cipher_batch`](crate::nea_cipher_batch).
+pub fn cipher_job<'a>(
+    key: &'a [u8; 16],
+    count: NasCount,
+    direction: Direction,
+    data: &'a mut [u8],
+    algorithm: CipheringAlgorithm,
+) -> CipherJob<'a> {
+    CipherJob::new(key, count.get(), Bearer::ZERO, direction, data, algorithm)
+}
+
+/// An EPS NAS message whose MAC is computed with those of others: what
+/// [`nas_mac`] takes, as a job of [`nia_mac_batch`](crate::nia_mac_batch).
+pub fn mac_job<'a>(
+    key: &'a [u8; 16],
+    count: NasCount,
+    direction: Direction,
+    message: &'a [u8],
+    algorithm: IntegrityAlgorithm,
+) -> MacJob<'a> {
+    MacJob::new(
+        key,
+        count.get(),
+        Bearer::ZERO,
+        direction,
+        message,
+        algorithm,
+    )
 }
 
 /// Compute UL_NAS_MAC and XDL_NAS_MAC for RRC connection re-establishment

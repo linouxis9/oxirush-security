@@ -22,8 +22,8 @@ pub mod kdf;
 pub mod security;
 
 pub use crate::common::{
-    AccessKeyCount, Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount,
-    SecurityError, extract_128,
+    AccessKeyCount, Bearer, CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob,
+    NasCount, SecurityError, extract_128, nea_cipher_batch, nia_mac_batch,
 };
 pub use algo::{
     select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
@@ -37,6 +37,6 @@ pub use kdf::{
     derive_nas_token, derive_nas_token_full, derive_nh, derive_skenb, derive_skwt,
 };
 pub use security::{
-    nas_cipher, nas_mac, re_establishment_nas_mac, service_request_short_mac,
+    cipher_job, mac_job, nas_cipher, nas_mac, re_establishment_nas_mac, service_request_short_mac,
     service_request_short_mac_with_header,
 };

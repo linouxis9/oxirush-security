@@ -198,4 +198,6 @@ operations! {
     }
 }
 
-algorithms!("ssse3,sse4.1,aes,pclmulqdq");
+sboxes!("ssse3,sse4.1,aes,pclmulqdq");
+generators!("ssse3,sse4.1,aes,pclmulqdq");
+lanes!("ssse3,sse4.1,aes,pclmulqdq", 4);

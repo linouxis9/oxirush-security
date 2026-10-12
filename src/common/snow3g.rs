@@ -266,7 +266,7 @@ impl Snow3G {
 }
 
 /// The sixteen stages of the LFSR that a key and an IV give (TS 35.216).
-fn load(k: &[u32; 4], iv: &[u32; 4]) -> [u32; 16] {
+pub(crate) fn load(k: &[u32; 4], iv: &[u32; 4]) -> [u32; 16] {
     let n = |word: u32| word ^ 0xFFFF_FFFF;
     [
         n(k[0]),

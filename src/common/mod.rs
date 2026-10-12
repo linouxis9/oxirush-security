@@ -19,6 +19,7 @@
 //! the types of their inputs, and the PLMN and TBCD encodings.
 
 pub mod algo;
+pub mod batch;
 pub(crate) mod ct;
 pub mod error;
 pub mod input;
@@ -36,6 +37,7 @@ pub use algo::{
     select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
     select_integrity_algo_with_preference,
 };
+pub use batch::{CipherJob, MacJob, nea_cipher_batch, nia_mac_batch};
 pub use ct::constant_time_eq;
 pub use error::SecurityError;
 pub use input::{

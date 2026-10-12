@@ -40,6 +40,7 @@ pub const BLOCKS: &[fn()] = &[
     block_9,
     block_10,
     block_11,
+    block_12,
 ];
 
 /// The Rust block 1 of README.md.
@@ -178,6 +179,49 @@ fn block_4() {
 /// The Rust block 5 of README.md.
 fn block_5() {
     use oxirush_security::nas_5gs::{
+        CipheringAlgorithm, Direction, IntegrityAlgorithm, NasConnection, NasCount, cipher_job,
+        mac_job, nea_cipher_batch, nia_mac_batch,
+    };
+
+    // Three UEs: the NAS keys, the downlink NAS COUNT and the algorithms of each
+    let k_nas_enc = [[0x11; 16], [0x22; 16], [0x33; 16]];
+    let k_nas_int = [[0x44; 16], [0x55; 16], [0x66; 16]];
+    let counts = [7, 0, 41].map(|count| NasCount::new(count).unwrap());
+    let nea = [CipheringAlgorithm::NEA2, CipheringAlgorithm::NEA1, CipheringAlgorithm::NEA2];
+    let nia = [IntegrityAlgorithm::NIA2, IntegrityAlgorithm::NIA1, IntegrityAlgorithm::NIA2];
+    let (access, downlink) = (NasConnection::ThreeGpp, Direction::Downlink);
+
+    // The sequence number and the message of each
+    let mut messages = [
+        vec![7, 0x7e, 0x00, 0x54, 0x43, 0x90],
+        vec![0, 0x7e, 0x00, 0x5d, 0x02],
+        vec![41, 0x7e, 0x00, 0x68, 0x01, 0x00, 0x2e],
+    ];
+
+    let mut jobs: Vec<_> = (messages.iter_mut().enumerate())
+        .map(|(ue, message)| {
+            let (key, count) = (&k_nas_enc[ue], counts[ue]);
+            cipher_job(key, count, access, downlink, &mut message[1..], nea[ue])
+        })
+        .collect();
+    nea_cipher_batch(&mut jobs);
+
+    // The MAC is over the sequence number and the ciphered message
+    let mut jobs: Vec<_> = (messages.iter().enumerate())
+        .map(|(ue, message)| {
+            let (key, count) = (&k_nas_int[ue], counts[ue]);
+            mac_job(key, count, access, downlink, message, nia[ue])
+        })
+        .collect();
+    nia_mac_batch(&mut jobs);
+    for (job, message) in jobs.iter().zip(&messages) {
+        println!("MAC {:08x} of {}", job.mac().unwrap(), hex::encode(message));
+    }
+}
+
+/// The Rust block 6 of README.md.
+fn block_6() {
+    use oxirush_security::nas_5gs::{
         NasCount, derive_kamf_prime_handover, derive_kgnb, derive_kng_ran_star, derive_nh,
     };
 
@@ -206,8 +250,8 @@ fn block_5() {
     println!("KAMF'    {}", hex::encode(derive_kamf_prime_handover(&k_amf, count)));
 }
 
-/// The Rust block 6 of README.md.
-fn block_6() {
+/// The Rust block 7 of README.md.
+fn block_7() {
     use oxirush_security::nas_5gs::{
         msin_to_bcd, suci_decrypt_a, suci_scheme_output_a, suci_to_string, suci_to_supi,
     };
@@ -239,8 +283,8 @@ fn block_6() {
     println!("{:?}", suci_to_supi(&suci, None));
 }
 
-/// The Rust block 7 of README.md.
-fn block_7() {
+/// The Rust block 8 of README.md.
+fn block_8() {
     use oxirush_security::nas_5gs::{
         NaiProtectionScheme, conceal_network_specific_supi, deconceal_network_specific_suci,
         encode_nai_suci, parse_nai_suci,
@@ -265,8 +309,8 @@ fn block_7() {
     println!("{supi}");
 }
 
-/// The Rust block 8 of README.md.
-fn block_8() {
+/// The Rust block 9 of README.md.
+fn block_9() {
     use oxirush_security::{
         Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, nea_cipher_bits, nia_mac_bits,
     };
@@ -289,8 +333,8 @@ fn block_8() {
     println!("{:08x}", mac.unwrap());
 }
 
-/// The Rust block 9 of README.md.
-fn block_9() {
+/// The Rust block 10 of README.md.
+fn block_10() {
     use oxirush_security::nas_5gs::{
         CipheringAlgorithm, IntegrityAlgorithm, select_ciphering_algo, select_integrity_algo,
         select_integrity_algo_with_preference,
@@ -310,8 +354,8 @@ fn block_9() {
     println!("{:?}", IntegrityAlgorithm::try_from(5));
 }
 
-/// The Rust block 10 of README.md.
-fn block_10() {
+/// The Rust block 11 of README.md.
+fn block_11() {
     use oxirush_security::{
         build_guti_bytes, parse_guti_tmsi, plmn_from_bytes, plmn_to_bytes, tbcd_decode, tbcd_encode,
     };
@@ -330,7 +374,7 @@ fn block_10() {
 }
 
 /// The Rust block 1 of src/lib.rs.
-fn block_11() {
+fn block_12() {
     use oxirush_security::nas_5gs::{
         CipheringAlgorithm, Direction, IntegrityAlgorithm, NasConnection, NasCount, derive_knas_enc,
         derive_knas_int, nas_cipher, nas_mac,

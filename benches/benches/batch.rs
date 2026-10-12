@@ -24,12 +24,14 @@
 //! cargo bench --bench batch -- 128-EEA3/single # those whose name has it
 //! ```
 //!
-//! A benchmark is `<messages>x<octets>/algorithm/single`: one call of the
-//! function of one message for each message.
+//! A benchmark is `<messages>x<octets>/algorithm/form`. The form `single` is
+//! one call of the single-message function for each message, and `batch`
+//! one call of the function of several messages for all of them.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use oxirush_security::{
-    Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, nea_cipher, nia_mac,
+    Bearer, CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob, nea_cipher,
+    nea_cipher_batch, nia_mac, nia_mac_batch,
 };
 use oxirush_security_benches::message;
 use pprof::criterion::{Output, PProfProfiler};
@@ -69,6 +71,17 @@ fn ciphers_of<const N: usize>(criterion: &mut Criterion) {
                     }
                 })
             });
+            group.bench_function(BenchmarkId::new(name, "batch"), |bencher| {
+                bencher.iter(|| {
+                    let mut messages = keys.iter().zip(&mut data).zip(COUNT..);
+                    let mut jobs: [CipherJob<'_>; N] = std::array::from_fn(|_| {
+                        let ((key, data), count) = messages.next().expect("N messages");
+                        let (bearer, uplink) = (Bearer::ZERO, Direction::Uplink);
+                        CipherJob::new(black_box(key), count, bearer, uplink, data, algorithm)
+                    });
+                    nea_cipher_batch(black_box(&mut jobs));
+                })
+            });
         }
         group.finish();
     }
@@ -99,6 +112,19 @@ fn macs_of<const N: usize>(criterion: &mut Criterion) {
                         );
                     }
                     macs
+                })
+            });
+            group.bench_function(BenchmarkId::new(name, "batch"), |bencher| {
+                bencher.iter(|| {
+                    let mut messages = keys.iter().zip(&data).zip(COUNT..);
+                    let mut jobs: [MacJob<'_>; N] = std::array::from_fn(|_| {
+                        let ((key, data), count) = messages.next().expect("N messages");
+                        let (bearer, uplink) = (Bearer::ZERO, Direction::Uplink);
+                        MacJob::new(black_box(key), count, bearer, uplink, data, algorithm)
+                    });
+                    nia_mac_batch(black_box(&mut jobs));
+                    jobs.iter()
+                        .fold(0, |macs, job| macs ^ job.mac().unwrap_or(0))
                 })
             });
         }

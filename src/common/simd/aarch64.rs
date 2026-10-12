@@ -198,4 +198,6 @@ operations! {
     }
 }
 
-algorithms!("neon,aes");
+sboxes!("neon,aes");
+generators!("neon,aes");
+lanes!("neon,aes", 4);

@@ -17,6 +17,7 @@
 
 //! 5GS NAS integrity and ciphering (TS 33.501 §6.4.3 and §6.4.4).
 
+use crate::common::batch::{CipherJob, MacJob};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
 pub use crate::common::{
@@ -103,6 +104,47 @@ pub fn nas_cipher(
         data,
         algorithm,
     );
+}
+
+/// A 5GS NAS message to cipher or decipher with others: what
+/// [`nas_cipher`] takes, as a job of
+/// [`nea_cipher_batch`](crate::nea_cipher_batch).
+pub fn cipher_job<'a>(
+    key: &'a [u8; 16],
+    count: NasCount,
+    connection: NasConnection,
+    direction: Direction,
+    data: &'a mut [u8],
+    algorithm: CipheringAlgorithm,
+) -> CipherJob<'a> {
+    CipherJob::new(
+        key,
+        count.get(),
+        connection.into(),
+        direction,
+        data,
+        algorithm,
+    )
+}
+
+/// A 5GS NAS message whose MAC is computed with those of others: what
+/// [`nas_mac`] takes, as a job of [`nia_mac_batch`](crate::nia_mac_batch).
+pub fn mac_job<'a>(
+    key: &'a [u8; 16],
+    count: NasCount,
+    connection: NasConnection,
+    direction: Direction,
+    message: &'a [u8],
+    algorithm: IntegrityAlgorithm,
+) -> MacJob<'a> {
+    MacJob::new(
+        key,
+        count.get(),
+        connection.into(),
+        direction,
+        message,
+        algorithm,
+    )
 }
 
 /// Compute the MAC of a NAS Container (NASC) for N2 handover with a KAMF

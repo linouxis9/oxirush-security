@@ -173,13 +173,16 @@ impl Drop for Zuc {
 
 impl zeroize::ZeroizeOnDrop for Zuc {}
 
+/// The sixteen stages that a key and an IV give: s[i] = k[i] || d[i] ||
+/// iv[i], of 8, 15 and 8 bits.
+pub(crate) fn load(key: &[u8; 16], iv: &[u8; 16]) -> [u32; 16] {
+    core::array::from_fn(|i| (u32::from(key[i]) << 23) | (u32::from(D[i]) << 8) | u32::from(iv[i]))
+}
+
 impl Zuc {
     /// Initialize ZUC with 128-bit key and 128-bit IV.
     pub fn new(key: &[u8; 16], iv: &[u8; 16]) -> Self {
-        // Load LFSR: s[i] = k[i] || d[i] || iv[i] (31 bits: 8+15+8)
-        let mut stages: [u32; 16] = core::array::from_fn(|i| {
-            (u32::from(key[i]) << 23) | (u32::from(D[i]) << 8) | u32::from(iv[i])
-        });
+        let mut stages = load(key, iv);
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let Some(vector) = simd::Zuc::new(stages) {
             zeroize::Zeroize::zeroize(&mut stages);

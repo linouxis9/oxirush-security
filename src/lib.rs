@@ -83,6 +83,7 @@
 //! |------|-----------|---------------|------------------|
 //! | NAS ciphering | `nas_cipher`; the algorithms `nea_cipher`, `nea1_cipher`, `nea2_cipher`, `nea3_cipher` and their `*_bits` forms | NEA0 (null), NEA1 (SNOW 3G, 128-EEA1), NEA2 (AES-128-CTR, 128-EEA2), NEA3 (ZUC, 128-EEA3): TS 33.401 Annex B.1 | 3GPP |
 //! | NAS integrity | `nas_mac`; the algorithms `nia_mac`, `nia1_mac`, `nia2_mac`, `nia3_mac` and their `*_bits` forms | NIA1 (SNOW 3G, 128-EIA1), NIA2 (AES-CMAC, 128-EIA2), NIA3 (ZUC, 128-EIA3): TS 33.401 Annex B.2 | 3GPP |
+//! | Several messages at once | `nea_cipher_batch` and `nia_mac_batch` on a [`CipherJob`] or a [`MacJob`] for each message, which holds its key, COUNT, BEARER, DIRECTION and algorithm; `cipher_job` and `mac_job` make the job of a NAS message | The algorithms above | 3GPP, and the functions of one message |
 //! | Keystream generators | `Snow3G`, `Zuc` | TS 35.216, TS 35.222 | 3GPP |
 //! | 5G AKA | `derive_kausf`, `compute_xres_star`, `compute_hres_star`, `derive_kseaf`, `derive_kamf`, `derive_knas_enc`, `derive_knas_int`, `derive_kgnb`, `derive_nh` | TS 33.501 Annex A.2 and A.4 to A.10 | other implementations |
 //! | Other 5GS derivations | KAMF', KN3IWF, KNG-RAN\*, KSN, the RRC and UP keys, the SoR and UPU MACs, the TNAP usage keys, KIAB | TS 33.501 Annex A | calculated |
@@ -141,10 +142,11 @@
 //! |---------|---------------------|
 //! | Wiped after use | Explicit buffers and owned state: CK‖IK buffers, key-bearing KDF input buffers, the SHA-256 state and the key block and inner hash of HMAC-SHA-256, SUCI ECIES KDF buffers, cipher state including the AES round keys, and keystream buffers. The hasher is that of the `sha2` crate, and AES that of the `aes` crate on a processor without AES instructions, both built with their `zeroize` features: the crate does not compile without them. |
 //! | Not wiped | Temporary copies and compiler-generated spills, which the wiping above does not all cover. Returned keys and deconcealed identities belong to the caller, who clears them when their lifetime ends. |
-//! | Secret-dependent indexing and branches | SNOW 3G, ZUC, AES, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor branch on a secret value, in any of their forms. |
+//! | Secret-dependent indexing and branches | SNOW 3G, ZUC, AES, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor branch on a secret value, in any of their forms, for one message or for several. |
 //! | On vector instructions | On an x86-64 processor with SSSE3, SSE4.1, AES-NI and PCLMULQDQ, or an AArch64 one with AES, which the crate sees when the program runs: an S-box is read with shuffle instructions, whose index is an operand and not an address; S1 of SNOW 3G and the S-box inside S1 of ZUC are the AES instruction; the products of the two MACs are the carry-less multiplication instruction. SNOW 3G is clocked three times at once. The key expansion and the rounds of AES-128 are the AES instruction, eight counter blocks at a time. |
+//! | Several messages | [`nea_cipher_batch`] and [`nia_mac_batch`] clock four SNOW 3G or ZUC generators in the 32-bit words of a vector, and eight on an x86-64 processor with AVX2; the CBC-MAC chains of eight messages of 128-EIA2 advance together. What a generator or a chain does at a step depends on the lengths of the messages, and the time of a message on no octet or key of another. |
 //! | In scalar code | Elsewhere, and as the reference of the tests: S1 of SNOW 3G and the S-box S1 of ZUC are computed from one round of AES, which the `aes` crate runs as a bitsliced routine without the AES instructions. The S-box SQ of SNOW 3G is read whole and narrowed down through masks. S0 of ZUC is three four-bit S-boxes, each a word that is shifted. MULα, DIVα and the field multiplications of the two MACs are carry-less products, made with shifts and integer multiplications. A mask that a secret bit gives goes through `core::hint::black_box`. |
-//! | Checked in the compiled code | Without `black_box` the compiler turned the masked selection of SQ in the scalar code into conditional jumps on bits of the state. In the release build for x86-64 with Rust 1.98.1, the functions of SNOW 3G and ZUC in both forms, of AES on its instructions and of the six algorithms were read in the disassembly: their conditional jumps test a length, a loop counter, a place in a buffer, a feature of the processor or whether the generator has started, and none a secret. In the scalar code, shifts by a secret amount and multiplications of secret words remain. They take a time that does not depend on their operands on the x86-64 and AArch64 processors of today, and may not on a small processor whose multiplier stops early. |
+//! | Checked in the compiled code | Without `black_box` the compiler turned the masked selection of SQ in the scalar code into conditional jumps on bits of the state. In the release build for x86-64 with Rust 1.98.1, the functions of SNOW 3G and ZUC in their forms, of AES on its instructions, of the six algorithms and of the two functions of several messages were read in the disassembly: their conditional jumps test a length, a loop counter, a place in a buffer, a feature of the processor, whether a generator has started or which message it works for, and none a secret. In the scalar code, shifts by a secret amount and multiplications of secret words remain. They take a time that does not depend on their operands on the x86-64 and AArch64 processors of today, and may not on a small processor whose multiplier stops early. |
 //! | Comparison | [`constant_time_eq`] compares RES\* with XRES\*, or HRES\* with HXRES\*, through `subtle`: its time depends on the lengths and not on where the values differ. |
 //! | Not measured | No timing was measured, and no other target or compiler was read. The AArch64 form is the code of the x86-64 one on other instructions; CI runs the tests on an AArch64 machine. |
 //!
@@ -175,12 +177,19 @@
 //! that the processor of the test has. CI runs the tests on x86-64, on
 //! AArch64, and on 32-bit x86, which has the scalar code alone.
 //!
+//! [`nea_cipher_batch`] and [`nia_mac_batch`] are compared with the
+//! functions of one message on batches of 0 to 40 messages of mixed
+//! algorithms and lengths, in whole octets and in bits, with eight
+//! generators side by side, with four and in scalar code. The 3GPP test
+//! sets of the three ciphering algorithms, of 128-EIA1 and of 128-EIA3, and
+//! set 7 of 128-EIA2, also go through them in one batch.
+//!
 //! CI also fuzzes what takes octets from a peer, a minute for each of four
 //! `cargo fuzz` targets under `fuzz/`: a SUCI, a scheme output and a NAI
 //! are read without a panic, what is concealed is deconcealed, an identity
 //! or a digit string that decodes encodes back to its octets, and every
 //! algorithm takes any message at any length in bits and gives the same on
-//! vector instructions and in scalar code.
+//! vector instructions and in scalar code, alone and in a batch.
 //!
 //! `tests/readme.rs` runs each Rust block of the README and of this page
 //! and compares what it prints with the text under it.
@@ -240,7 +249,8 @@
 //! build enables them for every processor of the target, with
 //! `-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq` or `+neon,+aes`, or
 //! with a `-C target-cpu` that has them, and the scalar code otherwise.
-//! The values are the same.
+//! With `+avx2` as well, a batch has eight generators side by side. The
+//! values are the same.
 //!
 //! On a target without an operating system, `getrandom` has no source of
 //! random numbers of its own: the program that uses `suci` gives it one, as
@@ -282,13 +292,13 @@ struct Readme;
 // connection; the algorithms with their own ranges are `nia_mac` and
 // `nea_cipher`.
 pub use common::{
-    AccessKeyCount, Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount,
-    SecurityError, constant_time_eq, extract_128, nea_cipher, nea_cipher_bits, nea1_cipher,
-    nea1_cipher_bits, nea2_cipher, nea2_cipher_bits, nea3_cipher, nea3_cipher_bits, nia_mac,
-    nia_mac_bits, nia1_mac, nia1_mac_bits, nia2_mac, nia2_mac_bits, nia3_mac, nia3_mac_bits,
-    plmn_to_bytes,
+    AccessKeyCount, Bearer, CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob,
+    NasCount, SecurityError, constant_time_eq, extract_128, nea_cipher, nea_cipher_batch,
+    nea_cipher_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits, nea3_cipher,
+    nea3_cipher_bits, nia_mac, nia_mac_batch, nia_mac_bits, nia1_mac, nia1_mac_bits, nia2_mac,
+    nia2_mac_bits, nia3_mac, nia3_mac_bits, plmn_to_bytes,
 };
-pub use common::{error, input, nea, nia, plmn, snow3g, zuc};
+pub use common::{batch, error, input, nea, nia, plmn, snow3g, zuc};
 #[cfg(feature = "alloc")]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub use common::{plmn_from_bytes, tbcd_decode, tbcd_encode};
@@ -329,6 +339,15 @@ pub mod fuzzing {
     pub fn scalar<R>(work: impl FnOnce() -> R) -> R {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         return crate::common::simd::scalar(work);
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        work()
+    }
+
+    /// Run `work` without the vector instructions of 256 bits, as on a
+    /// processor that has those of 128 bits alone.
+    pub fn narrow<R>(work: impl FnOnce() -> R) -> R {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        return crate::common::simd::narrow(work);
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         work()
     }

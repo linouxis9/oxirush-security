@@ -21,9 +21,9 @@
 //! This is the one module of the crate with `unsafe` code, and all of it is
 //! of one kind: a call of a function that is compiled for instructions
 //! which the build does not assume. Such a call is sound when the processor
-//! has the instructions, which [`available`] has seen at run time before
-//! every one of them. The functions themselves, in the module of the
-//! architecture, are safe code.
+//! has the instructions, which [`available`] has seen before every one of
+//! them, and `wide_available` before those of the 256-bit vectors. The
+//! functions themselves, in the module of the architecture, are safe code.
 //!
 //! The scalar generators of `snow3g` and `zuc` are used where the
 //! instructions are missing, and the tests compare the two.
@@ -36,6 +36,8 @@ use zeroize::{Zeroize, Zeroizing};
 #[deny(unsafe_code)]
 mod generators;
 #[deny(unsafe_code)]
+pub(crate) mod lanes;
+#[deny(unsafe_code)]
 mod tables;
 
 #[cfg(target_arch = "aarch64")]
@@ -46,47 +48,101 @@ mod arch;
 #[deny(unsafe_code)]
 #[path = "x86_64.rs"]
 mod arch;
+#[cfg(target_arch = "x86_64")]
+#[deny(unsafe_code)]
+#[path = "x86_64_avx2.rs"]
+mod wide;
+
+/// What a thread of the tests may use of the processor.
+#[cfg(any(test, all(fuzzing, feature = "std")))]
+#[derive(Clone, Copy, PartialEq)]
+enum Allowed {
+    All,
+    /// The vectors of 128 bits, as on a processor without wider ones.
+    Narrow,
+    /// No vector instruction.
+    Scalar,
+}
 
 #[cfg(any(test, all(fuzzing, feature = "std")))]
 std::thread_local! {
-    /// Set by [`scalar`] for the thread that compares the two paths.
-    static SCALAR_ONLY: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+    /// Set by [`scalar`] and [`narrow`] for the thread that compares the
+    /// paths.
+    static ALLOWED: core::cell::Cell<Allowed> = const { core::cell::Cell::new(Allowed::All) };
+}
+
+#[cfg(any(test, all(fuzzing, feature = "std")))]
+fn allowing<R>(allowed: Allowed, work: impl FnOnce() -> R) -> R {
+    let before = ALLOWED.replace(allowed);
+    let result = work();
+    ALLOWED.set(before);
+    result
 }
 
 /// Run `work` with the vector paths turned off in this thread, as on a
 /// processor without the instructions.
 #[cfg(any(test, all(fuzzing, feature = "std")))]
 pub(crate) fn scalar<R>(work: impl FnOnce() -> R) -> R {
-    let before = SCALAR_ONLY.replace(true);
-    let result = work();
-    SCALAR_ONLY.set(before);
-    result
+    allowing(Allowed::Scalar, work)
 }
 
-/// What [`available`] found: 0 before it has looked, 1 without the
+/// Run `work` with the vectors of 256 bits turned off in this thread, as
+/// on a processor that has those of 128 bits alone.
+#[cfg(any(test, all(fuzzing, feature = "std")))]
+pub(crate) fn narrow<R>(work: impl FnOnce() -> R) -> R {
+    allowing(Allowed::Narrow, work)
+}
+
+/// What a look at the processor found: 0 before the look, 1 without the
 /// instructions and 2 with them.
-static DETECTED: AtomicU8 = AtomicU8::new(0);
+struct Detected(AtomicU8);
+
+impl Detected {
+    const fn new() -> Self {
+        Self(AtomicU8::new(0))
+    }
+
+    /// What `look` finds, which is asked once.
+    #[inline]
+    fn get(&self, look: fn() -> bool) -> bool {
+        match self.0.load(Ordering::Relaxed) {
+            0 => self.detect(look),
+            found => found == 2,
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn detect(&self, look: fn() -> bool) -> bool {
+        let detected = look();
+        self.0
+            .store(if detected { 2 } else { 1 }, Ordering::Relaxed);
+        detected
+    }
+}
 
 /// Whether the processor has the instructions of the vector paths.
 #[inline]
 pub(crate) fn available() -> bool {
+    static DETECTED: Detected = Detected::new();
     #[cfg(any(test, all(fuzzing, feature = "std")))]
-    if SCALAR_ONLY.get() {
+    if ALLOWED.get() == Allowed::Scalar {
         return false;
     }
-    match DETECTED.load(Ordering::Relaxed) {
-        0 => detect(),
-        found => found == 2,
-    }
+    DETECTED.get(arch::detected)
 }
 
-/// Look at the processor, once, and remember what it has.
-#[cold]
-#[inline(never)]
-fn detect() -> bool {
-    let detected = arch::detected();
-    DETECTED.store(if detected { 2 } else { 1 }, Ordering::Relaxed);
-    detected
+/// Whether the processor also has the instructions of the generators that
+/// run eight side by side.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn wide_available() -> bool {
+    static DETECTED: Detected = Detected::new();
+    #[cfg(any(test, all(fuzzing, feature = "std")))]
+    if ALLOWED.get() != Allowed::All {
+        return false;
+    }
+    available() && DETECTED.get(wide::detected)
 }
 
 /// SNOW 3G on vector instructions. It exists only on a processor that has
@@ -173,6 +229,140 @@ impl Zeroize for Zuc {
         self.at.zeroize();
         self.r.zeroize();
     }
+}
+
+/// SNOW 3G for `N` messages at once, on vector instructions: word `i` of
+/// every array is that of message `i`. It exists only on a processor that
+/// has the instructions of its `N`: `new` is the one way to make it.
+pub(crate) struct Snow3gLanes<const N: usize> {
+    /// The sixteen stages of the LFSRs are `lfsr[at..at + 16]`. A clock
+    /// writes the next one after them and moves `at` by one.
+    lfsr: [[u32; N]; 32],
+    /// R1, R2 and R3 of the FSMs.
+    r: [[u32; N]; 3],
+    at: usize,
+}
+
+/// ZUC for `N` messages at once, as [`Snow3gLanes`] is SNOW 3G.
+pub(crate) struct ZucLanes<const N: usize> {
+    /// The sixteen stages of the LFSRs are `lfsr[at..at + 16]`. A clock
+    /// writes the next one after them and moves `at` by one.
+    lfsr: [[u32; N]; 32],
+    /// R1 and R2 of the nonlinear functions.
+    r: [[u32; N]; 2],
+    at: usize,
+}
+
+/// `N` generators of one kind, which [`lanes::run`] gives their messages.
+pub(crate) trait Generators<const N: usize>: Zeroize {
+    /// Give generator `lane` the sixteen stages that a key and an IV give,
+    /// and registers at zero.
+    fn load(&mut self, lane: usize, stages: &[u32; 16]);
+
+    /// One clock for each of `words`. The generators whose word of
+    /// `initialization` is all ones are in their initialization: their
+    /// word goes into their LFSR and means nothing.
+    fn clocks(&mut self, initialization: [u32; N], words: &mut [[u32; N]]);
+}
+
+/// The lane generators of a width: how they are made, which is where the
+/// processor is asked for the instructions of `$clocks`, and their clocks.
+macro_rules! lane_generators {
+    ($generators:ident, $registers:literal, $lanes:literal, $available:path, $clocks:path) => {
+        impl $generators<$lanes> {
+            /// The generators without key, or `None` on a processor
+            /// without the instructions.
+            pub(crate) fn new() -> Option<Self> {
+                $available().then_some(Self {
+                    lfsr: [[0; $lanes]; 32],
+                    r: [[0; $lanes]; $registers],
+                    at: 0,
+                })
+            }
+        }
+
+        impl Generators<$lanes> for $generators<$lanes> {
+            fn load(&mut self, lane: usize, stages: &[u32; 16]) {
+                for (stage, word) in self.lfsr[self.at..].iter_mut().zip(stages) {
+                    stage[lane] = *word;
+                }
+                for register in &mut self.r {
+                    register[lane] = 0;
+                }
+            }
+
+            fn clocks(&mut self, initialization: [u32; $lanes], words: &mut [[u32; $lanes]]) {
+                // SAFETY: `self` was made by `new`, which found the
+                // instructions that the function is compiled for. A
+                // processor does not lose them.
+                unsafe { $clocks(self, initialization, words) }
+            }
+        }
+
+        impl Zeroize for $generators<$lanes> {
+            fn zeroize(&mut self) {
+                self.lfsr.zeroize();
+                self.r.zeroize();
+                self.at.zeroize();
+            }
+        }
+    };
+}
+
+lane_generators!(Snow3gLanes, 3, 4, available, arch::snow3g_lanes_clocks);
+lane_generators!(ZucLanes, 2, 4, available, arch::zuc_lanes_clocks);
+#[cfg(target_arch = "x86_64")]
+lane_generators!(Snow3gLanes, 3, 8, wide_available, wide::snow3g_lanes_clocks);
+#[cfg(target_arch = "x86_64")]
+lane_generators!(ZucLanes, 2, 8, wide_available, wide::zuc_lanes_clocks);
+
+/// Above this many messages, the generators that run eight side by side
+/// are faster than those that run four, where the processor has both.
+#[cfg(target_arch = "x86_64")]
+const WIDE_FROM: usize = 4;
+
+/// Give each of the `count` messages of `streams` its SNOW 3G keystream,
+/// from generators that run side by side. `false` on a processor without
+/// the instructions, where nothing is done.
+pub(crate) fn snow3g_lanes<S: lanes::Stream>(
+    count: usize,
+    streams: impl Iterator<Item = S>,
+) -> bool {
+    if count == 0 {
+        return available();
+    }
+    #[cfg(target_arch = "x86_64")]
+    if count > WIDE_FROM
+        && let Some(mut generators) = Snow3gLanes::<8>::new()
+    {
+        lanes::run(&mut generators, streams);
+        return true;
+    }
+    let Some(mut generators) = Snow3gLanes::<4>::new() else {
+        return false;
+    };
+    lanes::run(&mut generators, streams);
+    true
+}
+
+/// Give each of the `count` messages of `streams` its ZUC keystream, as
+/// [`snow3g_lanes`] does for SNOW 3G.
+pub(crate) fn zuc_lanes<S: lanes::Stream>(count: usize, streams: impl Iterator<Item = S>) -> bool {
+    if count == 0 {
+        return available();
+    }
+    #[cfg(target_arch = "x86_64")]
+    if count > WIDE_FROM
+        && let Some(mut generators) = ZucLanes::<8>::new()
+    {
+        lanes::run(&mut generators, streams);
+        return true;
+    }
+    let Some(mut generators) = ZucLanes::<4>::new() else {
+        return false;
+    };
+    lanes::run(&mut generators, streams);
+    true
 }
 
 /// The eleven round keys of AES-128. The first octet of a round key, as of

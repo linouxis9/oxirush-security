@@ -17,10 +17,13 @@
 
 //! SNOW 3G and ZUC written with the vector operations of an architecture.
 //!
-//! [`algorithms!`] expands in the module of each architecture, with the
-//! instruction sets that its functions are compiled for. The functions are
-//! safe: they call the operations of that module, which are compiled for
-//! the same instructions, and nothing else of the processor.
+//! The macros expand in the module of each architecture, with the
+//! instruction sets that its functions are compiled for: `sboxes!` on
+//! vectors of any width, `generators!` for one message on vectors of 128
+//! bits, and `lanes!` for as many messages as a vector has 32-bit words.
+//! The functions are safe: they call the operations of that module, which
+//! are compiled for the same instructions, and nothing else of the
+//! processor.
 //!
 //! What makes them faster than the scalar code, with the same property
 //! that no branch and no address depends on a secret:
@@ -36,12 +39,12 @@
 //!   that one of them gives, so one pass over the rows of SQ serves three
 //!   clocks; and the LFSR words of the next three clocks depend on stages
 //!   that exist.
+//! - For several messages, a generator of each is clocked in one 32-bit
+//!   word of every vector: the same instructions clock them all.
 
-macro_rules! algorithms {
+macro_rules! sboxes {
     ($features:literal) => {
         use crate::common::simd::tables::*;
-        use crate::common::simd::{AesSchedule, Snow3g, Zuc};
-        use crate::common::zuc::mod31;
 
         /// The low and the high nibble of each octet.
         #[inline]
@@ -144,6 +147,13 @@ macro_rules! algorithms {
 
             xor(s1, and(xor(s0, s1), from_octets(ZUC_S0_OCTETS)))
         }
+    };
+}
+
+macro_rules! generators {
+    ($features:literal) => {
+        use crate::common::simd::{AesSchedule, Snow3g, Zuc};
+        use crate::common::zuc::mod31;
 
         // ── SNOW 3G ───────────────────────────────────────────────────────────
 
@@ -723,6 +733,159 @@ macro_rules! algorithms {
         #[target_feature(enable = $features)]
         pub(super) fn carry_less_product(x: u64, y: u64) -> (u64, u64) {
             clmul(x, y)
+        }
+    };
+}
+
+macro_rules! lanes {
+    ($features:literal, $lanes:literal) => {
+        use crate::common::simd::{Snow3gLanes, ZucLanes};
+
+        /// One clock of SNOW 3G for each of `words`, on the generators of
+        /// a vector at once: word `i` of every vector is that of generator
+        /// `i`. A generator whose `feedback` is all ones is in its
+        /// initialization, and its word means nothing.
+        #[target_feature(enable = $features)]
+        pub(super) fn snow3g_lanes_clocks(
+            state: &mut Snow3gLanes<$lanes>,
+            feedback: [u32; $lanes],
+            words: &mut [[u32; $lanes]],
+        ) {
+            let feedback = from_words(feedback);
+            let [r1, r2, r3] = state.r;
+            let (mut r1, mut r2, mut r3) = (from_words(r1), from_words(r2), from_words(r3));
+            for word in words {
+                // The sixteen stages are a window of the array, which
+                // moves by one: it starts over at the end
+                if state.at == 16 {
+                    state.lfsr.copy_within(16.., 0);
+                    state.at = 0;
+                }
+                let at = state.at;
+                let stage = |index: usize| from_words(state.lfsr[at + index]);
+                let (s0, s11) = (stage(0), stage(11));
+
+                // The LFSR: α s0 + s2 + α^-1 s11
+                let v = xor(xor(shl32::<8>(s0), shr32::<8>(s11)), stage(2));
+                let v = xor(
+                    v,
+                    snow3g_alpha(shuffle(s0, from_octets(HIGH_OCTETS)), &MUL_ALPHA),
+                );
+                let v = xor(
+                    v,
+                    snow3g_alpha(shuffle(s11, from_octets(LOW_OCTETS)), &DIV_ALPHA),
+                );
+
+                // The FSM
+                let f = xor(add32(stage(15), r1), r2);
+                let r = add32(r2, xor(r3, stage(5)));
+                r3 = snow3g_s2(r2);
+                r2 = snow3g_s1(r1);
+                r1 = r;
+
+                *word = to_words(xor(f, s0));
+                state.lfsr[at + 16] = to_words(xor(v, and(f, feedback)));
+                state.at = at + 1;
+            }
+            state.r = [to_words(r1), to_words(r2), to_words(r3)];
+        }
+
+        /// The sum of two numbers modulo 2^31 - 1, each in [0, 2^31 - 1]:
+        /// 2^31 is 1, so what is above bit 30 is added to what is below.
+        /// The sum of numbers that are not both zero is not zero.
+        #[inline]
+        #[target_feature(enable = $features)]
+        fn zuc_add(a: V, b: V) -> V {
+            let sum = add32(a, b);
+            add32(
+                and(sum, from_words([0x7fff_ffff; $lanes])),
+                shr32::<31>(sum),
+            )
+        }
+
+        /// One clock of ZUC for each of `words`, on the generators of a
+        /// vector at once: word `i` of every vector is that of generator
+        /// `i`. A generator whose `initialization` is all ones is in its
+        /// initialization, and its word means nothing.
+        #[target_feature(enable = $features)]
+        pub(super) fn zuc_lanes_clocks(
+            state: &mut ZucLanes<$lanes>,
+            initialization: [u32; $lanes],
+            words: &mut [[u32; $lanes]],
+        ) {
+            let initialization = from_words(initialization);
+            let low_half = from_words([0xffff; $lanes]);
+            let low_31 = from_words([0x7fff_ffff; $lanes]);
+            let [r1, r2] = state.r;
+            let (mut r1, mut r2) = (from_words(r1), from_words(r2));
+            for word in words {
+                if state.at == 16 {
+                    state.lfsr.copy_within(16.., 0);
+                    state.at = 0;
+                }
+                let at = state.at;
+                let stage = |index: usize| from_words(state.lfsr[at + index]);
+                let (s0, s15) = (stage(0), stage(15));
+
+                // Bit reorganization: the high sixteen bits of a stage of
+                // 31 bits are those above its bit 14
+                let x0 = or(shl32::<16>(shr32::<15>(s15)), and(stage(14), low_half));
+                let x1 = or(shl32::<16>(stage(11)), shr32::<15>(stage(9)));
+                let x2 = or(shl32::<16>(stage(7)), shr32::<15>(stage(5)));
+                let x3 = or(shl32::<16>(stage(2)), shr32::<15>(s0));
+
+                // The nonlinear function: W, then R1 = S(L1(W1L || W2H))
+                // and R2 = S(L2(W2L || W1H))
+                let w = add32(xor(x0, r1), r2);
+                let (w1, w2) = (add32(r1, x1), xor(r2, x2));
+                let u = or(shl32::<16>(w1), shr32::<16>(w2));
+                let v = or(shl32::<16>(w2), shr32::<16>(w1));
+                // L1 rotates by 2, 10, 18 and 24 bits and L2 by 8, 14, 22
+                // and 30: by 2 or by 6, then by whole octets, which are
+                // shuffles
+                let u_2 = or(shl32::<2>(u), shr32::<30>(u));
+                let v_6 = or(shl32::<6>(v), shr32::<26>(v));
+                let by_8 = from_octets(ROTATE_LEFT_8);
+                let by_16 = from_octets(ROTATE_16);
+                let by_24 = from_octets(ROTATE_RIGHT_8);
+                let l1 = xor(
+                    xor(xor(u, u_2), shuffle(u, by_24)),
+                    xor(shuffle(u_2, by_8), shuffle(u_2, by_16)),
+                );
+                let l2 = xor(
+                    xor(xor(v, shuffle(v, by_8)), shuffle(v_6, by_8)),
+                    xor(shuffle(v_6, by_16), shuffle(v_6, by_24)),
+                );
+                r1 = zuc_sboxes(l1);
+                r2 = zuc_sboxes(l2);
+
+                // The LFSR: 2^15 s15 + 2^17 s13 + 2^21 s10 + 2^20 s4 +
+                // (1 + 2^8) s0 modulo 2^31 - 1. A stage times a power of
+                // two is the stage rotated within its 31 bits.
+                let s13 = stage(13);
+                let s10 = stage(10);
+                let s4 = stage(4);
+                let times_2_15 = and(or(shl32::<15>(s15), shr32::<16>(s15)), low_31);
+                let times_2_17 = and(or(shl32::<17>(s13), shr32::<14>(s13)), low_31);
+                let times_2_21 = and(or(shl32::<21>(s10), shr32::<10>(s10)), low_31);
+                let times_2_20 = and(or(shl32::<20>(s4), shr32::<11>(s4)), low_31);
+                let times_2_8 = and(or(shl32::<8>(s0), shr32::<23>(s0)), low_31);
+                let sum = zuc_add(
+                    zuc_add(
+                        zuc_add(times_2_15, times_2_17),
+                        zuc_add(times_2_21, times_2_20),
+                    ),
+                    zuc_add(times_2_8, s0),
+                );
+                // In the initialization the word W, without its low bit,
+                // goes into the LFSR
+                let sum = zuc_add(sum, and(shr32::<1>(w), initialization));
+
+                *word = to_words(xor(w, x3));
+                state.lfsr[at + 16] = to_words(sum);
+                state.at = at + 1;
+            }
+            state.r = [to_words(r1), to_words(r2)];
         }
     };
 }

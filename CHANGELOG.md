@@ -277,12 +277,50 @@ and what a type cannot say is a `Result`. Every call below changes.
 
   0.2.0 had no feature and 76 crates. Without `nai`, `suci_to_supi` returns
   `None` for a SUCI in a NAI format.
+- `nea_cipher_batch` and `nia_mac_batch`, for an AMF, an MME or a load
+  generator that ciphers or authenticates many messages at once. Each
+  message is a job, a `CipherJob` or a `MacJob`, which holds its own key,
+  COUNT, BEARER, DIRECTION and algorithm; `nas_5gs::cipher_job`,
+  `nas_5gs::mac_job` and their counterparts of `nas_eps` make the job of a
+  NAS message from a `NasCount`. The jobs of a batch need not have the same
+  algorithm or length, and each has what the function of one message gives
+  it. The module is `batch`, in `common` and at the crate root.
+
+  SNOW 3G and ZUC generators are clocked side by side, one in each 32-bit
+  word of a vector: four on the processors that have the vector code, and
+  eight on an x86-64 processor with AVX2, from five messages on. A
+  generator that has given its message its keystream takes the next
+  message. The CBC-MAC chains of eight messages of 128-EIA2 advance
+  together. 128-EEA2 is one message after the other. Elsewhere the two
+  functions call those of one message.
+
+  What a generator or a chain does at a step depends on the lengths of the
+  messages: no branch or address depends on a key or on a message, and the
+  time of a message on no octet of another. The compiled code was read as
+  that of the other functions was.
+
+  On the Ryzen 7 5700G, sixteen messages of 1500 octets take 11.5 µs with
+  128-EEA1 and 13.6 µs with 128-EEA3 in one call, where sixteen calls take
+  41.3 µs and 51.4 µs; their MACs take 3.9 µs, 4.0 µs and 18.5 µs with
+  128-EIA1, 128-EIA2 and 128-EIA3, where sixteen calls take 6.5 µs, 15.3 µs
+  and 56.9 µs. Sixteen messages of 64 octets take 1.8 µs and 2.1 µs to
+  cipher, where sixteen calls take 5.7 µs and 6.7 µs, and 2.2 µs, 0.92 µs
+  and 2.7 µs for their MACs, where sixteen calls take 4.9 µs, 1.7 µs and
+  7.5 µs. Four messages gain 1.4 to 3.3 times, and 128-EEA2 nothing.
+  `benches/README.md` has the table.
+
+  The tests compare a batch with its messages one by one, on batches of 0
+  to 40 messages of mixed algorithms and lengths, in whole octets and in
+  bits, with eight generators, with four and in scalar code, and run the
+  3GPP test sets of the three ciphering algorithms, of 128-EIA1 and of
+  128-EIA3, and set 7 of 128-EIA2, through one batch. The fuzz target
+  `algorithms` compares batches of up to twelve messages.
 - Four `cargo fuzz` targets under `fuzz/`, which CI runs for a minute each:
   `suci` (a SUCI of a NAS message, a scheme output and a NAI from a peer),
   `suci_round_trip` (what is concealed is deconcealed), `identity` (5G-GUTI,
   5G-S-TMSI, PLMN and TBCD, each encoded back to its octets) and
   `algorithms` (every algorithm at any length in bits, on vector
-  instructions and in scalar code).
+  instructions and in scalar code, alone and in a batch).
 - `benches/`, a package of its own that times the algorithms, the key
   derivations and SUCI with criterion and profiles them with pprof. The
   published crate does not have it, and the crate has no dependency for it.

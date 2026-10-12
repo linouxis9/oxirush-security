@@ -2,14 +2,14 @@
 //! ciphering twice gives the data back, the bits after the length are left
 //! alone or ignored, and a length that the buffer does not hold is an error.
 //! On a processor with the vector instructions, they give what the scalar
-//! code gives.
+//! code gives, and in a batch each message has what it has alone.
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use oxirush_security::fuzzing::scalar;
+use oxirush_security::fuzzing::{narrow, scalar};
 use oxirush_security::{
-    Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, nea_cipher, nea_cipher_bits,
-    nia_mac, nia_mac_bits,
+    Bearer, CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob, nea_cipher,
+    nea_cipher_batch, nea_cipher_bits, nia_mac, nia_mac_batch, nia_mac_bits,
 };
 
 fuzz_target!(|bytes: &[u8]| {
@@ -39,6 +39,63 @@ fuzz_target!(|bytes: &[u8]| {
     assert_eq!(data, scalar_data);
     nea_cipher(&key, count, bearer, direction, &mut data, ciphering);
     assert_eq!(data, message);
+
+    // The message next to others, of other keys, lengths and algorithms, or
+    // all of one algorithm: each has what the functions of one message give
+    // it, with eight generators side by side, with four and in scalar code
+    let others = 1 + usize::from(head[23] % 12);
+    let algorithm_of = |index: usize| match head[21] & 2 {
+        0 => (head[index % 16] ^ head[22]) & 3,
+        _ => head[22] & 3,
+    };
+    let integrity_of = |index| IntegrityAlgorithm::try_from(algorithm_of(index)).expect("0 to 3");
+    let ciphering_of = |index| CipheringAlgorithm::try_from(algorithm_of(index)).expect("0 to 3");
+    let keys: Vec<[u8; 16]> = (0..others)
+        .map(|index| std::array::from_fn(|octet| key[octet] ^ index as u8))
+        .collect();
+    let messages: Vec<&[u8]> = (0..others)
+        .map(|index| {
+            let length = (usize::from(head[index % 24]) * (index + 1)) % (message.len() + 1);
+            &message[..length]
+        })
+        .collect();
+    let expected: Vec<(Vec<u8>, u32)> = (0..others)
+        .map(|index| {
+            let (key, integrity, ciphering) =
+                (&keys[index], integrity_of(index), ciphering_of(index));
+            let mac = nia_mac(key, count, bearer, direction, messages[index], integrity);
+            let mut data = messages[index].to_vec();
+            nea_cipher(key, count, bearer, direction, &mut data, ciphering);
+            (data, mac)
+        })
+        .collect();
+    let in_a_batch = || {
+        let mut macs: Vec<MacJob<'_>> = (0..others)
+            .map(|index| {
+                let (key, integrity) = (&keys[index], integrity_of(index));
+                MacJob::new(key, count, bearer, direction, messages[index], integrity)
+            })
+            .collect();
+        nia_mac_batch(&mut macs);
+        let mut data: Vec<Vec<u8>> = messages.iter().map(|message| message.to_vec()).collect();
+        let mut jobs: Vec<CipherJob<'_>> = data
+            .iter_mut()
+            .enumerate()
+            .map(|(index, data)| {
+                let (key, ciphering) = (&keys[index], ciphering_of(index));
+                CipherJob::new(key, count, bearer, direction, data, ciphering)
+            })
+            .collect();
+        nea_cipher_batch(&mut jobs);
+        drop(jobs);
+        let macs = macs
+            .iter()
+            .map(|job| job.mac().expect("the batch computed it"));
+        data.into_iter().zip(macs).collect::<Vec<_>>()
+    };
+    assert_eq!(in_a_batch(), expected);
+    assert_eq!(narrow(in_a_batch), expected);
+    assert_eq!(scalar(in_a_batch), expected);
 
     // A length in bits
     let mac_bits = nia_mac_bits(&key, count, bearer, direction, message, bits, integrity);

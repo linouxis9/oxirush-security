@@ -27,8 +27,8 @@ pub mod security;
 pub mod suci;
 
 pub use crate::common::{
-    AccessKeyCount, Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount,
-    SecurityError, extract_128,
+    AccessKeyCount, Bearer, CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob,
+    NasCount, SecurityError, extract_128, nea_cipher_batch, nia_mac_batch,
 };
 pub use algo::{
     select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
@@ -44,7 +44,7 @@ pub use kdf::{
     derive_mapped_kasme_handover, derive_mapped_kasme_idle, derive_nh, derive_sor_mac_ausf,
     derive_sor_mac_ue, derive_tnap_usage_key, derive_upu_mac_ausf, derive_upu_mac_ue,
 };
-pub use security::{NasConnection, nas_cipher, nas_container_mac, nas_mac};
+pub use security::{NasConnection, cipher_job, mac_job, nas_cipher, nas_container_mac, nas_mac};
 #[cfg(feature = "nai")]
 #[cfg_attr(docsrs, doc(cfg(feature = "nai")))]
 pub use suci::{
