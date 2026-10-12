@@ -111,9 +111,17 @@ operations! {
         vqtbl1q_u8(table, index)
     }
 
-    /// All ones in the octets that are equal.
-    fn eq8(a: V, b: V) -> V {
-        vceqq_u8(a, b)
+    /// What [`select8`] takes to choose by the top bit of each octet of
+    /// `vector`.
+    fn chooser8(vector: V) -> V {
+        vcltzq_s8(vreinterpretq_s8_u8(vector))
+    }
+
+    /// Of each octet, that of `one_choice` where `chooser` says that the
+    /// top bit was set, and that of `zero_choice` elsewhere. Both are
+    /// computed: the instruction keeps one, and nothing jumps.
+    fn select8(chooser: V, zero_choice: V, one_choice: V) -> V {
+        vbslq_u8(chooser, one_choice, zero_choice)
     }
 
     /// The sums of the 32-bit words.

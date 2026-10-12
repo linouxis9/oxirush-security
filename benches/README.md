@@ -49,6 +49,14 @@ multiplication instruction, 128-EIA1 evaluates its polynomial four blocks
 at a time, with the powers of P, and 128-EIA3 takes four groups of 32 bits
 at a time.
 
+A SNOW 3G that reads its S-boxes at indices taken from its state can be
+faster on one short message: Open5GS's took 230 ns for 64 octets of
+128-EEA1 on this processor, measured once with a harness that is not in
+the repository. The difference is the S-box SQ, which this crate reads
+through sixteen shuffles and four choices for each three clocks, so that
+no address depends on the state, and a message of 64 octets is 49 clocks,
+33 of them its initialization. On 1500 octets the two are within a tenth.
+
 AES is the crate's own key expansion and rounds on the AES instruction:
 eight counter blocks at a time for 128-EEA2, and a block after the other
 for 128-EIA2. Without the instructions of the first two columns AES is the

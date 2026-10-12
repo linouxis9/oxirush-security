@@ -8,11 +8,11 @@ cargo run --release
 operation                                                                    form  depth  cleared  areas
 nea_cipher 128-EEA2, 64 octets                                        vector code    576     2048      1   nothing left (12 without the clearing)
 CipheringContext::cipher 128-EEA2, 64 octets                          vector code    176     1280      1   nothing left (6 without the clearing)
-nia_mac_batch of 128-EIA2, 16 x 61 octets, from contexts              vector code   7912    16384      1   nothing left
+nia_mac_batch of 128-EIA2, 16 x 61 octets, from contexts              vector code   6568    16384      1   nothing left
 nas_5gs::derive_kamf                                                  vector code   1048     4096      1   nothing left (4 without the clearing)
-Suci::deconceal, Profile B                                            vector code   4272    12288      1   nothing left (2 without the clearing)
+Suci::deconceal, Profile B                                            vector code   4464    12288      1   nothing left (3 without the clearing)
 ...
-1714 leftovers are seen when nothing is cleared after an operation
+1572 leftovers are seen when nothing is cleared after an operation
 ```
 
 The program calls each public operation of oxirush-security that computes
@@ -53,9 +53,9 @@ The deepest work of each kind, in octets:
 |------|--------:|------------------:|----------------------------:|
 | AES on its instructions, one message with a keyed context | 1280 | 848 | 688 |
 | AES on its instructions, from a key | 2048 | 992 | 1088 |
-| One message of SNOW 3G or ZUC, AES without its instructions, a new context or generator | 4096 | 2800 | 2000 |
+| One message of SNOW 3G or ZUC, AES without its instructions, a new context or generator | 4096 | 2496 | 1744 |
 | A derivation | 4096 | 1572 | 1336 |
-| Words of a generator, a comparison | 1024 | 656 | 576 |
+| Words of a generator, a comparison | 1536 | 736 | 304 |
 | SUCI | 12288 | 5577 | not in the program |
 | Several messages side by side | 16384 | 7952 | 8304 |
 
@@ -70,7 +70,7 @@ operations of [`emulated-aarch64/`](../emulated-aarch64), built at
 
 A build with debug assertions clears 49152 octets after any work. With the
 crate and the crates that it uses at `opt-level = 0` under an optimized
-scan, the deepest work was 22040 octets and the scan found nothing. The
+scan, the deepest work was 22056 octets and the scan found nothing. The
 disassembly of that build shows what it cannot see: a value that an
 operation returns in a register goes through the frame of its function,
 where the 32 bits of a word of `Snow3G::next_word` or `Zuc::next_word` stay.

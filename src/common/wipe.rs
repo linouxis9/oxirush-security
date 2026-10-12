@@ -58,7 +58,7 @@ pub(crate) mod depth {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) const LANES: usize = 16384;
     /// Words of keystream from a generator, and a comparison.
-    pub(crate) const WORDS: usize = 1024;
+    pub(crate) const WORDS: usize = 1536;
     /// A key derivation: one HMAC-SHA-256.
     pub(crate) const DERIVATION: usize = 4096;
     /// SUCI: a scalar multiplication on Curve25519 or on secp256r1.

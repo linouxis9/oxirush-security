@@ -170,7 +170,7 @@
 //! | AES on its instructions, one message with a keyed context | 1280 |
 //! | AES on its instructions, from a key | 2048 |
 //! | One message of SNOW 3G or ZUC, AES without its instructions, a derivation, a new context or generator | 4096 |
-//! | Words of a generator, a comparison | 1024 |
+//! | Words of a generator, a comparison | 1536 |
 //! | SUCI | 12288 |
 //! | Several messages side by side | 16384 |
 //! | Any, in a build with debug assertions | 49152 |

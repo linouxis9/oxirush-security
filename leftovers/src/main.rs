@@ -58,6 +58,9 @@ const SCANNED: usize = 256 * 1024;
 /// What the stack is painted with before an operation.
 const PATTERN: u8 = 0xa5;
 
+/// Octets at the deep end of a cleared area that are not looked at.
+const SLACK: usize = 64;
+
 /// What the cleared depth has to exceed the measured one by: a quarter of
 /// it, for a compiler that would lay the frames out otherwise.
 fn margin(depth: usize) -> usize {
@@ -452,10 +455,21 @@ fn main() -> ExitCode {
             }
             for (address, octets) in &noted[..areas.min(noted.len())] {
                 let from = left.caller_address.saturating_sub(address + octets);
-                let to = left.caller_address.saturating_sub(*address);
-                if left.below(from, to).iter().any(|octet| *octet != 0) {
+                // The crate reads the stack pointer for the scan a few
+                // instructions before it clears, and the compiler may have
+                // moved it by some words between the two: the deep end of
+                // the area, far below the work, is given that much
+                let to = left.caller_address.saturating_sub(*address) - SLACK;
+                // `below` gives the area from its lowest address up
+                let area = left.below(from, to);
+                let written = |octet: &u8| *octet != 0;
+                if let Some(deepest) = area.iter().position(written) {
+                    let highest = area.iter().rposition(written).unwrap_or(deepest);
                     wrong.push(format!(
-                        "the stack is not zero from {from} to {to} octets below the caller"
+                        "the stack is cleared from {from} to {to} octets below the caller, \
+                         and is not zero from {} to {}",
+                        to - highest - 1,
+                        to - deepest
                     ));
                 }
             }

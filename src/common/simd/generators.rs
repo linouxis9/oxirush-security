@@ -30,8 +30,7 @@
 //!
 //! - An S-box is read with shuffles, whose index is an operand. A table of
 //!   256 octets is sixteen rows: the low nibble picks an octet of every
-//!   row and the high nibble, compared with the number of each row, keeps
-//!   one of them.
+//!   row, and each bit of the high nibble chooses between two of them.
 //! - S1 of SNOW 3G and the S-box of AES inside S1 of ZUC are the AES
 //!   instruction.
 //! - SNOW 3G is clocked three times at once. Its FSM registers of the next
@@ -59,20 +58,25 @@ macro_rules! sboxes {
         #[inline]
         #[target_feature(enable = $features)]
         fn snow3g_s2(words: V) -> V {
-            // Of each row the octet that the low nibble picks, kept in the
-            // row whose number is the high nibble, then the sixteen
-            // gathered two by two
-            let (low, high) = nibbles(words);
+            // Of each row the octet that the low nibble picks. The high
+            // nibble is the number of the row to keep: each of its bits
+            // chooses between two rows, or two choices, next to each other
+            let low = and(words, splat8(0x0f));
             let mut found = [zero(); 16];
-            for (number, row) in SQ_ROWS.iter().enumerate() {
-                let of_row = shuffle(from_octets(*row), low);
-                found[number] = and(of_row, eq8(high, splat8(number as u8)));
+            for (of_row, row) in found.iter_mut().zip(&SQ_ROWS) {
+                *of_row = shuffle(from_octets(*row), low);
             }
+            let bits = [
+                chooser8(shl16::<3>(words)),
+                chooser8(shl16::<2>(words)),
+                chooser8(shl16::<1>(words)),
+                chooser8(words),
+            ];
             let mut rows = 16;
-            while rows > 1 {
+            for bit in bits {
                 rows /= 2;
                 for pair in 0..rows {
-                    found[pair] = or(found[2 * pair], found[2 * pair + 1]);
+                    found[pair] = select8(bit, found[2 * pair], found[2 * pair + 1]);
                 }
             }
             let r = found[0];
