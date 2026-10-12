@@ -371,11 +371,6 @@ and what a type cannot say is a `Result`. Every call below changes.
   `nas_mac` and `nia2_mac` took the wrapped product for the length to
   process. `nia1_mac` and `nia3_mac` converted the bit length with `as`,
   which dropped its high bits.
-- The AES-128-CTR of SUCI Profile A and Profile B counts over the whole
-  16-octet block. Only the low 32 bits were incremented, so a plaintext
-  longer than one block (a NAI username) was concealed or deconcealed
-  differently from other implementations when those bits of the ICB were
-  about to wrap.
 - `suci_to_supi` and `suci_to_string` ignore spare bit 4 of the first octet
   of a binary SUCI, as they do spare bit 8 (TS 24.501 §9.11.3.4); a SUCI with
   that bit set was not decoded.

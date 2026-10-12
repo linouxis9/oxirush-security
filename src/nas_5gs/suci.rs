@@ -82,9 +82,11 @@ fn ansi_x963_kdf(
     kdf_key
 }
 
-/// AES-128-CTR encryption with the ICB as the first counter block, incremented
-/// as one 128-bit big-endian integer. The keystream and counter blocks are
-/// wiped.
+/// AES-128-CTR encryption with the ICB as the first counter block. The
+/// next ones follow by the standard incrementing function of NIST
+/// SP 800-38A Appendix B.1 with m = 32 (TS 33.501 Annex C.3.4.0): the last
+/// four octets count modulo 2^32, and the twelve before them stay. The
+/// keystream and counter blocks are wiped.
 fn aes128_ctr(key: &[u8; 16], icb: &[u8; 16], data: &[u8]) -> Vec<u8> {
     let aes = Aes128Enc::new(key.into());
     let mut out = Vec::with_capacity(data.len());
@@ -96,12 +98,9 @@ fn aes128_ctr(key: &[u8; 16], icb: &[u8; 16], data: &[u8]) -> Vec<u8> {
             out.push(d ^ k);
         }
         block.as_mut_slice().zeroize();
-        let mut carry = 1u16;
-        for octet in counter.iter_mut().rev() {
-            let sum = u16::from(*octet) + carry;
-            *octet = sum as u8;
-            carry = sum >> 8;
-        }
+        let (_, low) = counter.split_at_mut(12);
+        let next = u32::from_be_bytes([low[0], low[1], low[2], low[3]]).wrapping_add(1);
+        low.copy_from_slice(&next.to_be_bytes());
     }
     out
 }
@@ -684,26 +683,36 @@ mod tests {
         }
     }
 
-    // The counter is the whole block: a carry out of its low 32 bits goes
-    // into the octets before them, as in NIST SP 800-38A Appendix B.1.
+    /// TS 33.501 Annex C.3.4.0: the counter blocks follow from the ICB by
+    /// "the standard incrementing function in section B.1 of NIST Special
+    /// Publication 800-38A with m = 32 bits". The low 32 bits count modulo
+    /// 2^32, and the 96 bits before them stay as the ICB has them.
+    ///
+    /// The ciphertext is that of OpenSSL's AES-128 in ECB mode over the
+    /// counter blocks written out by hand: the ICB, then the ICB with
+    /// 00000000 and with 00000001 in its last four octets.
     #[test]
-    fn aes_ctr_counter_carries_over_the_whole_block() {
+    fn the_counter_of_aes_ctr_wraps_within_its_low_32_bits() {
         let key = [0x2b; 16];
+        let mut icb = [0x11; 16];
+        icb[12..].copy_from_slice(&[0xff; 4]);
+        let ciphertext = aes128_ctr(&key, &icb, b"verylongusername1@and-then-some-more");
+        assert_eq!(
+            hex::encode(ciphertext),
+            "25c21910b8e66ee4adf491532c01539af6187cb86ab3bb84ee8371ef6a7e8a0fe33ec06c"
+        );
+
+        // No carry leaves the low 32 bits, whatever is before them
         let block = |counter: [u8; 16]| {
             let mut block = aes::Block::from(counter);
             Aes128Enc::new(&key.into()).encrypt_block(&mut block);
             block
         };
-        let mut icb = [0u8; 16];
-        icb[10..].copy_from_slice(&[0x12, 0xff, 0xff, 0xff, 0xff, 0xff]);
-        let mut next = [0u8; 16];
-        next[10] = 0x13;
-        let keystream = aes128_ctr(&key, &icb, &[0u8; 32]);
-        assert_eq!(keystream[..16], block(icb)[..]);
-        assert_eq!(keystream[16..], block(next)[..]);
-        // All ones wraps to zero.
         let keystream = aes128_ctr(&key, &[0xff; 16], &[0u8; 32]);
-        assert_eq!(keystream[16..], block([0; 16])[..]);
+        let mut second = [0xff; 16];
+        second[12..].copy_from_slice(&[0; 4]);
+        assert_eq!(keystream[..16], block([0xff; 16])[..]);
+        assert_eq!(keystream[16..], block(second)[..]);
     }
 
     // ── Profile B round-trip — multiple MSINs (mirrors TestSupiToSuciToSupi) ─
