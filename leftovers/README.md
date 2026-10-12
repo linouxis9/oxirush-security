@@ -53,9 +53,9 @@ The deepest work of each kind, in octets:
 |------|--------:|------------------:|----------------------------:|
 | AES on its instructions, one message with a keyed context | 1280 | 848 | 688 |
 | AES on its instructions, from a key | 2048 | 992 | 1088 |
-| One message of SNOW 3G or ZUC, AES without its instructions, a new context or generator | 4096 | 2496 | 1744 |
+| One message of SNOW 3G or ZUC, AES without its instructions, a new context or generator | 4096 | 2496 | 1816 |
 | A derivation | 4096 | 1572 | 1336 |
-| Words of a generator, a comparison | 1536 | 736 | 304 |
+| Words of a generator, a comparison | 1536 | 736 | 400 |
 | SUCI | 12288 | 5577 | not in the program |
 | Several messages side by side | 16384 | 7952 | 8304 |
 

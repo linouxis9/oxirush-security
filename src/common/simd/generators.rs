@@ -302,48 +302,58 @@ macro_rules! generators {
             zuc_sboxes(linear)
         }
 
-        /// One clock of ZUC: the word of the nonlinear function, added to
-        /// X3, and R1 and R2 after it. In the initialization the word goes
-        /// into the LFSR.
+        /// A clock of ZUC for each of `words`: the word of the nonlinear
+        /// function, added to X3, and R1 and R2 after the last. In the
+        /// initialization the word goes into the LFSR, and what is added
+        /// to X3 means nothing.
+        ///
+        /// The clocks are the loop of one function, and R1 and R2 leave
+        /// the vector as one word of 64 bits. With a function for each
+        /// clock and a word at a time, a build with `-C target-cpu=native`
+        /// passed the vector through memory at each clock, a fifth slower.
         #[inline]
         #[target_feature(enable = $features)]
-        fn zuc_clock(state: &mut Zuc, r: V, initialization: bool) -> (u32, V) {
-            // The sixteen stages are a window of the array, which moves by
-            // one: it starts over at the end
-            if state.at == 16 {
-                state.lfsr.copy_within(16.., 0);
-                state.at = 0;
+        fn zuc_clocks(state: &mut Zuc, mut r: V, initialization: bool, words: &mut [u32]) -> V {
+            for word in words {
+                // The sixteen stages are a window of the array, which
+                // moves by one: it starts over at the end
+                if state.at == 16 {
+                    state.lfsr.copy_within(16.., 0);
+                    state.at = 0;
+                }
+                let at = state.at;
+                let s = &state.lfsr[at..at + 16];
+
+                // Bit reorganization
+                let x0 = ((s[15] & 0x7fff_8000) << 1) | (s[14] & 0xffff);
+                let x1 = ((s[11] & 0xffff) << 16) | (s[9] >> 15);
+                let x2 = ((s[7] & 0xffff) << 16) | (s[5] >> 15);
+                let x3 = ((s[2] & 0xffff) << 16) | (s[0] >> 15);
+
+                // The nonlinear function
+                let (r1_r2, _) = to_u64s(r);
+                let (r1, r2) = (r1_r2 as u32, (r1_r2 >> 32) as u32);
+                let w = (x0 ^ r1).wrapping_add(r2);
+                r = zuc_registers(r, x1, x2);
+
+                // The LFSR: 2^15 s15 + 2^17 s13 + 2^21 s10 + 2^20 s4 +
+                // (1 + 2^8) s0 modulo 2^31 - 1
+                let stage = |index: usize, shift: u32| u64::from(s[index]) << shift;
+                let mut sum = stage(15, 15)
+                    + stage(13, 17)
+                    + stage(10, 21)
+                    + stage(4, 20)
+                    + stage(0, 8)
+                    + stage(0, 0);
+                if initialization {
+                    sum += u64::from(w >> 1);
+                }
+
+                state.lfsr[at + 16] = mod31(sum);
+                state.at = at + 1;
+                *word = w ^ x3;
             }
-            let at = state.at;
-            let s = &state.lfsr[at..at + 16];
-
-            // Bit reorganization
-            let x0 = ((s[15] & 0x7fff_8000) << 1) | (s[14] & 0xffff);
-            let x1 = ((s[11] & 0xffff) << 16) | (s[9] >> 15);
-            let x2 = ((s[7] & 0xffff) << 16) | (s[5] >> 15);
-            let x3 = ((s[2] & 0xffff) << 16) | (s[0] >> 15);
-
-            // The nonlinear function
-            let [r1, r2, ..] = to_words(r);
-            let w = (x0 ^ r1).wrapping_add(r2);
-            let r = zuc_registers(r, x1, x2);
-
-            // The LFSR: 2^15 s15 + 2^17 s13 + 2^21 s10 + 2^20 s4 +
-            // (1 + 2^8) s0 modulo 2^31 - 1
-            let stage = |index: usize, shift: u32| u64::from(s[index]) << shift;
-            let mut sum = stage(15, 15)
-                + stage(13, 17)
-                + stage(10, 21)
-                + stage(4, 20)
-                + stage(0, 8)
-                + stage(0, 0);
-            if initialization {
-                sum += u64::from(w >> 1);
-            }
-
-            state.lfsr[at + 16] = mod31(sum);
-            state.at = at + 1;
-            (w ^ x3, r)
+            r
         }
 
         /// ZUC from its sixteen stages after the key and the IV are
@@ -357,13 +367,19 @@ macro_rules! generators {
                 r: [0; 2],
             };
             state.lfsr[..16].copy_from_slice(&stages);
-            let mut r = zero();
-            // The number of clocks goes through `black_box` so that the
+            // The words of these 33 clocks are not keystream, and are
+            // wiped. Their number goes through `black_box` so that the
             // compiler keeps the loop: unrolled, it is 17 kilobytes of code
-            for _ in 0..core::hint::black_box(32) {
-                (_, r) = zuc_clock(&mut state, r, true);
-            }
-            (_, r) = zuc_clock(&mut state, r, false);
+            let mut discarded = [0u32; 33];
+            let (initialization, last) = discarded.split_at_mut(32);
+            let r = zuc_clocks(
+                &mut state,
+                zero(),
+                true,
+                core::hint::black_box(initialization),
+            );
+            let r = zuc_clocks(&mut state, r, false, last);
+            zeroize::Zeroize::zeroize(&mut discarded);
             let [r1, r2, ..] = to_words(r);
             state.r = [r1, r2];
             state
@@ -372,10 +388,8 @@ macro_rules! generators {
         /// The next keystream words of ZUC.
         #[target_feature(enable = $features)]
         pub(super) fn zuc_fill(state: &mut Zuc, words: &mut [u32]) {
-            let mut r = from_words([state.r[0], state.r[1], 0, 0]);
-            for word in words {
-                (*word, r) = zuc_clock(state, r, false);
-            }
+            let r = from_words([state.r[0], state.r[1], 0, 0]);
+            let r = zuc_clocks(state, r, false, words);
             let [r1, r2, ..] = to_words(r);
             state.r = [r1, r2];
         }
