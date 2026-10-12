@@ -274,7 +274,8 @@ and what a type cannot say is a `Result`. Every call below changes.
   XRES*, HRES* with HXRES*, or another value derived from a key with the one
   a peer sent. The documentation of `compute_xres_star` and
   `compute_hres_star` points to it.
-- The examples of the README are compiled and run with the doctests.
+- The examples of the README are compiled and run with the doctests, and
+  `tests/readme.rs` compares what each prints with the text under it.
 - Test vector for 128-EIA2 set 7 (TS 33.401 Annex C.2.7), the
   non-byte-aligned set that 0.2.0 did not cover.
 - 128-EEA1 tests on the six UEA2 design conformance sets (TS 35.218), which
