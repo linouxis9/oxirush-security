@@ -475,15 +475,17 @@ f202f83901004211223344 has 5G-TMSI 11223344
 |---------|---------------|-------|
 | none | the algorithms, NAS integrity and ciphering, the key derivations, the selection of the algorithms, 5G-GUTI and `plmn_to_bytes` | `core` alone: no allocator |
 | `alloc` | and what returns a `Vec` or a `String`: `build_s`, `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes` | an allocator |
-| `std` | and the choice of the code on the vector and AES instructions when the program runs | the standard library |
+| `std` | and, on an AArch64 system other than Linux, Android and Apple's, the choice of the code on the vector and AES instructions when the program runs | the standard library |
 | `suci` | and SUCI with the null scheme, Profile A (X25519) and Profile B (P-256) | `alloc`, and a source of random numbers that `getrandom` has for the target |
 | `nai` | and the SUCI and SUPI of the NAI format, with Unicode normalization and IDNA | `suci` |
 
 `std`, `suci` and `nai` are the default. Without `std` the crate is
-`no_std`: on x86-64 and AArch64 it then runs the algorithms on the vector
-and AES instructions when the build enables them for its target
-(`-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq`, or `+neon,+aes`), and
-on scalar code otherwise.
+`no_std`, and it still asks the processor what it has: by CPUID on x86-64,
+through the auxiliary vector on AArch64 Linux and Android. On a target
+without an operating system the code on the vector and AES instructions
+runs when the build enables them
+(`-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq`, or `+neon,+aes`).
+`implementation()` says which code runs.
 
 ```toml
 # no_std, without an allocator

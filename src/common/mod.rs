@@ -20,6 +20,7 @@
 
 pub mod algo;
 pub mod batch;
+mod code;
 pub(crate) mod ct;
 pub mod error;
 pub mod input;
@@ -38,6 +39,7 @@ pub use algo::{
     select_integrity_algo_with_preference,
 };
 pub use batch::{CipherJob, MacJob, nea_cipher_batch, nia_mac_batch};
+pub use code::{Code, Implementation, implementation};
 pub use ct::constant_time_eq;
 pub use error::SecurityError;
 pub use input::{

@@ -18,18 +18,19 @@
 //! SNOW 3G, ZUC and the carry-less multiplication on the vector, AES and
 //! polynomial-multiplication instructions of x86-64 and AArch64.
 //!
-//! This is the one module of the crate with `unsafe` code, and all of it is
-//! of one kind: a call of a function that is compiled for instructions
-//! which the build does not assume. Such a call is sound when the processor
-//! has the instructions, which [`available`] has seen before every one of
-//! them, and `wide_available` before those of the 256-bit vectors. The
-//! functions themselves, in the module of the architecture, are safe code.
+//! This is the one module of the crate with `unsafe` code, and what the
+//! crate writes of it is of one kind: a call of a function that is compiled
+//! for instructions which the build does not assume. Such a call is sound
+//! when the processor has the instructions, which [`available`] has seen
+//! before every one of them, and [`wide_available`] before those of the
+//! 256-bit vectors. The functions themselves, in the module of the
+//! architecture, are safe code. The rest is inside `cpufeatures::new!`,
+//! which asks the processor or the system what it has.
 //!
 //! The scalar generators of `snow3g` and `zuc` are used where the
 //! instructions are missing, and the tests compare the two.
 #![allow(unsafe_code)]
 
-use core::sync::atomic::{AtomicU8, Ordering};
 use zeroize::{Zeroize, Zeroizing};
 
 #[macro_use]
@@ -53,96 +54,142 @@ mod arch;
 #[path = "x86_64_avx2.rs"]
 mod wide;
 
-/// What a thread of the tests may use of the processor.
-#[cfg(any(test, all(fuzzing, feature = "std")))]
-#[derive(Clone, Copy, PartialEq)]
-enum Allowed {
-    All,
-    /// The vectors of 128 bits, as on a processor without wider ones.
-    Narrow,
-    /// No vector instruction.
-    Scalar,
-}
+// The processor is asked through `cpufeatures`, which needs no standard
+// library: CPUID on x86-64, and on AArch64 the auxiliary vector of Linux and
+// Android, while Apple's processors all have the instructions. Elsewhere,
+// and on a target without an operating system, the answer is what the build
+// enables (`-C target-feature`, `-C target-cpu`). Each answer is kept.
+#[cfg(target_arch = "x86_64")]
+cpufeatures::new!(vector_128, "ssse3", "sse4.1", "aes", "pclmulqdq");
+#[cfg(target_arch = "x86_64")]
+cpufeatures::new!(vector_256, "avx2");
+#[cfg(target_arch = "aarch64")]
+cpufeatures::new!(vector_128, "aes");
 
-#[cfg(any(test, all(fuzzing, feature = "std")))]
-std::thread_local! {
-    /// Set by [`scalar`] and [`narrow`] for the thread that compares the
-    /// paths.
-    static ALLOWED: core::cell::Cell<Allowed> = const { core::cell::Cell::new(Allowed::All) };
-}
+/// What the tests, the fuzz targets and the emulated program let the crate
+/// use of the processor.
+#[cfg(any(test, oxirush_security_hooks))]
+mod allowed {
+    #[derive(Clone, Copy, PartialEq)]
+    pub(super) enum Allowed {
+        All,
+        /// The vectors of 128 bits, as on a processor without wider ones.
+        Narrow,
+        /// No vector instruction.
+        Scalar,
+    }
 
-#[cfg(any(test, all(fuzzing, feature = "std")))]
+    // A test sets it for its own thread, since tests run side by side
+    #[cfg(test)]
+    std::thread_local! {
+        static ALLOWED: core::cell::Cell<Allowed> = const { core::cell::Cell::new(Allowed::All) };
+    }
+
+    #[cfg(test)]
+    pub(super) fn get() -> Allowed {
+        ALLOWED.get()
+    }
+
+    #[cfg(test)]
+    pub(super) fn replace(allowed: Allowed) -> Allowed {
+        ALLOWED.replace(allowed)
+    }
+
+    // Outside the tests it is one value for the program, which needs no
+    // standard library: a fuzz target and the emulated program have one
+    // thread
+    #[cfg(not(test))]
+    static ALLOWED: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+    #[cfg(not(test))]
+    const VALUES: [Allowed; 3] = [Allowed::All, Allowed::Narrow, Allowed::Scalar];
+
+    #[cfg(not(test))]
+    pub(super) fn get() -> Allowed {
+        VALUES[usize::from(ALLOWED.load(core::sync::atomic::Ordering::Relaxed)) % 3]
+    }
+
+    #[cfg(not(test))]
+    pub(super) fn replace(allowed: Allowed) -> Allowed {
+        let value = VALUES.iter().position(|value| *value == allowed);
+        let before = ALLOWED.swap(
+            value.unwrap_or(0) as u8,
+            core::sync::atomic::Ordering::Relaxed,
+        );
+        VALUES[usize::from(before) % 3]
+    }
+}
+#[cfg(any(test, oxirush_security_hooks))]
+use allowed::Allowed;
+
+#[cfg(any(test, oxirush_security_hooks))]
 fn allowing<R>(allowed: Allowed, work: impl FnOnce() -> R) -> R {
-    let before = ALLOWED.replace(allowed);
+    let before = allowed::replace(allowed);
     let result = work();
-    ALLOWED.set(before);
+    allowed::replace(before);
     result
 }
 
-/// Run `work` with the vector paths turned off in this thread, as on a
-/// processor without the instructions.
-#[cfg(any(test, all(fuzzing, feature = "std")))]
+/// Run `work` with the vector paths turned off, as on a processor without
+/// the instructions.
+#[cfg(any(test, oxirush_security_hooks))]
 pub(crate) fn scalar<R>(work: impl FnOnce() -> R) -> R {
     allowing(Allowed::Scalar, work)
 }
 
-/// Run `work` with the vectors of 256 bits turned off in this thread, as
-/// on a processor that has those of 128 bits alone.
-#[cfg(any(test, all(fuzzing, feature = "std")))]
+/// Run `work` with the vectors of 256 bits turned off, as on a processor
+/// that has those of 128 bits alone.
+#[cfg(any(test, oxirush_security_hooks))]
 pub(crate) fn narrow<R>(work: impl FnOnce() -> R) -> R {
     allowing(Allowed::Narrow, work)
-}
-
-/// What a look at the processor found: 0 before the look, 1 without the
-/// instructions and 2 with them.
-struct Detected(AtomicU8);
-
-impl Detected {
-    const fn new() -> Self {
-        Self(AtomicU8::new(0))
-    }
-
-    /// What `look` finds, which is asked once.
-    #[inline]
-    fn get(&self, look: fn() -> bool) -> bool {
-        match self.0.load(Ordering::Relaxed) {
-            0 => self.detect(look),
-            found => found == 2,
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn detect(&self, look: fn() -> bool) -> bool {
-        let detected = look();
-        self.0
-            .store(if detected { 2 } else { 1 }, Ordering::Relaxed);
-        detected
-    }
 }
 
 /// Whether the processor has the instructions of the vector paths.
 #[inline]
 pub(crate) fn available() -> bool {
-    static DETECTED: Detected = Detected::new();
-    #[cfg(any(test, all(fuzzing, feature = "std")))]
-    if ALLOWED.get() == Allowed::Scalar {
+    #[cfg(any(test, oxirush_security_hooks))]
+    if allowed::get() == Allowed::Scalar {
         return false;
     }
-    DETECTED.get(arch::detected)
+    detected()
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn detected() -> bool {
+    vector_128::get()
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn detected() -> bool {
+    // The vectors are built from words with their low octet first
+    if cfg!(target_endian = "big") {
+        return false;
+    }
+    if vector_128::get() {
+        return true;
+    }
+    // On another system the standard library knows how to ask
+    #[cfg(feature = "std")]
+    return std::arch::is_aarch64_feature_detected!("neon")
+        && std::arch::is_aarch64_feature_detected!("aes");
+    #[cfg(not(feature = "std"))]
+    false
 }
 
 /// Whether the processor also has the instructions of the generators that
 /// run eight side by side.
-#[cfg(target_arch = "x86_64")]
 #[inline]
-fn wide_available() -> bool {
-    static DETECTED: Detected = Detected::new();
-    #[cfg(any(test, all(fuzzing, feature = "std")))]
-    if ALLOWED.get() != Allowed::All {
+pub(crate) fn wide_available() -> bool {
+    #[cfg(any(test, oxirush_security_hooks))]
+    if allowed::get() != Allowed::All {
         return false;
     }
-    available() && DETECTED.get(wide::detected)
+    #[cfg(target_arch = "x86_64")]
+    return available() && vector_256::get();
+    #[cfg(not(target_arch = "x86_64"))]
+    false
 }
 
 /// SNOW 3G on vector instructions. It exists only on a processor that has

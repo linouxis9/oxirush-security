@@ -3,10 +3,13 @@
 //! alone or ignored, and a length that the buffer does not hold is an error.
 //! On a processor with the vector instructions, they give what the scalar
 //! code gives, and in a batch each message has what it has alone.
+//!
+//! The comparison turns the vector paths off through the crate's hooks:
+//! `RUSTFLAGS="--cfg oxirush_security_hooks" cargo fuzz run algorithms`.
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use oxirush_security::fuzzing::{narrow, scalar};
+use oxirush_security::hooks::{narrow, scalar};
 use oxirush_security::{
     Bearer, CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob, nea_cipher,
     nea_cipher_batch, nea_cipher_bits, nia_mac, nia_mac_batch, nia_mac_bits,

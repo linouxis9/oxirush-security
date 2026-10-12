@@ -12,32 +12,52 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # `tests/implementation.rs` fails in a job that does not run the code
+  # that `OXIRUSH_SECURITY_EXPECT` names, and prints what runs.
   test:
     name: Test
     runs-on: ubuntu-latest
+    env:
+      OXIRUSH_SECURITY_EXPECT: Vector256
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - run: cargo test --test implementation -- --nocapture
       - run: cargo test
       - run: cargo test --release
-      # Each set of features. Without `std` the tests run the scalar code
+      # Each set of features. The processor is asked without `std` too
       - run: cargo test --no-default-features
       - run: cargo test --no-default-features --features alloc
       - run: cargo test --no-default-features --features std
       - run: cargo test --no-default-features --features suci
+      # The instructions enabled by the build, as on a target without an
+      # operating system
+      - name: Test with the instructions enabled by the build
+        env:
+          RUSTFLAGS: -C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq,+avx2
+        run: cargo test --no-default-features
 
-  # SNOW 3G and ZUC have a form on the vector instructions of AArch64, which
-  # the tests compare with the scalar one
+  # The code on the vector and AES instructions of AArch64, which the tests
+  # compare with the scalar one: with the processor asked, with and without
+  # `std`, and with the instructions enabled by the build
   aarch64:
     name: Test (AArch64)
     runs-on: ubuntu-24.04-arm
+    env:
+      OXIRUSH_SECURITY_EXPECT: Vector128
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - run: cargo test --test implementation -- --nocapture
       - run: cargo test
       - run: cargo test --release
+      - run: cargo test --no-default-features
+      - name: Test with the instructions enabled by the build
+        env:
+          RUSTFLAGS: -C target-feature=+neon,+aes
+        run: cargo test --no-default-features
 
   # Targets without the standard library: the crate and each set of features
   # that is `no_std` build there. A library needs no source of random
@@ -66,6 +86,8 @@ jobs:
   scalar:
     name: Test (32-bit x86, scalar code alone)
     runs-on: ubuntu-latest
+    env:
+      OXIRUSH_SECURITY_EXPECT: Scalar
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -73,11 +95,14 @@ jobs:
           targets: i686-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - run: cargo test --target i686-unknown-linux-gnu --test implementation -- --nocapture
       - run: cargo test --target i686-unknown-linux-gnu
 
   msrv:
     name: MSRV (1.88)
     runs-on: ubuntu-latest
+    env:
+      OXIRUSH_SECURITY_EXPECT: Vector256
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.88.0
@@ -158,6 +183,10 @@ jobs:
       fail-fast: false
       matrix:
         target: [suci, suci_round_trip, identity, algorithms]
+    env:
+      # The target `algorithms` compares the vector paths with the scalar
+      # code through the crate's hooks
+      RUSTFLAGS: --cfg oxirush_security_hooks
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly

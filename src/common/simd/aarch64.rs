@@ -29,23 +29,6 @@ use core::arch::aarch64::*;
 /// first.
 pub(super) type V = uint8x16_t;
 
-/// Whether the processor has the instructions that this module is compiled
-/// for: NEON, and `aes`, the AES round with the polynomial multiplication.
-/// With the standard library it is asked, when the program runs. Without,
-/// it has them when the build says that every processor of its target does
-/// (`-C target-feature`, `-C target-cpu`).
-pub(super) fn detected() -> bool {
-    // The vectors are built from words with their low octet first
-    if cfg!(target_endian = "big") {
-        return false;
-    }
-    #[cfg(feature = "std")]
-    return std::arch::is_aarch64_feature_detected!("neon")
-        && std::arch::is_aarch64_feature_detected!("aes");
-    #[cfg(not(feature = "std"))]
-    cfg!(all(target_feature = "neon", target_feature = "aes"))
-}
-
 macro_rules! operations {
     ($(
         $(#[$attribute:meta])*

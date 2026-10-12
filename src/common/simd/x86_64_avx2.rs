@@ -35,18 +35,6 @@ use core::arch::x86_64::*;
 /// first.
 pub(super) type V = __m256i;
 
-/// Whether the processor has the instructions that this module is compiled
-/// for. With the standard library it is asked, when the program runs.
-/// Without, it has them when the build says that every processor of its
-/// target does (`-C target-feature`, `-C target-cpu`).
-pub(super) fn detected() -> bool {
-    #[cfg(feature = "std")]
-    return std::arch::is_x86_feature_detected!("avx2")
-        && std::arch::is_x86_feature_detected!("aes");
-    #[cfg(not(feature = "std"))]
-    cfg!(all(target_feature = "avx2", target_feature = "aes"))
-}
-
 macro_rules! operations {
     ($(
         $(#[$attribute:meta])*

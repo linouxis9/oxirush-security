@@ -14,9 +14,9 @@ exclude = [".github/", ".gitignore", "benches/", "fuzz/"]
 
 [features]
 default = ["std", "suci", "nai"]
-# The standard library: the vector code of SNOW 3G and ZUC is chosen when the
-# program runs, from what the processor has. Without it the crate is
-# `no_std`, and the vector code is that of the target features of the build.
+# The standard library. On AArch64 systems other than Linux, Android and
+# Apple's, it is what asks the processor for its instructions when the
+# program runs. Without it the crate is `no_std`.
 std = ["alloc"]
 # An allocator: the functions that return a `Vec` or a `String` (`build_s`,
 # `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes`) and `SecurityError::Ecies`.
@@ -56,13 +56,19 @@ idna = { version = "1", default-features = false, features = ["alloc", "compiled
 base64 = { version = "0.22", default-features = false, features = ["alloc"], optional = true }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"], optional = true }
 
+# The instructions of the processor, asked without the standard library:
+# CPUID on x86-64, the system on AArch64. `aes` has it in the tree already.
+[target.'cfg(any(target_arch = "x86_64", target_arch = "aarch64"))'.dependencies]
+cpufeatures = "0.3"
+
 [dev-dependencies]
 hex = "0.4.3"
 
-# `cargo fuzz` builds the crate with `--cfg fuzzing`, which lets the fuzz
-# targets compare the vector paths with the scalar ones.
+# `--cfg oxirush_security_hooks` gives the crate's own fuzz targets and its
+# emulated AArch64 program the module `hooks`, which turns the vector paths
+# off so that they are compared with the scalar ones. No other build has it.
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oxirush_security_hooks)'] }
 
 [[example]]
 name = "suci_conceal"

@@ -266,13 +266,16 @@ and what a type cannot say is a `Result`. Every call below changes.
   |---------|--------------------|-------|
   | none (`default-features = false`) | The algorithms, NAS integrity and ciphering, the key derivations, the selection of the algorithms, 5G-GUTI and `plmn_to_bytes` | `core` alone |
   | `alloc` | And what returns a `Vec` or a `String`: `build_s`, `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes`, and `SecurityError::Ecies` | An allocator |
-  | `std`, a default | And the choice of the code on the vector and AES instructions when the program runs | The standard library |
+  | `std`, a default | And, on an AArch64 system other than Linux, Android and Apple's, the choice of the code on the vector and AES instructions when the program runs | The standard library |
   | `suci`, a default | And SUCI concealment and deconcealment with the null scheme, Profile A and Profile B, which bring X25519 and P-256: 41 crates | `alloc`, and a source of random numbers for `getrandom` |
   | `nai`, a default | And the SUCI and SUPI of the NAI format, which bring Unicode normalization and IDNA: 71 crates | `suci` |
 
-  The crate is `no_std` without `std`. It then runs the algorithms on the
-  vector and AES instructions when the build enables them for its target,
-  and on scalar code otherwise. CI builds each set of features for
+  The crate is `no_std` without `std`, and asks the processor what it has
+  all the same: by CPUID on x86-64, and through the auxiliary vector on
+  AArch64 Linux and Android, with `cpufeatures`, which `aes` has in the
+  tree already. On a target without an operating system it runs the
+  algorithms on the vector and AES instructions when the build enables
+  them, and on scalar code otherwise. CI builds each set of features for
   `thumbv7em-none-eabihf` and `aarch64-unknown-none`.
 
   The key derivations no longer build the string S of TS 33.220: its
@@ -319,6 +322,14 @@ and what a type cannot say is a `Result`. Every call below changes.
   3GPP test sets of the three ciphering algorithms, of 128-EIA1 and of
   128-EIA3, and set 7 of 128-EIA2, through one batch. The fuzz target
   `algorithms` compares batches of up to twelve messages.
+- `implementation()` says which code the algorithms run on this processor:
+  `Implementation::Scalar`, `Vector128` or `Vector256`, with for each
+  algorithm its code for one message (`ciphering`, `integrity`, a `Code`)
+  and how many messages a batch works on side by side
+  (`ciphering_side_by_side`, `integrity_side_by_side`). A program logs it,
+  and a test requires it: `tests/implementation.rs` fails in a CI job whose
+  `OXIRUSH_SECURITY_EXPECT` names another implementation than the one that
+  ran.
 - Four `cargo fuzz` targets under `fuzz/`, which CI runs for a minute each:
   `suci` (a SUCI of a NAS message, a scheme output and a NAI from a peer),
   `suci_round_trip` (what is concealed is deconcealed), `identity` (5G-GUTI,

@@ -143,7 +143,7 @@
 //! | Wiped after use | Explicit buffers and owned state: CK‖IK buffers, key-bearing KDF input buffers, the SHA-256 state and the key block and inner hash of HMAC-SHA-256, SUCI ECIES KDF buffers, cipher state including the AES round keys, and keystream buffers. The hasher is that of the `sha2` crate, and AES that of the `aes` crate on a processor without AES instructions, both built with their `zeroize` features: the crate does not compile without them. |
 //! | Not wiped | Temporary copies and compiler-generated spills, which the wiping above does not all cover. Returned keys and deconcealed identities belong to the caller, who clears them when their lifetime ends. |
 //! | Secret-dependent indexing and branches | SNOW 3G, ZUC, AES, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor branch on a secret value, in any of their forms, for one message or for several. |
-//! | On vector instructions | On an x86-64 processor with SSSE3, SSE4.1, AES-NI and PCLMULQDQ, or an AArch64 one with AES, which the crate sees when the program runs: an S-box is read with shuffle instructions, whose index is an operand and not an address; S1 of SNOW 3G and the S-box inside S1 of ZUC are the AES instruction; the products of the two MACs are the carry-less multiplication instruction. SNOW 3G is clocked three times at once. The key expansion and the rounds of AES-128 are the AES instruction, eight counter blocks at a time. |
+//! | On vector instructions | On an x86-64 processor with SSSE3, SSE4.1, AES-NI and PCLMULQDQ, or an AArch64 one with AES, which the crate sees when the program runs and [`implementation`] reports: an S-box is read with shuffle instructions, whose index is an operand and not an address; S1 of SNOW 3G and the S-box inside S1 of ZUC are the AES instruction; the products of the two MACs are the carry-less multiplication instruction. SNOW 3G is clocked three times at once. The key expansion and the rounds of AES-128 are the AES instruction, eight counter blocks at a time. |
 //! | Several messages | [`nea_cipher_batch`] and [`nia_mac_batch`] clock four SNOW 3G or ZUC generators in the 32-bit words of a vector, and eight on an x86-64 processor with AVX2; the CBC-MAC chains of eight messages of 128-EIA2 advance together. What a generator or a chain does at a step depends on the lengths of the messages, and the time of a message on no octet or key of another. |
 //! | In scalar code | Elsewhere, and as the reference of the tests: S1 of SNOW 3G and the S-box S1 of ZUC are computed from one round of AES, which the `aes` crate runs as a bitsliced routine without the AES instructions. The S-box SQ of SNOW 3G is read whole and narrowed down through masks. S0 of ZUC is three four-bit S-boxes, each a word that is shifted. MULα, DIVα and the field multiplications of the two MACs are carry-less products, made with shifts and integer multiplications. A mask that a secret bit gives goes through `core::hint::black_box`. |
 //! | Checked in the compiled code | Without `black_box` the compiler turned the masked selection of SQ in the scalar code into conditional jumps on bits of the state. In the release build for x86-64 with Rust 1.98.1, the functions of SNOW 3G and ZUC in their forms, of AES on its instructions, of the six algorithms and of the two functions of several messages were read in the disassembly: their conditional jumps test a length, a loop counter, a place in a buffer, a feature of the processor, whether a generator has started or which message it works for, and none a secret. In the scalar code, shifts by a secret amount and multiplications of secret words remain. They take a time that does not depend on their operands on the x86-64 and AArch64 processors of today, and may not on a small processor whose multiplier stops early. |
@@ -236,7 +236,7 @@
 //! |---------|------|-------|
 //! | none | The algorithms, NAS integrity and ciphering, every key derivation, the selection of the algorithms, the types of the inputs, 5G-GUTI and `plmn_to_bytes` | `core` alone: no allocator. 14 crates in its tree, and no procedural macro |
 //! | `alloc` | What returns a `Vec` or a `String`: `build_s`, `tbcd_encode`, `tbcd_decode`, `plmn_from_bytes`; and `SecurityError::Ecies`, which has a text | An allocator |
-//! | `std` | The choice of the code on the vector and AES instructions when the program runs, from what its processor has | The standard library. It brings `alloc` |
+//! | `std` | On an AArch64 system other than Linux, Android and Apple's: the choice of the code on the vector and AES instructions when the program runs. Nothing else | The standard library. It brings `alloc` |
 //! | `suci` | `nas_5gs::suci`: SUCI concealment and deconcealment with the null scheme, Profile A (X25519) and Profile B (P-256) | `alloc`, which it brings, and a source of random numbers that `getrandom` has for the target: concealment draws a key. 41 crates |
 //! | `nai` | The SUCI and SUPI of the NAI format: network specific identifiers, GCI and GLI | `suci`, which it brings, with Unicode normalization and IDNA. 71 crates |
 //!
@@ -244,13 +244,16 @@
 //! hasher their parameters part after part: the string S of TS 33.220 is
 //! not built, and nothing is allocated.
 //!
-//! Without `std` nothing asks the processor what it has. On x86-64 and
-//! AArch64 the code on the vector and AES instructions then runs when the
-//! build enables them for every processor of the target, with
+//! The processor is asked what it has when the program first runs an
+//! algorithm, with or without `std`: by CPUID on x86-64, and through the
+//! auxiliary vector of Linux and Android on AArch64, while Apple's AArch64
+//! processors all have the instructions. On a target without an operating
+//! system nothing can be asked: the code on the vector and AES instructions
+//! runs when the build enables them for every processor of the target, with
 //! `-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq` or `+neon,+aes`, or
 //! with a `-C target-cpu` that has them, and the scalar code otherwise.
-//! With `+avx2` as well, a batch has eight generators side by side. The
-//! values are the same.
+//! With `+avx2` as well, a batch has eight generators side by side.
+//! [`implementation`] says which code runs, and the values are the same.
 //!
 //! On a target without an operating system, `getrandom` has no source of
 //! random numbers of its own: the program that uses `suci` gives it one, as
@@ -292,11 +295,12 @@ struct Readme;
 // connection; the algorithms with their own ranges are `nia_mac` and
 // `nea_cipher`.
 pub use common::{
-    AccessKeyCount, Bearer, CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob,
-    NasCount, SecurityError, constant_time_eq, extract_128, nea_cipher, nea_cipher_batch,
-    nea_cipher_bits, nea1_cipher, nea1_cipher_bits, nea2_cipher, nea2_cipher_bits, nea3_cipher,
-    nea3_cipher_bits, nia_mac, nia_mac_batch, nia_mac_bits, nia1_mac, nia1_mac_bits, nia2_mac,
-    nia2_mac_bits, nia3_mac, nia3_mac_bits, plmn_to_bytes,
+    AccessKeyCount, Bearer, CipherJob, CipheringAlgorithm, Code, Direction, Implementation,
+    IntegrityAlgorithm, MacJob, NasCount, SecurityError, constant_time_eq, extract_128,
+    implementation, nea_cipher, nea_cipher_batch, nea_cipher_bits, nea1_cipher, nea1_cipher_bits,
+    nea2_cipher, nea2_cipher_bits, nea3_cipher, nea3_cipher_bits, nia_mac, nia_mac_batch,
+    nia_mac_bits, nia1_mac, nia1_mac_bits, nia2_mac, nia2_mac_bits, nia3_mac, nia3_mac_bits,
+    plmn_to_bytes,
 };
 pub use common::{batch, error, input, nea, nia, plmn, snow3g, zuc};
 #[cfg(feature = "alloc")]
@@ -329,13 +333,15 @@ pub use nas_5gs::{
     suci_scheme_output_b, suci_to_string, suci_to_supi,
 };
 
-/// What `cargo fuzz` drives beside the public functions. It builds the
-/// crate with `--cfg fuzzing`; no other build has this module.
-#[cfg(all(fuzzing, feature = "std"))]
+/// What the crate's fuzz targets and its emulated AArch64 program drive
+/// beside the public functions. A build with `--cfg oxirush_security_hooks`
+/// has this module, and no other build.
+#[cfg(oxirush_security_hooks)]
 #[doc(hidden)]
-pub mod fuzzing {
+pub mod hooks {
     /// Run `work` without the vector instructions of the processor, on the
-    /// scalar code that every target has.
+    /// scalar code that every target has. The setting is the program's, not
+    /// a thread's.
     pub fn scalar<R>(work: impl FnOnce() -> R) -> R {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         return crate::common::simd::scalar(work);
