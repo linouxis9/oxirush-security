@@ -38,10 +38,9 @@
 //! operations need no more stack than their own.
 
 /// Octets of stack that are cleared after a piece of work, by its kind:
-/// multiples of 64. Each is about twice what the deepest work of the kind
-/// was measured to use in an optimized build, on x86-64 and on AArch64,
-/// and one and a half times for one message: `leftovers/README.md` has the
-/// measures.
+/// multiples of 64. Each is at least one and a half times what the deepest
+/// work of the kind was measured to use in an optimized build, on x86-64
+/// and on AArch64: `leftovers/README.md` has the measures.
 pub(crate) mod depth {
     /// AES on its instructions with the round keys of a context, for one
     /// message.
@@ -54,6 +53,9 @@ pub(crate) mod depth {
     /// SNOW 3G, ZUC, and AES without its instructions, for one message;
     /// the making of a keyed context and of a generator.
     pub(crate) const MESSAGE: usize = 4096;
+    /// The messages of a batch one after the other, on a processor without
+    /// the vector code: any of the algorithms, from one frame.
+    pub(crate) const ALONE: usize = 6144;
     /// Several messages side by side.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) const LANES: usize = 16384;
@@ -84,6 +86,12 @@ pub(crate) fn aes<R>(work: impl FnOnce() -> R) -> R {
 #[inline(always)]
 pub(crate) fn message<R>(work: impl FnOnce() -> R) -> R {
     after::<{ depth::MESSAGE }, R>(work)
+}
+
+/// The messages of a batch one after the other.
+#[inline(always)]
+pub(crate) fn alone<R>(work: impl FnOnce() -> R) -> R {
+    after::<{ depth::ALONE }, R>(work)
 }
 
 /// Several messages side by side.

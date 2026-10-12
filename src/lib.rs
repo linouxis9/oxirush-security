@@ -173,6 +173,7 @@
 //! | Words of a generator, a comparison | 1536 |
 //! | SUCI | 12288 |
 //! | Several messages side by side | 16384 |
+//! | The messages of a batch one after the other, without the vector code | 6144 |
 //! | Any, in a build with debug assertions | 49152 |
 //!
 //! An operation needs that much stack. Each figure is between one and a

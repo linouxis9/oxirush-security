@@ -8,11 +8,11 @@ cargo run --release
 operation                                                                    form  depth  cleared  areas
 nea_cipher 128-EEA2, 64 octets                                        vector code    576     2048      1   nothing left (12 without the clearing)
 CipheringContext::cipher 128-EEA2, 64 octets                          vector code    176     1280      1   nothing left (6 without the clearing)
-nia_mac_batch of 128-EIA2, 16 x 61 octets, from contexts              vector code   6568    16384      1   nothing left
+nia_mac_batch of 128-EIA2, 16 x 61 octets, from contexts              vector code   7912    16384      1   nothing left
 nas_5gs::derive_kamf                                                  vector code   1048     4096      1   nothing left (4 without the clearing)
 Suci::deconceal, Profile B                                            vector code   4464    12288      1   nothing left (3 without the clearing)
 ...
-1572 leftovers are seen when nothing is cleared after an operation
+1605 leftovers are seen when nothing is cleared after an operation
 ```
 
 The program calls each public operation of oxirush-security that computes
@@ -53,8 +53,9 @@ The deepest work of each kind, in octets:
 |------|--------:|------------------:|----------------------------:|
 | AES on its instructions, one message with a keyed context | 1280 | 848 | 688 |
 | AES on its instructions, from a key | 2048 | 992 | 1088 |
-| One message of SNOW 3G or ZUC, AES without its instructions, a new context or generator | 4096 | 2496 | 1816 |
-| A derivation | 4096 | 1572 | 1336 |
+| One message of SNOW 3G or ZUC, AES without its instructions, a new context or generator | 4096 | 2496 | 1928 |
+| The messages of a batch one after the other, without the vector code | 6144 | 2992 | 1760 |
+| A derivation | 4096 | 1576 | 1336 |
 | Words of a generator, a comparison | 1536 | 736 | 400 |
 | SUCI | 12288 | 5577 | not in the program |
 | Several messages side by side | 16384 | 7952 | 8304 |

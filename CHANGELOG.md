@@ -265,8 +265,9 @@ cannot say is a `Result`. No public function panics on its arguments.
   `leftovers/` in the repository runs every such operation on x86-64 and
   looks for its key, its round keys, its subkeys, the stages of its
   generator, its keystream and its HMAC values on the stack and in the
-  registers: it finds 1714 of them without the clearing and none with it,
-  in eleven optimized builds with Rust 1.98.1 and 1.88, and CI runs it.
+  registers: it finds 1277 to 1869 of them without the clearing, by the
+  build, and none with it, in eleven optimized builds with Rust 1.98.1 and
+  1.88, and CI runs it.
   `emulated-aarch64/` does the same for 22 operations on an emulated
   AArch64 processor. The front page of the documentation says what stays:
   what an operation returns, the copies that a program makes by moving a

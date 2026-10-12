@@ -211,7 +211,7 @@ pub fn nea_cipher_batch(jobs: &mut [CipherJob<'_>]) {
 
     let ciphered = |job: &&mut CipherJob<'_>| job.algorithm != CipheringAlgorithm::Null;
     if !done && jobs.iter_mut().any(|job| ciphered(&job)) {
-        wipe::message(|| {
+        wipe::alone(|| {
             let ciphered = jobs.iter_mut().filter(ciphered);
             ciphered.for_each(|job| {
                 job.alone();
@@ -343,7 +343,7 @@ pub fn nia_mac_batch(jobs: &mut [MacJob<'_>]) {
         .filter(null)
         .for_each(|job| job.mac = Some(0));
     if !done && jobs.iter_mut().any(|job| !null(&job)) {
-        wipe::message(|| {
+        wipe::alone(|| {
             let keyed = jobs.iter_mut().filter(|job| !null(job));
             keyed.for_each(|job| job.alone());
         });
