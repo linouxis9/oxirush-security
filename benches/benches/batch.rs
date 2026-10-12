@@ -31,7 +31,7 @@
 //! for each message, which has what its algorithm computes from the key
 //! alone.
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt};
 use oxirush_security::{
     Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
@@ -206,4 +206,18 @@ criterion_group! {
     config = configuration();
     targets = ciphers, macs
 }
-criterion_main!(benches);
+
+/// The benchmarks, on the scalar code when the build has the hooks of the
+/// crate and `FORM=scalar` is in the environment: what a processor without
+/// the vector and AES instructions runs.
+fn main() {
+    let run = || {
+        benches();
+        Criterion::default().configure_from_args().final_summary();
+    };
+    #[cfg(oxirush_security_hooks)]
+    if std::env::var("FORM").as_deref() == Ok("scalar") {
+        return oxirush_security::hooks::scalar(run);
+    }
+    run();
+}

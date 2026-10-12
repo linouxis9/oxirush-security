@@ -106,6 +106,12 @@ impl Aes128 {
         Self(Aes128Enc::new(key.into()))
     }
 
+    /// Encrypt a block where it is. A chain of blocks keeps one array for
+    /// them all and wipes it once.
+    pub(crate) fn encrypt_in_place(&self, block: &mut [u8; 16]) {
+        self.0.encrypt_block(block.into());
+    }
+
     /// Encrypt a block.
     pub(crate) fn encrypt(&self, block: u128) -> u128 {
         let mut octets = block.to_le_bytes();

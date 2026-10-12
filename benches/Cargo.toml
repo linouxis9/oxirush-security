@@ -22,6 +22,10 @@ harness = false
 name = "batch"
 harness = false
 
+# `--cfg oxirush_security_hooks` and `FORM=scalar` time the scalar code.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oxirush_security_hooks)'] }
+
 # Symbols for the profiles.
 [profile.bench]
 debug = true

@@ -35,7 +35,7 @@
 //! `-list REGEX`, `-peek REGEX`). With `PROFILE=flamegraph` in the
 //! environment it writes `flamegraph.svg` instead.
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 use oxirush_security::nas_5gs::{
     HomeNetworkPrivateKey, HomeNetworkPublicKey, KNasEnc, KNasInt, Protection, Suci, Supi,
     derive_kamf, derive_kausf, derive_knas_int, derive_kseaf,
@@ -183,4 +183,18 @@ criterion_group! {
     config = configuration();
     targets = ciphers, macs, key_derivations, suci
 }
-criterion_main!(benches);
+
+/// The benchmarks, on the scalar code when the build has the hooks of the
+/// crate and `FORM=scalar` is in the environment: what a processor without
+/// the vector and AES instructions runs.
+fn main() {
+    let run = || {
+        benches();
+        Criterion::default().configure_from_args().final_summary();
+    };
+    #[cfg(oxirush_security_hooks)]
+    if std::env::var("FORM").as_deref() == Ok("scalar") {
+        return oxirush_security::hooks::scalar(run);
+    }
+    run();
+}

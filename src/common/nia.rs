@@ -403,17 +403,24 @@ fn cmac_portable(key: &[u8; 16], subkeys: &[u128; 2], blocks: &CmacBlocks<'_>) -
 /// The MAC of the CBC-MAC chain of a message with the `aes` crate, one
 /// block after the other. `last` is the last block with its subkey.
 fn cbc_mac(cipher: &Aes128, blocks: &CmacBlocks<'_>, last: u128) -> u32 {
-    // `state = AES(state XOR block)`, for each block
-    let mut state = Zeroizing::new(0u128);
+    // `state = AES(state XOR block)`, for each block, in one array that is
+    // wiped once: to wipe a copy of the state at each block cost a quarter
+    // of the time of a long message
+    let mut state = Zeroizing::new([0u8; 16]);
     if let Some(first) = blocks.first {
-        *state = cipher.encrypt(first);
+        *state = first.to_le_bytes();
+        cipher.encrypt_in_place(&mut state);
     }
     for block in blocks.body {
-        *state = cipher.encrypt(*state ^ u128::from_le_bytes(*block));
+        for (octet, of_block) in state.iter_mut().zip(block) {
+            *octet ^= of_block;
+        }
+        cipher.encrypt_in_place(&mut state);
     }
-    *state = cipher.encrypt(*state ^ last);
-    // The first four octets, the high one first
-    (*state as u32).swap_bytes()
+    *state = (u128::from_le_bytes(*state) ^ last).to_le_bytes();
+    cipher.encrypt_in_place(&mut state);
+    // The first four octets, the first one high
+    u32::from_be_bytes([state[0], state[1], state[2], state[3]])
 }
 
 /// The subkeys K1 and K2 from `l`, the encryption of a block of zeros
