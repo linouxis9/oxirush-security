@@ -17,6 +17,10 @@
 
 //! The types of the keys and of the values of an authentication.
 //!
+//! A key is never printed. An identity and a value that travels in clear
+//! always are, whole: a SUPI, a SUCI, a 5G-GUTI, a PLMN, RAND, AUTN, a
+//! home network public key.
+//!
 //! A key has a type of its own, so that a function takes the key that its
 //! clause names and no other: KNASenc does not compile where KNASint is
 //! expected, nor CK where IK is. Each type:
@@ -30,12 +34,17 @@
 //! - prints as its name with `{:?}`, without its octets;
 //! - compares in a time that does not depend on where two values differ.
 //!
+//! RAND and AUTN have types of the same shape, built, viewed and compared
+//! in the same way. They are not keys: `{:?}` prints their octets, and
+//! they are not wiped.
+//!
 //! The keys that both systems have are here. Those of the 5GS hierarchy are
 //! in [`nas_5gs`](crate::nas_5gs) and those of the EPS one in
 //! [`nas_eps`](crate::nas_eps), under the names of TS 33.501 and TS 33.401.
 
-/// Define a key type, or the type of a value of an authentication.
-macro_rules! key {
+/// What a key type and the type of a public value share: the type, how it
+/// is built from its octets and viewed as them, and its comparison.
+macro_rules! octets_type {
     ($(#[$attribute:meta])* $name:ident, $octets:literal) => {
         $(#[$attribute])*
         #[derive(Clone)]
@@ -67,20 +76,6 @@ macro_rules! key {
             }
         }
 
-        impl Drop for $name {
-            fn drop(&mut self) {
-                zeroize::Zeroize::zeroize(&mut self.0);
-            }
-        }
-
-        impl zeroize::ZeroizeOnDrop for $name {}
-
-        impl core::fmt::Debug for $name {
-            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                f.write_str(concat!(stringify!($name), "(..)"))
-            }
-        }
-
         impl PartialEq for $name {
             fn eq(&self, other: &Self) -> bool {
                 $crate::common::ct::constant_time_eq(&self.0, &other.0)
@@ -92,6 +87,32 @@ macro_rules! key {
         impl PartialEq<[u8; $octets]> for $name {
             fn eq(&self, octets: &[u8; $octets]) -> bool {
                 $crate::common::ct::constant_time_eq(&self.0, octets)
+            }
+        }
+    };
+}
+pub(crate) use octets_type;
+
+/// Define a key type: wiped when it is dropped, and printed without its
+/// octets.
+macro_rules! key {
+    ($(#[$attribute:meta])* $name:ident, $octets:literal) => {
+        $crate::common::keys::octets_type! {
+            $(#[$attribute])*
+            $name, $octets
+        }
+
+        impl Drop for $name {
+            fn drop(&mut self) {
+                zeroize::Zeroize::zeroize(&mut self.0);
+            }
+        }
+
+        impl zeroize::ZeroizeOnDrop for $name {}
+
+        impl core::fmt::Debug for $name {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str(concat!(stringify!($name), "(..)"))
             }
         }
     };
@@ -156,13 +177,36 @@ key! {
     /// IK, the integrity key of an authentication (TS 33.102 §6.3).
     Ik, 16
 }
-key! {
-    /// RAND, the challenge of an authentication.
+/// Define the type of a value that a network sends in clear: printed with
+/// its octets, and not wiped.
+macro_rules! public_value {
+    ($(#[$attribute:meta])* $name:ident, $octets:literal) => {
+        octets_type! {
+            $(#[$attribute])*
+            $name, $octets
+        }
+
+        impl core::fmt::Debug for $name {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str(concat!(stringify!($name), "("))?;
+                for octet in &self.0 {
+                    write!(f, "{octet:02x}")?;
+                }
+                f.write_str(")")
+            }
+        }
+    };
+}
+
+public_value! {
+    /// RAND, the challenge of an authentication. A network sends it in
+    /// clear: `{:?}` prints its octets, and it is not wiped.
     Rand, 16
 }
-key! {
+public_value! {
     /// AUTN, the authentication token: SQN xor AK, AMF and MAC
-    /// (TS 33.102 §6.3.2).
+    /// (TS 33.102 §6.3.2). A network sends it in clear: `{:?}` prints its
+    /// octets, and it is not wiped.
     Autn, 16
 }
 
@@ -191,6 +235,36 @@ mod tests {
         assert_eq!(Ik::from_slice(&[0x22; 16]), Ok(Ik::new(&[0x22; 16])));
         assert_eq!(
             Ik::from_slice(&[0x22; 15]),
+            Err(SecurityError::InvalidKeyLength {
+                expected: 16,
+                got: 15
+            })
+        );
+    }
+
+    #[test]
+    fn rand_and_autn_are_printed_whole() {
+        let rand = Rand::new(&[
+            0x23, 0x55, 0x3c, 0xbe, 0x96, 0x37, 0xa8, 0x9d, 0x21, 0x8a, 0xe6, 0x4d, 0xae, 0x47,
+            0xbf, 0x35,
+        ]);
+        assert_eq!(
+            format!("{rand:?}"),
+            "Rand(23553cbe9637a89d218ae64dae47bf35)"
+        );
+        let autn = Autn::new(&[
+            0x55, 0xf3, 0x28, 0xb4, 0x35, 0x77, 0xb9, 0xb9, 0x4a, 0x9f, 0xfa, 0xc3, 0x54, 0xdf,
+            0xaf, 0xb3,
+        ]);
+        assert_eq!(
+            format!("{autn:?}"),
+            "Autn(55f328b43577b9b94a9ffac354dfafb3)"
+        );
+        // Built, viewed and compared as a key is
+        assert_eq!(Rand::from_slice(rand.as_octets()), Ok(rand.clone()));
+        assert_eq!(autn, *autn.as_octets());
+        assert_eq!(
+            Autn::from_slice(&[0; 15]),
             Err(SecurityError::InvalidKeyLength {
                 expected: 16,
                 got: 15

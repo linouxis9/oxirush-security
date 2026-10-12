@@ -124,7 +124,8 @@
 //!
 //! | Input | Type or check |
 //! |-------|---------------|
-//! | Key, RAND, AUTN, RES\*, XRES\* | A type for each, such as [`nas_5gs::KAmf`] or [`Ck`]: `new` takes the octets, `from_slice` a slice, `as_octets` gives them back. Wiped on drop, not `Copy`, and `{:?}` shows the name alone |
+//! | Key, RES\*, XRES\* | A type for each, such as [`nas_5gs::KAmf`] or [`Ck`]: `new` takes the octets, `from_slice` a slice, `as_octets` gives them back. Wiped on drop, not `Copy`, and never printed: `{:?}` shows the name alone |
+//! | RAND, AUTN | [`Rand`] and [`Autn`], built and viewed as a key is. They travel in clear: `{:?}` prints their octets, as it prints an identity whole |
 //! | Algorithm | [`IntegrityAlgorithm`] and [`CipheringAlgorithm`], under both names (`NIA2` and `EIA2`). `try_from(u8)` refuses 4 and above |
 //! | NAS COUNT | [`NasCount`], 24 bits. `next` and `estimate` refuse to wrap around |
 //! | COUNT of the KgNB and KeNB derivations | A `NasCount`, or [`AccessKeyCount::Handover`] for the 2^32 - 1 of a handover |
