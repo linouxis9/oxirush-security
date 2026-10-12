@@ -23,8 +23,9 @@ use zeroize::Zeroizing;
 /// Longest KDF parameter: its length field L has two octets.
 const MAXIMUM_PARAMETER: usize = u16::MAX as usize;
 
-/// The KDF of TS 33.220 Annex B.2: HMAC-SHA-256(key, S), where S is what
-/// [`build_s`] lays out.
+/// The KDF of TS 33.220 Annex B.2: HMAC-SHA-256(key, S), where S is FC,
+/// then each parameter with its length after it. `build_s` lays it out,
+/// with the `alloc` feature.
 ///
 /// The 256 bits are a key, of a kind that the crate does not know: they
 /// are wiped when the value is dropped, and `*` gives the array. The HMAC
