@@ -140,10 +140,79 @@
 //!
 //! # Key material and timing
 //!
+//! ## What an operation leaves
+//!
+//! An operation that computes with a key clears what it used when it
+//! returns: an algorithm, a keyed context, a batch, a generator, a
+//! derivation, a comparison, a SUCI.
+//!
+//! | What | How |
+//! |------|-----|
+//! | The values that the code names | Keys, round keys, CMAC subkeys, generator states, keystream, and the blocks and hashes of HMAC are wiped where they are, with `zeroize`. The SHA-256 of `sha2` and the AES of `aes` are built with their `zeroize` features: the crate does not compile without them. |
+//! | The stack | The work runs in a frame of its own. When it has returned, the stack below is set to zero over a fixed number of octets, which the table of the stack gives. |
+//! | The registers | The registers that a function need not give back as it found them are set to zero. |
+//!
+//! | Target | Registers that are cleared | Checked by |
+//! |--------|----------------------------|------------|
+//! | x86-64 | RAX, RCX, RDX, RSI, RDI, R8 to R11, and the vector registers 0 to 15, whole | `leftovers/` in the repository, for every operation in each form of the code, in eleven optimized builds with Rust 1.88 and 1.98.1 |
+//! | AArch64 | X0 to X17, and V0 to V31 | `emulated-aarch64/`, for 22 operations on an emulated processor |
+//! | Another target | None. The stack is cleared by a function whose frame is where the work was | Nothing |
+//!
+//! Both programs run an operation, then look for its key, its round keys,
+//! its subkeys, the stages of its generator, its keystream and its HMAC
+//! values on the stack and in the registers. They also see that what was
+//! cleared is zero, that the vector registers are zero, and that the work
+//! went less deep than what is cleared. CI runs both.
+//!
+//! | Work | Stack cleared after it, in octets |
+//! |------|-----------------------------------|
+//! | AES on its instructions, one message with a keyed context | 1280 |
+//! | AES on its instructions, from a key | 2048 |
+//! | One message of SNOW 3G or ZUC, AES without its instructions, a derivation, a new context or generator | 4096 |
+//! | Words of a generator, a comparison | 1024 |
+//! | SUCI | 12288 |
+//! | Several messages side by side | 16384 |
+//! | Any, in a build with debug assertions | 49152 |
+//!
+//! An operation needs that much stack. Each figure is between one and a
+//! half times and twice what the deepest work of its kind was measured to
+//! use, and more for a derivation and for SUCI.
+//!
+//! What stays:
+//!
+//! - What an operation returns, which is the program's. A key and a
+//!   context are wiped when they are dropped.
+//! - The copies of the program. A key or a context that is moved leaves
+//!   its octets where it was: Rust does not wipe what a value moves from.
+//!   `new`, `from_slice` and `clone` copy octets as any copy does. Make a
+//!   key where it stays, and pass references.
+//! - An unoptimized build without debug assertions, whose code goes
+//!   deeper than what is cleared. In any unoptimized build, a value that
+//!   an operation returns in a register goes through the frame of its
+//!   function: a keystream word of `next_word` stays there.
+//! - ZMM16 to ZMM31 and the mask registers, in a build that enables
+//!   AVX-512 for every processor.
+//! - What the system copies of the memory of a process: swap, a core dump.
+//!
+//! On an AMD Ryzen 7 5700G the clearing adds about 13 ns to a message of
+//! AES with a keyed context, 17 to 21 ns to one from a key, 25 to 40 ns
+//! to a message of SNOW 3G or ZUC or to a derivation, and 110 to 240 ns
+//! to each algorithm of a batch that runs side by side. For 64 octets
+//! that is 5 to 12 % of SNOW 3G and of ZUC, and it doubles 128-EEA2 with
+//! a keyed context, from 13 ns to 26. A batch pays once for all its
+//! messages: sixteen of 128-EEA2 with their contexts take 290 ns, and 427
+//! one by one. `benches/README.md` in the repository has the figures.
+//!
+//! A program that cannot afford it is built with
+//! `RUSTFLAGS="--cfg oxirush_security_unwiped"`. The named values are
+//! still wiped; the stack and the registers are left as the work left
+//! them. It is a `--cfg` of the build and not a feature, so that no
+//! dependency of a program can turn the clearing off for it.
+//!
+//! ## Timing
+//!
 //! | Subject | What the crate does |
 //! |---------|---------------------|
-//! | Wiped after use | Explicit buffers and owned state: CK‖IK buffers, key-bearing KDF input buffers, the SHA-256 state and the key block and inner hash of HMAC-SHA-256, SUCI ECIES KDF buffers, cipher state including the AES round keys, and keystream buffers. The hasher is that of the `sha2` crate, and AES that of the `aes` crate on a processor without AES instructions, both built with their `zeroize` features: the crate does not compile without them. |
-//! | Not wiped | Temporary copies and compiler-generated spills, which the wiping above does not all cover. Returned keys and deconcealed identities belong to the caller, who clears them when their lifetime ends. |
 //! | Secret-dependent indexing and branches | SNOW 3G, ZUC, AES, 128-EIA1, 128-EIA3 and AES-CMAC neither index memory nor branch on a secret value, in any of their forms, for one message or for several. |
 //! | On vector instructions | On an x86-64 processor with SSSE3, SSE4.1, AES-NI and PCLMULQDQ, or an AArch64 one with AES, which the crate sees when the program runs and [`implementation`] reports: an S-box is read with shuffle instructions, whose index is an operand and not an address; S1 of SNOW 3G and the S-box inside S1 of ZUC are the AES instruction; the products of the two MACs are the carry-less multiplication instruction. SNOW 3G is clocked three times at once. The key expansion and the rounds of AES-128 are the AES instruction, eight counter blocks at a time. |
 //! | Several messages | [`nea_cipher_batch`] and [`nia_mac_batch`] clock four SNOW 3G or ZUC generators in the 32-bit words of a vector, and eight on an x86-64 processor with AVX2; the CBC-MAC chains of eight messages of 128-EIA2 advance together. What a generator or a chain does at a step depends on the lengths of the messages, and the time of a message on no octet or key of another. |
@@ -152,10 +221,12 @@
 //! | Comparison | [`constant_time_eq`] compares RES\* with XRES\*, or HRES\* with HXRES\*, through `subtle`: its time depends on the lengths and not on where the values differ. |
 //! | Not measured | No timing was measured, and no other target or compiler was read. The AArch64 form is the code of the x86-64 one on other instructions: it runs on an emulated AArch64 processor, where it gives what its scalar code and the x86-64 code give, and CI runs the tests on an AArch64 machine. |
 //!
-//! The `unsafe` code of the crate is in one private module, `common::simd`, and of
-//! one kind: the calls of the code that is compiled for the vector
-//! instructions, once the processor is seen to have them. That code takes
-//! and returns values, never a pointer.
+//! The `unsafe` code of the crate is in one private module, `common::simd`,
+//! and of two kinds. The first is the calls of the code that is compiled
+//! for the vector instructions, once the processor is seen to have them:
+//! that code takes and returns values, never a pointer. The second is the
+//! instructions that set to zero the registers and the stack below the
+//! stack pointer after a piece of work.
 //!
 //! # What the tests compare with
 //!
@@ -330,12 +401,30 @@ pub use common::plmn::{tbcd_decode, tbcd_encode};
 pub use common::snow3g::Snow3G;
 pub use common::zuc::Zuc;
 
-/// What the crate's fuzz targets and its emulated AArch64 program drive
-/// beside the public functions. A build with `--cfg oxirush_security_hooks`
-/// has this module, and no other build.
+/// What the crate's fuzz targets, its emulated AArch64 program and its scan
+/// of leftovers drive beside the public functions. A build with
+/// `--cfg oxirush_security_hooks` has this module, and no other build.
 #[cfg(oxirush_security_hooks)]
 #[doc(hidden)]
 pub mod hooks {
+    /// Run `work` without the clearing of the registers and of the stack
+    /// that follows each public operation, to see what the operation
+    /// leaves and how deep it goes. The setting is the program's, not a
+    /// thread's.
+    #[cfg(not(oxirush_security_unwiped))]
+    pub fn unwiped<R>(work: impl FnOnce() -> R) -> R {
+        crate::common::wipe::hooks::unwiped(work)
+    }
+
+    /// How many areas of stack were cleared after pieces of work since the
+    /// last call, and the address and the octets of the first eight. Under
+    /// [`unwiped`], on x86-64 and on AArch64, they are the areas that would
+    /// have been cleared.
+    #[cfg(not(oxirush_security_unwiped))]
+    pub fn cleared() -> (usize, [(usize, usize); 8]) {
+        crate::common::wipe::hooks::cleared()
+    }
+
     /// Run `work` without the vector instructions of the processor, on the
     /// scalar code that every target has. The setting is the program's, not
     /// a thread's.

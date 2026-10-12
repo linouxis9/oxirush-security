@@ -185,7 +185,7 @@ mod tests {
     /// KAMF with ngKSI 5, and the sequence number 0x22.
     #[test]
     fn nas_container_mac_uses_the_reserved_count() {
-        let key = KNasInt::new(KEY);
+        let key = KNasInt::new(&KEY);
         let container = [0x22, 0x15, 0x22];
         let mac = |count| {
             nia_mac(
@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(Bearer::from(NasConnection::ThreeGpp), bearer(1));
         assert_eq!(Bearer::from(NasConnection::Non3Gpp), bearer(2));
 
-        let key = KNasInt::new(KEY);
+        let key = KNasInt::new(&KEY);
         let payload = [0x7e, 0x00, 0x41, 0x01];
         let count = NasCount::from_parts(0, 1);
         let mac = |connection| {
@@ -250,7 +250,7 @@ mod tests {
     /// algorithms take any 32-bit COUNT.
     #[test]
     fn nas_ciphering_is_the_algorithm_with_the_nas_connection() {
-        let key = KNasEnc::new(KEY);
+        let key = KNasEnc::new(&KEY);
         let payload = [0x7e, 0x00, 0x41, 0x01];
         let (connection, uplink) = (NasConnection::ThreeGpp, Direction::Uplink);
         assert!(NasCount::new(1 << 24).is_err());

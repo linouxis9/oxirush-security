@@ -42,6 +42,7 @@ mod nai;
 pub use ecies::{HomeNetworkPrivateKey, HomeNetworkPublicKey};
 
 use crate::common::plmn::{Plmn, decimal_tbcd_decode, tbcd_encode};
+use crate::common::wipe;
 use crate::nas_5gs::guti::MobileIdentityType;
 use crate::nas_5gs::supi::{Supi, SupiType};
 use alloc::{string::String, vec::Vec};
@@ -711,27 +712,29 @@ impl Suci {
         routing_indicator: &str,
         protection: Protection<'_>,
     ) -> Result<Self, SuciError> {
-        if !valid_msin(plmn, msin) {
-            return Err(SuciError::Identity);
-        }
-        let routing_indicator = RoutingIndicator::new(routing_indicator)?;
-        let (scheme, key_id, output) = match protection {
-            Protection::Null => (ProtectionScheme::Null, 0, msin.as_bytes().to_vec()),
-            Protection::Ecies { key_id, key } => {
-                // The MSIN in BCD is the plaintext (TS 33.501 Annex C.3.1)
-                let bcd = tbcd_encode(msin).expect("the MSIN is decimal digits");
-                (key.scheme(), key_id, Self::protect(key_id, key, &bcd)?)
+        wipe::suci(|| {
+            if !valid_msin(plmn, msin) {
+                return Err(SuciError::Identity);
             }
-        };
-        let home = Home::Plmn(plmn);
-        Self::checked(
-            SupiType::Imsi,
-            home,
-            routing_indicator,
-            scheme,
-            key_id,
-            output,
-        )
+            let routing_indicator = RoutingIndicator::new(routing_indicator)?;
+            let (scheme, key_id, output) = match protection {
+                Protection::Null => (ProtectionScheme::Null, 0, msin.as_bytes().to_vec()),
+                Protection::Ecies { key_id, key } => {
+                    // The MSIN in BCD is the plaintext (TS 33.501 Annex C.3.1)
+                    let bcd = tbcd_encode(msin).expect("the MSIN is decimal digits");
+                    (key.scheme(), key_id, Self::protect(key_id, key, &bcd)?)
+                }
+            };
+            let home = Home::Plmn(plmn);
+            Self::checked(
+                SupiType::Imsi,
+                home,
+                routing_indicator,
+                scheme,
+                key_id,
+                output,
+            )
+        })
     }
 
     /// Conceal a SUPI that has the form of a NAI: a network specific
@@ -749,28 +752,30 @@ impl Suci {
         routing_indicator: &str,
         protection: Protection<'_>,
     ) -> Result<Self, SuciError> {
-        let kind = supi.supi_type();
-        if kind == SupiType::Imsi {
-            return Err(SuciError::Identity);
-        }
-        let (username, realm) = nai::username_and_realm(kind, supi.identity())?;
-        let routing_indicator = RoutingIndicator::new(routing_indicator)?;
-        let (scheme, key_id, output) = match protection {
-            Protection::Null => (ProtectionScheme::Null, 0, username.as_bytes().to_vec()),
-            Protection::Ecies { .. } if kind != SupiType::NetworkSpecific => {
-                return Err(SuciError::NullSchemeRequired);
+        wipe::suci(|| {
+            let kind = supi.supi_type();
+            if kind == SupiType::Imsi {
+                return Err(SuciError::Identity);
             }
-            // A scheme output without ciphertext is none
-            Protection::Ecies { .. } if username.is_empty() => {
-                return Err(NaiError::Username.into());
-            }
-            Protection::Ecies { key_id, key } => {
-                let output = Self::protect(key_id, key, username.as_bytes())?;
-                (key.scheme(), key_id, output)
-            }
-        };
-        let home = Home::Realm(String::from(realm));
-        Self::checked(kind, home, routing_indicator, scheme, key_id, output)
+            let (username, realm) = nai::username_and_realm(kind, supi.identity())?;
+            let routing_indicator = RoutingIndicator::new(routing_indicator)?;
+            let (scheme, key_id, output) = match protection {
+                Protection::Null => (ProtectionScheme::Null, 0, username.as_bytes().to_vec()),
+                Protection::Ecies { .. } if kind != SupiType::NetworkSpecific => {
+                    return Err(SuciError::NullSchemeRequired);
+                }
+                // A scheme output without ciphertext is none
+                Protection::Ecies { .. } if username.is_empty() => {
+                    return Err(NaiError::Username.into());
+                }
+                Protection::Ecies { key_id, key } => {
+                    let output = Self::protect(key_id, key, username.as_bytes())?;
+                    (key.scheme(), key_id, output)
+                }
+            };
+            let home = Home::Realm(String::from(realm));
+            Self::checked(kind, home, routing_indicator, scheme, key_id, output)
+        })
     }
 
     /// The scheme output of a plaintext under a key and its identifier.
@@ -858,44 +863,48 @@ impl Suci {
         &self,
         key: Option<&HomeNetworkPrivateKey>,
     ) -> Result<Supi<'static>, SuciError> {
-        if matches!(
-            (&self.home, self.supi_type),
-            (Home::Realm(_), SupiType::Imsi)
-        ) {
-            return Err(SuciError::MncLengthUnknown);
-        }
-        let identity = match self.scheme {
-            ProtectionScheme::Null => {
-                String::from_utf8(self.output.clone()).expect("checked when the SUCI was made")
+        wipe::suci(|| {
+            if matches!(
+                (&self.home, self.supi_type),
+                (Home::Realm(_), SupiType::Imsi)
+            ) {
+                return Err(SuciError::MncLengthUnknown);
             }
-            ProtectionScheme::ProfileA | ProtectionScheme::ProfileB => {
-                let key = key.ok_or(SuciError::MissingKey)?;
-                if key.scheme() != self.scheme {
-                    return Err(SuciError::WrongKeyType {
-                        suci: self.scheme,
-                        key: key.scheme(),
-                    });
+            let identity = match self.scheme {
+                ProtectionScheme::Null => {
+                    String::from_utf8(self.output.clone()).expect("checked when the SUCI was made")
                 }
-                let plaintext = ecies::deconceal(key, &self.output)?;
-                let identity = match self.home {
-                    // The MSIN in BCD
-                    Home::Plmn(_) => decimal_tbcd_decode(&plaintext),
-                    Home::Realm(_) => String::from_utf8(plaintext.to_vec()).ok(),
-                };
-                identity
-                    .filter(|identity| self.valid_identity(identity))
-                    .ok_or(SuciError::Plaintext)?
-            }
-            ProtectionScheme::Proprietary(identifier) => {
-                return Err(SuciError::ProprietaryScheme(identifier));
-            }
-        };
-        Ok(match &self.home {
-            Home::Plmn(plmn) => {
-                let imsi = alloc::format!("{}{}{identity}", plmn.mcc(), plmn.mnc());
-                Supi::owned(SupiType::Imsi, imsi)
-            }
-            Home::Realm(realm) => Supi::owned(self.supi_type, alloc::format!("{identity}@{realm}")),
+                ProtectionScheme::ProfileA | ProtectionScheme::ProfileB => {
+                    let key = key.ok_or(SuciError::MissingKey)?;
+                    if key.scheme() != self.scheme {
+                        return Err(SuciError::WrongKeyType {
+                            suci: self.scheme,
+                            key: key.scheme(),
+                        });
+                    }
+                    let plaintext = ecies::deconceal(key, &self.output)?;
+                    let identity = match self.home {
+                        // The MSIN in BCD
+                        Home::Plmn(_) => decimal_tbcd_decode(&plaintext),
+                        Home::Realm(_) => String::from_utf8(plaintext.to_vec()).ok(),
+                    };
+                    identity
+                        .filter(|identity| self.valid_identity(identity))
+                        .ok_or(SuciError::Plaintext)?
+                }
+                ProtectionScheme::Proprietary(identifier) => {
+                    return Err(SuciError::ProprietaryScheme(identifier));
+                }
+            };
+            Ok(match &self.home {
+                Home::Plmn(plmn) => {
+                    let imsi = alloc::format!("{}{}{identity}", plmn.mcc(), plmn.mnc());
+                    Supi::owned(SupiType::Imsi, imsi)
+                }
+                Home::Realm(realm) => {
+                    Supi::owned(self.supi_type, alloc::format!("{identity}@{realm}"))
+                }
+            })
         })
     }
 }

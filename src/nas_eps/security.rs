@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn re_establishment_mac_authenticates_the_28_bit_cell_id() {
-        let key = KNasInt::new([0x33; 16]);
+        let key = KNasInt::new(&[0x33; 16]);
         assert_eq!(
             re_establishment_nas_mac(
                 &key,
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn eps_nas_uses_the_algorithms_with_bearer_zero() {
-        let (int, enc) = (KNasInt::new([0x23; 16]), KNasEnc::new([0x23; 16]));
+        let (int, enc) = (KNasInt::new(&[0x23; 16]), KNasEnc::new(&[0x23; 16]));
         let mut payload = b"EPS NAS security".to_vec();
         let (count, uplink) = (NasCount::from_parts(0, 10), Direction::Uplink);
         for (integrity, ciphering) in [
@@ -240,7 +240,7 @@ mod tests {
     /// of the MAC over octets 1 and 2 of the SERVICE REQUEST.
     #[test]
     fn the_short_mac_covers_the_first_two_octets() {
-        let key = KNasInt::new([0x23; 16]);
+        let key = KNasInt::new(&[0x23; 16]);
         let (count, uplink) = (NasCount::from_parts(0, 10), Direction::Uplink);
         let over = |octets: [u8; 2]| {
             nia_mac(

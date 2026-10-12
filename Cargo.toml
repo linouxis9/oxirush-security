@@ -10,7 +10,7 @@ rust-version = "1.88"
 keywords = ["5g", "lte", "eps", "nas", "security"]
 categories = ["cryptography", "network-programming"]
 readme = "README.md"
-exclude = [".github/", ".gitignore", "benches/", "emulated-aarch64/", "fuzz/"]
+exclude = [".github/", ".gitignore", "benches/", "emulated-aarch64/", "fuzz/", "leftovers/"]
 
 [features]
 default = ["std", "suci", "nai"]
@@ -65,11 +65,16 @@ cpufeatures = "0.3"
 [dev-dependencies]
 hex = "0.4.3"
 
-# `--cfg oxirush_security_hooks` gives the crate's own fuzz targets and its
-# emulated AArch64 program the module `hooks`, which turns the vector paths
-# off so that they are compared with the scalar ones. No other build has it.
+# `--cfg oxirush_security_hooks` gives the crate's own fuzz targets, its
+# emulated AArch64 program and its scan of leftovers the module `hooks`,
+# which turns the vector paths off so that they are compared with the scalar
+# ones. No other build has it.
+#
+# `--cfg oxirush_security_unwiped` is for the program that cannot afford the
+# clearing of the stack and of the registers after each operation: see
+# "Key material and timing" in the documentation.
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oxirush_security_hooks)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oxirush_security_hooks)', 'cfg(oxirush_security_unwiped)'] }
 
 [[example]]
 name = "suci_conceal"

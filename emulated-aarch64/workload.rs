@@ -171,7 +171,7 @@ fn zuc_keystream() -> u64 {
 fn ciphers() -> u64 {
     let (mut random, mut digest) = (Random(0x2545_f491_4f6c_dd1d), Digest::new());
     for length in lengths() {
-        let key = KNasEnc::new(random.octets());
+        let key = KNasEnc::new(&random.octets());
         let (count, bearer, direction) =
             (random.next() as u32, random.bearer(), random.direction());
         let message: [u8; LONGEST] = random.octets();
@@ -202,7 +202,7 @@ fn ciphers() -> u64 {
 fn macs() -> u64 {
     let (mut random, mut digest) = (Random(0x6a09_e667_f3bc_c908), Digest::new());
     for length in lengths() {
-        let key = KNasInt::new(random.octets());
+        let key = KNasInt::new(&random.octets());
         let (count, bearer, direction) =
             (random.next() as u32, random.bearer(), random.direction());
         let message: [u8; LONGEST] = random.octets();
@@ -239,7 +239,7 @@ fn contexts() -> u64 {
         let message: [u8; LONGEST] = random.octets();
         let bits = (8 * length as u64).saturating_sub(random.next() % 8);
         for (ciphering, integrity) in CIPHERING.into_iter().zip(INTEGRITY) {
-            let context = IntegrityContext::new(&KNasInt::new(key), integrity);
+            let context = IntegrityContext::new(&KNasInt::new(&key), integrity);
             let mac = context.mac(count, bearer, direction, &message[..length]);
             digest.word(mac);
             match context.mac_bits(count, bearer, direction, &message[..length], bits) {
@@ -247,7 +247,7 @@ fn contexts() -> u64 {
                 Err(_) => return u64::MAX,
             }
             // The functions that take the key give the same
-            let key = KNasInt::new(key);
+            let key = KNasInt::new(&key);
             if nia_mac(
                 &key,
                 count,
@@ -260,7 +260,7 @@ fn contexts() -> u64 {
                 return u64::MAX - 1;
             }
 
-            let enc = KNasEnc::new(*key.as_octets());
+            let enc = KNasEnc::new(key.as_octets());
             let context = CipheringContext::new(&enc, ciphering);
             let mut data = message;
             context.cipher(count, bearer, direction, &mut data[..length]);
@@ -317,7 +317,7 @@ fn batches_of(seed: u64, keyed: bool) -> u64 {
         let mut data: [[u8; IN_BATCH]; BATCH] = core::array::from_fn(|_| random.octets());
         let of_context = |index: usize| keyed && index % 2 == 1;
 
-        let integrity_keys = keys.map(KNasInt::new);
+        let integrity_keys = keys.each_ref().map(KNasInt::new);
         let integrity_contexts: [IntegrityContext; BATCH] = core::array::from_fn(|index| {
             IntegrityContext::new(&integrity_keys[index], INTEGRITY[algorithms[index]])
         });
@@ -336,7 +336,7 @@ fn batches_of(seed: u64, keyed: bool) -> u64 {
             digest.word(job.mac().unwrap_or(0));
         }
 
-        let ciphering_keys = keys.map(KNasEnc::new);
+        let ciphering_keys = keys.each_ref().map(KNasEnc::new);
         let ciphering_contexts: [CipheringContext; BATCH] = core::array::from_fn(|index| {
             CipheringContext::new(&ciphering_keys[index], CIPHERING[algorithms[index]])
         });
@@ -528,7 +528,7 @@ fn known_answers() -> u64 {
         let mut data = [0u8; 100];
         let data = &mut data[..plaintext.len()];
         data.copy_from_slice(plaintext);
-        let key = KNasEnc::new(key);
+        let key = KNasEnc::new(&key);
         let ciphered = nea_cipher_bits(&key, count, bearer, direction, data, bits, algorithm);
         if ciphered.is_err() || data != ciphertext {
             return number;
@@ -539,7 +539,7 @@ fn known_answers() -> u64 {
         let Ok(bearer) = Bearer::new(bearer) else {
             return number;
         };
-        let key = KNasInt::new(key);
+        let key = KNasInt::new(&key);
         if nia_mac_bits(&key, count, bearer, direction, message, bits, algorithm) != Ok(mac) {
             return number;
         }

@@ -35,4 +35,5 @@ pub(crate) mod sha256;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) mod simd;
 pub(crate) mod snow3g;
+pub(crate) mod wipe;
 pub(crate) mod zuc;

@@ -41,6 +41,7 @@ use crate::common::nea::ctr_prefix;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::common::simd::{AesSchedule, Instructions};
 use crate::common::snow3g::Snow3G;
+use crate::common::wipe;
 use crate::common::zuc::Zuc;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -56,7 +57,7 @@ pub fn nia_mac(
     algorithm: IntegrityAlgorithm,
 ) -> u32 {
     let (key, message) = (key.key_octets(), BitString::whole(message));
-    mac_of_bits(key, count, bearer, direction, message, algorithm)
+    mac_message(key, count, bearer, direction, message, algorithm)
 }
 
 /// Compute the MAC that [`nia_mac`] computes over the first `bit_length`
@@ -75,10 +76,39 @@ pub fn nia_mac_bits(
     algorithm: IntegrityAlgorithm,
 ) -> Result<u32, SecurityError> {
     let (key, bits) = (key.key_octets(), BitString::new(message, bit_length)?);
-    Ok(mac_of_bits(key, count, bearer, direction, bits, algorithm))
+    Ok(mac_message(key, count, bearer, direction, bits, algorithm))
 }
 
-/// The MAC of the first bits of a message, which are known to be there.
+/// The MAC of the first bits of one message, which are known to be there,
+/// and what the work left cleared: each algorithm in a frame of its own,
+/// as deep as it goes and no deeper.
+pub(crate) fn mac_message(
+    key: &[u8; 16],
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    message: BitString<'_>,
+    algorithm: IntegrityAlgorithm,
+) -> u32 {
+    match algorithm {
+        IntegrityAlgorithm::Null => 0,
+        IntegrityAlgorithm::Snow3g => {
+            wipe::message(|| eia1(key, count, bearer, direction, message))
+        }
+        IntegrityAlgorithm::Aes => {
+            let blocks = CmacBlocks::new(count, bearer, direction, message);
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            if let Some(instructions) = Instructions::detect() {
+                return wipe::aes(|| cmac_lanes(instructions, [key], &[blocks])[0]);
+            }
+            wipe::message(|| eia2_portable(key, &blocks))
+        }
+        IntegrityAlgorithm::Zuc => wipe::message(|| eia3(key, count, bearer, direction, message)),
+    }
+}
+
+/// The MAC of the first bits of a message, for a caller that clears after
+/// its own work.
 pub(crate) fn mac_of_bits(
     key: &[u8; 16],
     count: u32,
@@ -196,9 +226,9 @@ fn eia1_words(
     direction: Direction,
 ) -> Zeroizing<[u32; EIA1_WORDS]> {
     let (k, iv) = eia1_key_and_iv(key, count, bearer, direction);
-    let mut snow = Snow3G::new(*k, iv);
+    let mut snow = Snow3G::start(*k, iv);
     let mut z = Zeroizing::new([0u32; EIA1_WORDS]);
-    snow.fill(z.as_mut());
+    snow.words(z.as_mut());
     z
 }
 
@@ -289,10 +319,16 @@ fn eia2(
     if let Some(instructions) = Instructions::detect() {
         return cmac_lanes(instructions, [key], &[blocks])[0];
     }
+    eia2_portable(key, &blocks)
+}
+
+/// AES-CMAC of a message, from its blocks, with the `aes` crate: the
+/// first four octets.
+fn eia2_portable(key: &[u8; 16], blocks: &CmacBlocks<'_>) -> u32 {
     let cipher = Aes128::new(key);
     let (k1, k2) = subkeys(cipher.encrypt(0));
     let last = Zeroizing::new(blocks.last_with(k1, k2));
-    cbc_mac(&cipher, &blocks, *last)
+    cbc_mac(&cipher, blocks, *last)
 }
 
 /// The subkeys K1 and K2 of AES-CMAC with a key, which do not change
@@ -312,21 +348,55 @@ pub(crate) fn cmac_subkeys(key: &[u8; 16], round_keys: RoundKeys<'_>) -> [u128; 
 }
 
 /// AES-CMAC of a message, from its blocks, with a key, its round keys and
-/// its subkeys: the first four octets.
+/// its subkeys: the first four octets. For a caller that clears after its
+/// own work.
 pub(crate) fn cmac(
     key: &[u8; 16],
     round_keys: RoundKeys<'_>,
     subkeys: &[u128; 2],
     blocks: &CmacBlocks<'_>,
 ) -> u32 {
-    let last = Zeroizing::new(blocks.last_with(subkeys[0], subkeys[1]));
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if let Some((instructions, schedule)) = round_keys.schedule() {
-        let (first, body) = ([blocks.first], [blocks.body]);
-        let mac = Zeroizing::new(instructions.aes_cbc_mac([schedule], first, body, &[*last]));
-        return (mac[0] as u32).swap_bytes();
+        return cmac_instructions(instructions, schedule, subkeys, blocks);
     }
     let _ = round_keys;
+    cmac_portable(key, subkeys, blocks)
+}
+
+/// AES-CMAC of one message as [`cmac`] computes it, and what the work
+/// left cleared.
+pub(crate) fn cmac_message(
+    key: &[u8; 16],
+    round_keys: RoundKeys<'_>,
+    subkeys: &[u128; 2],
+    blocks: &CmacBlocks<'_>,
+) -> u32 {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if let Some((instructions, schedule)) = round_keys.schedule() {
+        return wipe::aes_keyed(|| cmac_instructions(instructions, schedule, subkeys, blocks));
+    }
+    let _ = round_keys;
+    wipe::message(|| cmac_portable(key, subkeys, blocks))
+}
+
+/// The chain of AES-CMAC on the AES instructions, with the round keys.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn cmac_instructions(
+    instructions: Instructions,
+    schedule: &AesSchedule,
+    subkeys: &[u128; 2],
+    blocks: &CmacBlocks<'_>,
+) -> u32 {
+    let last = Zeroizing::new(blocks.last_with(subkeys[0], subkeys[1]));
+    let (first, body) = ([blocks.first], [blocks.body]);
+    let mac = Zeroizing::new(instructions.aes_cbc_mac([schedule], first, body, &[*last]));
+    (mac[0] as u32).swap_bytes()
+}
+
+/// The chain of AES-CMAC with the `aes` crate, which expands the key.
+fn cmac_portable(key: &[u8; 16], subkeys: &[u128; 2], blocks: &CmacBlocks<'_>) -> u32 {
+    let last = Zeroizing::new(blocks.last_with(subkeys[0], subkeys[1]));
     cbc_mac(&Aes128::new(key), blocks, *last)
 }
 
@@ -548,13 +618,13 @@ fn eia3(
     message: BitString<'_>,
 ) -> u32 {
     let iv = eia3_iv(count, bearer, direction);
-    let mut zuc = Zuc::new(key, &iv);
+    let mut zuc = Zuc::start(key, &iv);
     let mut mac = Eia3::new(message);
     let mut keystream = Zeroizing::new([0u32; KEYSTREAM_WORDS]);
     let mut left = mac.words();
     while left > 0 {
         let words = &mut keystream[..left.min(KEYSTREAM_WORDS)];
-        zuc.fill(words);
+        zuc.words(words);
         mac.take(words);
         left -= words.len();
     }

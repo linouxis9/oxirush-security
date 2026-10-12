@@ -25,7 +25,7 @@ fuzz_target!(|bytes: &[u8]| {
         return;
     };
     let octets: [u8; 16] = head[..16].try_into().expect("16 octets");
-    let (key, enc) = (KNasInt::new(octets), KNasEnc::new(octets));
+    let (key, enc) = (KNasInt::new(&octets), KNasEnc::new(&octets));
     let count = u32::from_be_bytes(head[16..20].try_into().expect("4 octets"));
     let bearer = Bearer::new(head[20] & 0x1f).expect("five bits");
     let direction = Direction::try_from(head[21] & 1).expect("one bit");
@@ -76,10 +76,10 @@ fuzz_target!(|bytes: &[u8]| {
     let ciphering_of = |index| CipheringAlgorithm::try_from(algorithm_of(index)).expect("0 to 3");
     let key_of = |index: usize| std::array::from_fn(|octet| octets[octet] ^ index as u8);
     let keys: Vec<KNasInt> = (0..others)
-        .map(|index| KNasInt::new(key_of(index)))
+        .map(|index| KNasInt::new(&key_of(index)))
         .collect();
     let encs: Vec<KNasEnc> = (0..others)
-        .map(|index| KNasEnc::new(key_of(index)))
+        .map(|index| KNasEnc::new(&key_of(index)))
         .collect();
     // Every other message of a batch comes from a keyed context
     let integrity_contexts: Vec<IntegrityContext> = (0..others)

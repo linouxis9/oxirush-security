@@ -46,8 +46,13 @@ use crate::common::batch::{CipherJob, MacJob};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm};
 use crate::common::keys::{CipheringKey, IntegrityKey};
-use crate::common::nea::{cipher_bits, cipher_octets, nea2_cipher_keyed};
-use crate::common::nia::{BitString, CmacBlocks, cmac, cmac_subkeys, mac_of_bits};
+use crate::common::nea::{
+    cipher_bits, cipher_message, cipher_octets, nea2_cipher_keyed, nea2_message_keyed,
+};
+use crate::common::nia::{
+    BitString, CmacBlocks, cmac, cmac_message, cmac_subkeys, mac_message, mac_of_bits,
+};
+use crate::common::wipe;
 use core::fmt;
 use zeroize::Zeroizing;
 
@@ -62,7 +67,7 @@ use zeroize::Zeroizing;
 /// use oxirush_security::nas_5gs::{KNasInt, NasConnection};
 /// use oxirush_security::{Direction, IntegrityAlgorithm, IntegrityContext, NasCount, nia_mac};
 ///
-/// let key = KNasInt::new([0x2b; 16]);
+/// let key = KNasInt::new(&[0x2b; 16]);
 /// let context = IntegrityContext::new(&key, IntegrityAlgorithm::NIA2);
 ///
 /// let (count, message) = (NasCount::new(7)?, [0x07, 0x7e, 0x00, 0x43]);
@@ -94,19 +99,23 @@ pub struct IntegrityContext {
 impl IntegrityContext {
     /// The context of a key and its algorithm.
     pub fn new(key: &impl IntegrityKey, algorithm: IntegrityAlgorithm) -> Self {
-        let key = Zeroizing::new(*key.key_octets());
-        let ((mut expanded, mut schedule), mut subkeys) = (no_round_keys(), Zeroizing::new([0; 2]));
-        if algorithm == IntegrityAlgorithm::Aes {
-            (expanded, schedule) = expand(&key);
-            *subkeys = cmac_subkeys(&key, RoundKeys::of(&expanded, &schedule));
-        }
-        Self {
-            algorithm,
-            key,
-            expanded,
-            schedule,
-            subkeys,
-        }
+        let key = key.key_octets();
+        wipe::message(|| {
+            let key = Zeroizing::new(*key);
+            let ((mut expanded, mut schedule), mut subkeys) =
+                (no_round_keys(), Zeroizing::new([0; 2]));
+            if algorithm == IntegrityAlgorithm::Aes {
+                (expanded, schedule) = expand(&key);
+                *subkeys = cmac_subkeys(&key, RoundKeys::of(&expanded, &schedule));
+            }
+            Self {
+                algorithm,
+                key,
+                expanded,
+                schedule,
+                subkeys,
+            }
+        })
     }
 
     /// Its algorithm.
@@ -123,12 +132,8 @@ impl IntegrityContext {
         direction: Direction,
         message: &[u8],
     ) -> u32 {
-        self.mac_of(
-            count.into(),
-            bearer.into(),
-            direction,
-            BitString::whole(message),
-        )
+        let message = BitString::whole(message);
+        self.mac_message(count.into(), bearer.into(), direction, message)
     }
 
     /// The MAC of the first `bit_length` bits of `message`.
@@ -143,8 +148,12 @@ impl IntegrityContext {
         message: &[u8],
         bit_length: u64,
     ) -> Result<u32, SecurityError> {
-        let bits = BitString::new(message, bit_length)?;
-        Ok(self.mac_of(count.into(), bearer.into(), direction, bits))
+        let (count, bearer, bits) = (
+            count.into(),
+            bearer.into(),
+            BitString::new(message, bit_length)?,
+        );
+        Ok(self.mac_message(count, bearer, direction, bits))
     }
 
     /// The message as a job of [`nia_mac_batch`](crate::nia_mac_batch),
@@ -200,8 +209,26 @@ impl IntegrityContext {
         Some(crate::common::nia::CmacKey::Keyed(schedule, &self.subkeys))
     }
 
-    /// The MAC of the first bits of a message, which are known to be
-    /// there.
+    /// The MAC of the first bits of one message, which are known to be
+    /// there, and what the work left cleared.
+    fn mac_message(
+        &self,
+        count: u32,
+        bearer: Bearer,
+        direction: Direction,
+        message: BitString<'_>,
+    ) -> u32 {
+        match self.algorithm {
+            IntegrityAlgorithm::Aes => {
+                let blocks = CmacBlocks::new(count, bearer, direction, message);
+                cmac_message(&self.key, self.round_keys(), &self.subkeys, &blocks)
+            }
+            algorithm => mac_message(&self.key, count, bearer, direction, message, algorithm),
+        }
+    }
+
+    /// The MAC of the first bits of a message, for a caller that clears
+    /// after its own work.
     pub(crate) fn mac_of(
         &self,
         count: u32,
@@ -239,7 +266,7 @@ impl fmt::Debug for IntegrityContext {
 /// use oxirush_security::nas_eps::KNasEnc;
 /// use oxirush_security::{Bearer, CipheringAlgorithm, CipheringContext, Direction, NasCount};
 ///
-/// let key = KNasEnc::new([0x2b; 16]);
+/// let key = KNasEnc::new(&[0x2b; 16]);
 /// let context = CipheringContext::new(&key, CipheringAlgorithm::EEA2);
 ///
 /// let mut message = *b"an EPS NAS message";
@@ -263,17 +290,20 @@ pub struct CipheringContext {
 impl CipheringContext {
     /// The context of a key and its algorithm.
     pub fn new(key: &impl CipheringKey, algorithm: CipheringAlgorithm) -> Self {
-        let key = Zeroizing::new(*key.key_octets());
-        let (expanded, schedule) = match algorithm {
-            CipheringAlgorithm::Aes => expand(&key),
-            _ => no_round_keys(),
-        };
-        Self {
-            algorithm,
-            key,
-            expanded,
-            schedule,
-        }
+        let key = key.key_octets();
+        wipe::message(|| {
+            let key = Zeroizing::new(*key);
+            let (expanded, schedule) = match algorithm {
+                CipheringAlgorithm::Aes => expand(&key),
+                _ => no_round_keys(),
+            };
+            Self {
+                algorithm,
+                key,
+                expanded,
+                schedule,
+            }
+        })
     }
 
     /// Its algorithm.
@@ -290,7 +320,7 @@ impl CipheringContext {
         direction: Direction,
         data: &mut [u8],
     ) {
-        self.cipher_whole(count.into(), bearer.into(), direction, data);
+        self.cipher_message(count.into(), bearer.into(), direction, data);
     }
 
     /// Cipher or decipher the first `bit_length` bits of `data`. The
@@ -309,7 +339,7 @@ impl CipheringContext {
     ) -> Result<(), SecurityError> {
         let (count, bearer) = (count.into(), bearer.into());
         cipher_bits(data, bit_length, |octets| {
-            self.cipher_whole(count, bearer, direction, octets)
+            self.cipher_message(count, bearer, direction, octets);
         })
     }
 
@@ -348,7 +378,27 @@ impl CipheringContext {
         &self.key
     }
 
-    /// Cipher whole octets.
+    /// Cipher the whole octets of one message, and clear what the work
+    /// left.
+    fn cipher_message(&self, count: u32, bearer: Bearer, direction: Direction, data: &mut [u8]) {
+        match self.algorithm {
+            CipheringAlgorithm::Aes if data.is_empty() => {}
+            CipheringAlgorithm::Aes => {
+                let round_keys = RoundKeys::of(&self.expanded, &self.schedule);
+                nea2_message_keyed(&self.key, round_keys, count, bearer, direction, data);
+            }
+            algorithm => cipher_message(&self.key, count, bearer, direction, data, algorithm),
+        }
+    }
+
+    /// The round keys on the AES instructions, when the context has them.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn schedule(&self) -> Option<&crate::common::simd::AesSchedule> {
+        let (_, schedule) = RoundKeys::of(&self.expanded, &self.schedule).schedule()?;
+        Some(schedule)
+    }
+
+    /// Cipher whole octets, for a caller that clears after its own work.
     pub(crate) fn cipher_whole(
         &self,
         count: u32,
@@ -629,7 +679,7 @@ mod tests {
     fn a_context_takes_the_inputs_of_nas() {
         let message = *b"\x07a 5GS NAS message";
         let count = NasCount::new(0x01_0207).unwrap();
-        let key = crate::nas_5gs::KNasInt::new([0x2b; 16]);
+        let key = crate::nas_5gs::KNasInt::new(&[0x2b; 16]);
         let context = IntegrityContext::new(&key, IntegrityAlgorithm::NIA2);
         for connection in [NasConnection::ThreeGpp, NasConnection::Non3Gpp] {
             assert_eq!(
@@ -644,7 +694,7 @@ mod tests {
                 )
             );
         }
-        let key = nas_eps::KNasEnc::new([0x2b; 16]);
+        let key = nas_eps::KNasEnc::new(&[0x2b; 16]);
         let context = CipheringContext::new(&key, CipheringAlgorithm::EEA2);
         let (mut data, mut expected) = (message, message);
         context.cipher(count, Bearer::ZERO, Direction::Downlink, &mut data);

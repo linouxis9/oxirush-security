@@ -60,6 +60,57 @@ A key derivation, one HMAC-SHA-256, takes 0.22 µs, and 0.16 µs in 0.2.0,
 whose HMAC did not wipe its state. SUCI concealment takes 55 µs with
 Profile A and 284 µs with Profile B, and deconcealment 43 µs and 147 µs.
 
+## What the clearing costs
+
+After each operation the crate sets to zero the stack that the work used
+and the registers. `RUSTFLAGS="--cfg oxirush_security_unwiped"` builds the
+crate without it, and the benchmarks with it:
+
+```bash
+cargo bench --bench algorithms
+RUSTFLAGS="--cfg oxirush_security_unwiped" cargo bench --bench algorithms
+```
+
+The time of one call in nanoseconds, without the clearing and with it, on
+the same processor: the lowest median of two runs with it and of four
+without, while other cores of the machine did other work. The figures of
+the other sections are without it.
+
+| | 64 octets | 1500 octets |
+|---|---|---|
+| 128-EEA2 with a keyed context | 12.7, 26.4 | 152, 164 |
+| 128-EEA2 from a key | 35.4, 52.8 | 172, 189 |
+| 128-EIA2 with a keyed context | 68.7, 80.2 | 905, 948 |
+| 128-EIA2 from a key | 105, 126 | 974, 996 |
+| 128-EEA1 | 352, 383 | 2584, 2645 |
+| 128-EEA3 | 421, 460 | 3222, 3275 |
+| 128-EIA1 | 303, 336 | 407, 439 |
+| 128-EIA3 | 466, 498 | 3570, 3614 |
+
+A derivation takes 205 to 246 ns without the clearing and 233 to 244 ns
+with it; SUCI changes by less than the runs differ.
+
+Sixteen messages of 64 octets in one call:
+
+| | Without | With |
+|---|---|---|
+| 128-EEA1 | 1911 | 2078 |
+| 128-EEA2 from keys | 647 | 649 |
+| 128-EEA2 with keyed contexts | 265 | 290 |
+| 128-EEA3 | 2163 | 2375 |
+| 128-EIA1 | 2166 | 2355 |
+| 128-EIA2 from keys | 940 | 1078 |
+| 128-EIA2 with keyed contexts | 735 | 846 |
+| 128-EIA3 | 2617 | 2853 |
+
+The cost is that of the stores: 1280 octets after AES with a keyed
+context, 2048 after AES from a key, 4096 after a message of SNOW 3G or ZUC
+and after a derivation, 16384 after each algorithm of a batch that runs
+side by side. It does not grow with the message. On 64 octets it is 5 to
+12 % of SNOW 3G and of ZUC, 17 to 20 % of 128-EIA2, and it doubles
+128-EEA2 with a keyed context, which a batch avoids: sixteen such messages
+take 427 ns one by one and 290 ns in one call.
+
 ## Several messages in one call
 
 `batch` times N messages, each with its own key and COUNT: `single` is a

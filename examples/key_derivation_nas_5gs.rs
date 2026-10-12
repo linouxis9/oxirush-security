@@ -29,11 +29,11 @@ use oxirush_security::{
 fn main() -> Result<(), SecurityError> {
     // Example 5G AKA outputs, and the AUTN of the authentication: SQN xor
     // AK, the AMF field and the MAC
-    let ck = Ck::new([0x11; 16]);
-    let ik = Ik::new([0x22; 16]);
+    let ck = Ck::new(&[0x11; 16]);
+    let ik = Ik::new(&[0x22; 16]);
     let mut autn = [0x33; 16];
     autn[6..].copy_from_slice(&[0x80, 0x00, 1, 2, 3, 4, 5, 6, 7, 8]);
-    let autn = Autn::new(autn);
+    let autn = Autn::new(&autn);
     let sn_name = b"5G:mnc093.mcc208.3gppnetwork.org";
     let abba = [0x00, 0x00]; // 5G standalone
 

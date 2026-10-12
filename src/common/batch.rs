@@ -61,7 +61,10 @@ use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, octets_of};
 use crate::common::keys::{CipheringKey, IntegrityKey};
 use crate::common::nea::cipher_octets;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+use crate::common::nea::nea2_instructions;
 use crate::common::nia::{BitString, mac_of_bits};
+use crate::common::wipe;
 
 /// A message to cipher or to decipher in a batch: its key, the COUNT, the
 /// BEARER and the DIRECTION of the algorithm, its octets and its algorithm.
@@ -171,6 +174,23 @@ impl<'a> CipherJob<'a> {
         }
     }
 
+    /// 128-EEA2 of the message on the AES instructions, with the round
+    /// keys of its context when it has them.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn aes(&mut self, instructions: crate::common::simd::Instructions) {
+        let (count, bearer, direction) = (self.count, self.bearer, self.direction);
+        let schedule = self.context.and_then(CipheringContext::schedule);
+        nea2_instructions(
+            instructions,
+            self.key,
+            schedule,
+            count,
+            bearer,
+            direction,
+            self.data,
+        );
+    }
+
     /// Put back the bits of the last octet that are not of the message.
     fn restore(&mut self) {
         if let Some(last) = self.data.last_mut() {
@@ -182,23 +202,22 @@ impl<'a> CipherJob<'a> {
 /// Cipher or decipher each message of `jobs` in place, which is one
 /// operation. Each call ciphers every job once more.
 pub fn nea_cipher_batch(jobs: &mut [CipherJob<'_>]) {
+    // Each piece of work clears what it left: the generators that run
+    // side by side, and the messages that come one after the other
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    let generators = lanes::cipher(jobs);
+    let done = lanes::cipher(jobs);
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let generators = false;
+    let done = false;
 
-    for job in jobs {
-        let done = match job.algorithm {
-            CipheringAlgorithm::Null => true,
-            CipheringAlgorithm::Snow3g | CipheringAlgorithm::Zuc => generators,
-            // The counter blocks of a message are encrypted eight at a
-            // time: there is nothing that a second message would add
-            CipheringAlgorithm::Aes => false,
-        };
-        if !done {
-            job.alone();
-        }
-        job.restore();
+    let ciphered = |job: &&mut CipherJob<'_>| job.algorithm != CipheringAlgorithm::Null;
+    if !done && jobs.iter_mut().any(|job| ciphered(&job)) {
+        wipe::message(|| {
+            let ciphered = jobs.iter_mut().filter(ciphered);
+            ciphered.for_each(|job| {
+                job.alone();
+                job.restore();
+            });
+        });
     }
 }
 
@@ -311,20 +330,23 @@ impl<'a> MacJob<'a> {
 /// Compute the MAC of each message of `jobs`, which [`MacJob::mac`] then
 /// returns.
 pub fn nia_mac_batch(jobs: &mut [MacJob<'_>]) {
+    // Each piece of work clears what it left: the generators and the
+    // chains that run side by side, and the messages that come one after
+    // the other
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    let (generators, aes) = (lanes::mac(jobs), lanes::mac_aes(jobs));
+    let done = lanes::mac(jobs);
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let (generators, aes) = (false, false);
+    let done = false;
 
-    for job in jobs {
-        let done = match job.algorithm {
-            IntegrityAlgorithm::Null => false,
-            IntegrityAlgorithm::Snow3g | IntegrityAlgorithm::Zuc => generators,
-            IntegrityAlgorithm::Aes => aes,
-        };
-        if !done {
-            job.alone();
-        }
+    let null = |job: &&mut MacJob<'_>| job.algorithm == IntegrityAlgorithm::Null;
+    jobs.iter_mut()
+        .filter(null)
+        .for_each(|job| job.mac = Some(0));
+    if !done && jobs.iter_mut().any(|job| !null(&job)) {
+        wipe::message(|| {
+            let keyed = jobs.iter_mut().filter(|job| !null(job));
+            keyed.for_each(|job| job.alone());
+        });
     }
 }
 
@@ -341,6 +363,7 @@ mod lanes {
     };
     use crate::common::simd::lanes::Stream;
     use crate::common::simd::{Instructions, snow3g_lanes, zuc_lanes};
+    use crate::common::wipe;
     use crate::common::{snow3g, zuc};
     use zeroize::Zeroizing;
 
@@ -352,12 +375,8 @@ mod lanes {
     /// The key of a place of a group that has no message.
     const NO_KEY: [u8; 16] = [0; 16];
 
-    /// Compute the MACs of the messages of AES, eight at a time. `false`
-    /// on a processor without the instructions, where nothing is done.
-    pub(super) fn mac_aes(jobs: &mut [MacJob<'_>]) -> bool {
-        let Some(instructions) = Instructions::detect() else {
-            return false;
-        };
+    /// Compute the MACs of the messages of AES, eight at a time.
+    fn mac_aes(instructions: Instructions, jobs: &mut [MacJob<'_>]) {
         let mut jobs = jobs
             .iter_mut()
             .filter(|job| job.algorithm == IntegrityAlgorithm::Aes);
@@ -377,7 +396,6 @@ mod lanes {
                 _ => mac_aes_group::<AES_GROUP>(instructions, &mut group),
             }
         }
-        true
     }
 
     /// 128-EIA2 of the first `N` places of `group`.
@@ -406,38 +424,84 @@ mod lanes {
         }
     }
 
-    /// Cipher the messages of SNOW 3G and of ZUC. `false` on a processor
-    /// without the instructions, where nothing is done.
+    /// Cipher the messages: those of SNOW 3G and those of ZUC on
+    /// generators that run side by side, those of AES one after the other
+    /// on its instructions. Each of the three clears what it left.
+    /// `false` on a processor without the instructions, where nothing is
+    /// done.
     pub(super) fn cipher(jobs: &mut [CipherJob<'_>]) -> bool {
+        let Some(instructions) = Instructions::detect() else {
+            return false;
+        };
         let of = |algorithm| move |job: &&mut CipherJob<'_>| job.algorithm == algorithm;
         let count = |algorithm| jobs.iter().filter(|job| job.algorithm == algorithm).count();
-        let (of_snow3g, of_zuc) = (
+        let (of_snow3g, of_zuc, of_aes) = (
             count(CipheringAlgorithm::Snow3g),
             count(CipheringAlgorithm::Zuc),
+            count(CipheringAlgorithm::Aes),
         );
-        let streams = jobs.iter_mut().filter(of(CipheringAlgorithm::Snow3g));
-        if !snow3g_lanes(of_snow3g, streams.map(CipherStream::snow3g)) {
-            return false;
+        // The counter blocks of a message are encrypted eight at a time:
+        // there is nothing that a second message would add. The work that
+        // goes least deep comes first, so that what is cleared after a
+        // piece of work stays clear after the next.
+        //
+        // Each piece of work ends with the bits of its messages that are
+        // not ciphered put back: nothing follows the clearing.
+        if of_aes > 0 {
+            let of_aes = jobs.iter_mut().filter(of(CipheringAlgorithm::Aes));
+            wipe::aes(|| {
+                of_aes.for_each(|job| {
+                    job.aes(instructions);
+                    job.restore();
+                });
+            });
         }
-        let streams = jobs.iter_mut().filter(of(CipheringAlgorithm::Zuc));
-        zuc_lanes(of_zuc, streams.map(CipherStream::zuc))
+        if of_snow3g > 0 {
+            wipe::lanes(|| {
+                let streams = jobs.iter_mut().filter(of(CipheringAlgorithm::Snow3g));
+                snow3g_lanes(of_snow3g, streams.map(CipherStream::snow3g));
+                let ciphered = jobs.iter_mut().filter(of(CipheringAlgorithm::Snow3g));
+                ciphered.for_each(|job| job.restore());
+            });
+        }
+        if of_zuc > 0 {
+            wipe::lanes(|| {
+                let streams = jobs.iter_mut().filter(of(CipheringAlgorithm::Zuc));
+                zuc_lanes(of_zuc, streams.map(CipherStream::zuc));
+                let ciphered = jobs.iter_mut().filter(of(CipheringAlgorithm::Zuc));
+                ciphered.for_each(|job| job.restore());
+            });
+        }
+        true
     }
 
-    /// Compute the MACs of the messages of SNOW 3G and of ZUC. `false` on
-    /// a processor without the instructions, where nothing is done.
+    /// Compute the MACs: those of SNOW 3G and those of ZUC on generators
+    /// that run side by side, those of AES eight chains at a time. Each
+    /// of the three clears what it left. `false` on a processor without
+    /// the instructions, where nothing is done.
     pub(super) fn mac(jobs: &mut [MacJob<'_>]) -> bool {
+        let Some(instructions) = Instructions::detect() else {
+            return false;
+        };
         let of = |algorithm| move |job: &&mut MacJob<'_>| job.algorithm == algorithm;
         let count = |algorithm| jobs.iter().filter(|job| job.algorithm == algorithm).count();
-        let (of_snow3g, of_zuc) = (
+        let (of_snow3g, of_zuc, of_aes) = (
             count(IntegrityAlgorithm::Snow3g),
             count(IntegrityAlgorithm::Zuc),
+            count(IntegrityAlgorithm::Aes),
         );
-        let streams = jobs.iter_mut().filter(of(IntegrityAlgorithm::Snow3g));
-        if !snow3g_lanes(of_snow3g, streams.map(Eia1Stream::new)) {
-            return false;
+        if of_snow3g > 0 {
+            let streams = jobs.iter_mut().filter(of(IntegrityAlgorithm::Snow3g));
+            wipe::lanes(|| snow3g_lanes(of_snow3g, streams.map(Eia1Stream::new)));
         }
-        let streams = jobs.iter_mut().filter(of(IntegrityAlgorithm::Zuc));
-        zuc_lanes(of_zuc, streams.map(Eia3Stream::new))
+        if of_zuc > 0 {
+            let streams = jobs.iter_mut().filter(of(IntegrityAlgorithm::Zuc));
+            wipe::lanes(|| zuc_lanes(of_zuc, streams.map(Eia3Stream::new)));
+        }
+        if of_aes > 0 {
+            wipe::lanes(|| mac_aes(instructions, jobs));
+        }
+        true
     }
 
     /// A message that its keystream ciphers.
@@ -910,8 +974,8 @@ mod tests {
         for algorithm in 0..=3 {
             let cipher = CipheringAlgorithm::try_from(algorithm).unwrap();
             let integrity = IntegrityAlgorithm::try_from(algorithm).unwrap();
-            let enc = nas_5gs::KNasEnc::new([0x11; 16]);
-            let int = nas_5gs::KNasInt::new([0x22; 16]);
+            let enc = nas_5gs::KNasEnc::new(&[0x11; 16]);
+            let int = nas_5gs::KNasInt::new(&[0x22; 16]);
             for connection in [
                 nas_5gs::NasConnection::ThreeGpp,
                 nas_5gs::NasConnection::Non3Gpp,
@@ -935,8 +999,8 @@ mod tests {
                 assert!(jobs.iter().all(|job| job.mac() == Some(mac)));
             }
 
-            let enc = nas_eps::KNasEnc::new([0x11; 16]);
-            let int = nas_eps::KNasInt::new([0x22; 16]);
+            let enc = nas_eps::KNasEnc::new(&[0x11; 16]);
+            let int = nas_eps::KNasInt::new(&[0x22; 16]);
             let mut expected = *b"an EPS NAS message";
             nas_eps::nas_cipher(&enc, count, uplink, &mut expected, cipher);
             let mac = nas_eps::nas_mac(&int, count, uplink, &expected, integrity);

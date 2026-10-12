@@ -39,7 +39,7 @@ use subtle::ConstantTimeEq;
 /// Strings of different lengths are unequal, which is found at once: the
 /// lengths are not secret. The comparison is that of the `subtle` crate.
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.ct_eq(b).into()
+    crate::common::wipe::words(|| a.ct_eq(b).into())
 }
 
 /// A word of all ones when the low bit of `bit` is one, of zeros when it is

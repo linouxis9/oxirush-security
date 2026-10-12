@@ -1,0 +1,4 @@
+# The scan turns the wiping and the vector paths off through the hooks of the
+# crate, to see what an operation leaves without them.
+[build]
+rustflags = ["--cfg", "oxirush_security_hooks"]

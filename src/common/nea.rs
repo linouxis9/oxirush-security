@@ -40,8 +40,9 @@ use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, octets_of};
 use crate::common::keys::CipheringKey;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-use crate::common::simd::Instructions;
+use crate::common::simd::{AesSchedule, Instructions};
 use crate::common::snow3g::Snow3G;
+use crate::common::wipe;
 use crate::common::zuc::Zuc;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -56,10 +57,45 @@ pub fn nea_cipher(
     data: &mut [u8],
     algorithm: CipheringAlgorithm,
 ) {
-    cipher_octets(key.key_octets(), count, bearer, direction, data, algorithm);
+    cipher_message(key.key_octets(), count, bearer, direction, data, algorithm);
 }
 
-/// Cipher or decipher octets in place with the octets of a key.
+/// Cipher or decipher one message in place with the octets of a key, and
+/// clear what the work left: each algorithm in a frame of its own, as deep
+/// as it goes and no deeper.
+pub(crate) fn cipher_message(
+    key: &[u8; 16],
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    data: &mut [u8],
+    algorithm: CipheringAlgorithm,
+) {
+    if data.is_empty() {
+        return;
+    }
+    match algorithm {
+        CipheringAlgorithm::Null => {}
+        CipheringAlgorithm::Snow3g => {
+            wipe::message(|| nea1_cipher(key, count, bearer, direction, data));
+        }
+        CipheringAlgorithm::Aes => {
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            if let Some(instructions) = Instructions::detect() {
+                return wipe::aes(|| {
+                    nea2_instructions(instructions, key, None, count, bearer, direction, data);
+                });
+            }
+            wipe::message(|| nea2_portable(key, count, bearer, direction, data));
+        }
+        CipheringAlgorithm::Zuc => {
+            wipe::message(|| nea3_cipher(key, count, bearer, direction, data));
+        }
+    }
+}
+
+/// Cipher or decipher octets in place with the octets of a key, for a
+/// caller that clears after its own work.
 pub(crate) fn cipher_octets(
     key: &[u8; 16],
     count: u32,
@@ -94,7 +130,7 @@ pub fn nea_cipher_bits(
 ) -> Result<(), SecurityError> {
     let key = key.key_octets();
     cipher_bits(data, bit_length, |octets| {
-        cipher_octets(key, count, bearer, direction, octets, algorithm)
+        cipher_message(key, count, bearer, direction, octets, algorithm);
     })
 }
 
@@ -168,8 +204,8 @@ pub(crate) fn nea1_cipher(
     }
 
     let (k, iv) = eea1_key_and_iv(key, count, bearer, direction);
-    let mut snow = Snow3G::new(*k, iv);
-    xor_keystream(data, |words| snow.fill(words));
+    let mut snow = Snow3G::start(*k, iv);
+    xor_keystream(data, |words| snow.words(words));
 }
 
 /// The key words and the IV of SNOW 3G for 128-EEA1.
@@ -214,20 +250,51 @@ pub(crate) fn nea2_cipher(
     if data.is_empty() {
         return;
     }
-    let prefix = ctr_prefix(count, bearer, direction);
-
-    // The round keys go from their expansion to the counter mode without
-    // a keyed state between the two, which a message alone does not need
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if let Some(instructions) = Instructions::detect() {
-        let schedules = instructions.aes_schedules([key]);
-        return instructions.aes_ctr(&schedules[0], u64::from_le_bytes(prefix), data);
+        return nea2_instructions(instructions, key, None, count, bearer, direction, data);
     }
-    Aes128::new(key).ctr(prefix, data);
+    nea2_portable(key, count, bearer, direction, data);
+}
+
+/// 128-EEA2 on the AES instructions, with the round keys of the key when
+/// a context has them. Without them, they go from their expansion to the
+/// counter mode without a keyed state between the two, which a message
+/// alone does not need.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) fn nea2_instructions(
+    instructions: Instructions,
+    key: &[u8; 16],
+    schedule: Option<&AesSchedule>,
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    data: &mut [u8],
+) {
+    if data.is_empty() {
+        return;
+    }
+    let prefix = u64::from_le_bytes(ctr_prefix(count, bearer, direction));
+    match schedule {
+        Some(schedule) => instructions.aes_ctr(schedule, prefix, data),
+        None => instructions.aes_ctr(&instructions.aes_schedules([key])[0], prefix, data),
+    }
+}
+
+/// 128-EEA2 with the `aes` crate, for a processor without the AES
+/// instructions.
+pub(crate) fn nea2_portable(
+    key: &[u8; 16],
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    data: &mut [u8],
+) {
+    Aes128::new(key).ctr(ctr_prefix(count, bearer, direction), data);
 }
 
 /// 128-EEA2 of octets, of which there are some, with a key and its round
-/// keys.
+/// keys, for a caller that clears after its own work.
 pub(crate) fn nea2_cipher_keyed(
     key: &[u8; 16],
     round_keys: RoundKeys<'_>,
@@ -236,13 +303,34 @@ pub(crate) fn nea2_cipher_keyed(
     direction: Direction,
     data: &mut [u8],
 ) {
-    let prefix = ctr_prefix(count, bearer, direction);
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if let Some((instructions, schedule)) = round_keys.schedule() {
-        return instructions.aes_ctr(schedule, u64::from_le_bytes(prefix), data);
+        let schedule = Some(schedule);
+        return nea2_instructions(instructions, key, schedule, count, bearer, direction, data);
     }
     let _ = round_keys;
-    Aes128::new(key).ctr(prefix, data);
+    nea2_portable(key, count, bearer, direction, data);
+}
+
+/// 128-EEA2 of one message with a key and its round keys, and what the
+/// work left cleared.
+pub(crate) fn nea2_message_keyed(
+    key: &[u8; 16],
+    round_keys: RoundKeys<'_>,
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    data: &mut [u8],
+) {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if let Some((instructions, schedule)) = round_keys.schedule() {
+        let schedule = Some(schedule);
+        return wipe::aes_keyed(|| {
+            nea2_instructions(instructions, key, schedule, count, bearer, direction, data);
+        });
+    }
+    let _ = round_keys;
+    wipe::message(|| nea2_portable(key, count, bearer, direction, data));
 }
 
 /// The upper eight octets of the counter blocks of a message, which are
@@ -282,8 +370,8 @@ pub(crate) fn nea3_cipher(
         return;
     }
 
-    let mut zuc = Zuc::new(key, &eea3_iv(count, bearer, direction));
-    xor_keystream(data, |words| zuc.fill(words));
+    let mut zuc = Zuc::start(key, &eea3_iv(count, bearer, direction));
+    xor_keystream(data, |words| zuc.words(words));
 }
 
 /// The IV of ZUC for 128-EEA3.

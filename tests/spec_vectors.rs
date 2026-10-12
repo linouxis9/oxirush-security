@@ -589,7 +589,7 @@ fn snow3g_set4_z2500() {
     let k = [0x0ded7263u32, 0x109cf92e, 0x3352255a, 0x140e0f76];
     let iv = [0x6b68079au32, 0x41a7c4c9, 0x1befd79f, 0x7fdcc233];
     let mut z = [0; 2500];
-    Snow3G::new(k, iv).fill(&mut z);
+    Snow3G::new(&k, &iv).fill(&mut z);
     assert_eq!(z[0], 0xd712c05c);
     assert_eq!(z[2499], 0x9c0db3aa);
 }
@@ -608,7 +608,7 @@ fn snow3g_uea2_intermediate_set1_state() {
     // Doc3 section 3.3: FSM state after init is R1=61DA9249; check z1/z2 only via public API
     let k = [0x2bd6459fu32, 0x82c5b300, 0x952c4910, 0x4881ff48];
     let iv = [0xea024714u32, 0xad5c4d84, 0xdf1f9b25, 0x1c0bf45f];
-    let mut snow = Snow3G::new(k, iv);
+    let mut snow = Snow3G::new(&k, &iv);
     assert_eq!(
         [snow.next_word(), snow.next_word()],
         [0xabee9704, 0x7ac31373]

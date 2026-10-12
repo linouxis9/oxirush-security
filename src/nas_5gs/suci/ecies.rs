@@ -19,6 +19,7 @@
 //! home network.
 
 use super::{ProtectionScheme, SuciError};
+use crate::common::wipe;
 use aes::Aes128Enc;
 use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use alloc::vec::Vec;
@@ -54,7 +55,7 @@ impl HomeNetworkPrivateKey {
     /// A key of Profile A: the 32 octets of an X25519 private key
     /// (RFC 7748 §5).
     pub fn profile_a(octets: &[u8; 32]) -> Self {
-        Self(Private::A(x25519_dalek::StaticSecret::from(*octets)))
+        wipe::suci(|| Self(Private::A(x25519_dalek::StaticSecret::from(*octets))))
     }
 
     /// A key of Profile B: the 32 octets of a private key of secp256r1,
@@ -63,10 +64,10 @@ impl HomeNetworkPrivateKey {
     /// Zero, and a number that is not below the order of the curve, are
     /// [`SuciError::InvalidKey`].
     pub fn profile_b(octets: &[u8; 32]) -> Result<Self, SuciError> {
-        match p256::SecretKey::from_bytes(octets.into()) {
+        wipe::suci(|| match p256::SecretKey::from_bytes(octets.into()) {
             Ok(key) => Ok(Self(Private::B(key))),
             Err(_) => Err(SuciError::InvalidKey),
-        }
+        })
     }
 
     /// The profile of the key: [`ProtectionScheme::ProfileA`] or
@@ -81,9 +82,11 @@ impl HomeNetworkPrivateKey {
     /// The public key that goes with it, which the home network gives its
     /// subscribers.
     pub fn public_key(&self) -> HomeNetworkPublicKey {
-        HomeNetworkPublicKey(match &self.0 {
-            Private::A(key) => Public::A(x25519_dalek::PublicKey::from(key).to_bytes()),
-            Private::B(key) => Public::B(key.public_key()),
+        wipe::suci(|| {
+            HomeNetworkPublicKey(match &self.0 {
+                Private::A(key) => Public::A(x25519_dalek::PublicKey::from(key).to_bytes()),
+                Private::B(key) => Public::B(key.public_key()),
+            })
         })
     }
 }

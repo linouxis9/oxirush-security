@@ -39,6 +39,7 @@
 use crate::common::ct::{block_to_columns, columns_to_block, linear_map, nibble, nibbles};
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::common::simd;
+use crate::common::wipe;
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -182,6 +183,26 @@ pub(crate) fn load(key: &[u8; 16], iv: &[u8; 16]) -> [u32; 16] {
 impl Zuc {
     /// Initialize ZUC with 128-bit key and 128-bit IV.
     pub fn new(key: &[u8; 16], iv: &[u8; 16]) -> Self {
+        wipe::message(|| Self::start(key, iv))
+    }
+
+    /// The next keystream word.
+    pub fn next_word(&mut self) -> u32 {
+        wipe::words(|| {
+            let mut word = [0];
+            self.words(&mut word);
+            word[0]
+        })
+    }
+
+    /// Fill `words` with the next keystream words.
+    pub fn fill(&mut self, words: &mut [u32]) {
+        wipe::words(|| self.words(words));
+    }
+
+    /// [`new`](Self::new), for the algorithms of the crate, which wipe
+    /// what they leave once and not at each step.
+    pub(crate) fn start(key: &[u8; 16], iv: &[u8; 16]) -> Self {
         let mut stages = load(key, iv);
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let Some(vector) = simd::Zuc::new(stages) {
@@ -193,15 +214,8 @@ impl Zuc {
         Self(Generator::Scalar(scalar))
     }
 
-    /// The next keystream word.
-    pub fn next_word(&mut self) -> u32 {
-        let mut word = [0];
-        self.fill(&mut word);
-        word[0]
-    }
-
-    /// Fill `words` with the next keystream words.
-    pub fn fill(&mut self, words: &mut [u32]) {
+    /// [`fill`](Self::fill), for the algorithms of the crate.
+    pub(crate) fn words(&mut self, words: &mut [u32]) {
         match &mut self.0 {
             Generator::Scalar(scalar) => scalar.fill(words),
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

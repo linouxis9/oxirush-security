@@ -54,7 +54,7 @@ const COUNT: u32 = 0x0000_1234;
 const SIZES: [usize; 2] = [64, 1500];
 
 fn ciphers(criterion: &mut Criterion) {
-    let key = KNasEnc::new(KEY);
+    let key = KNasEnc::new(&KEY);
     for form in ["cipher", "cipher-context"] {
         let mut group = criterion.benchmark_group(form);
         for (name, algorithm) in [
@@ -83,7 +83,7 @@ fn ciphers(criterion: &mut Criterion) {
 }
 
 fn macs(criterion: &mut Criterion) {
-    let key = KNasInt::new(KEY);
+    let key = KNasInt::new(&KEY);
     for form in ["mac", "mac-context"] {
         let mut group = criterion.benchmark_group(form);
         for (name, algorithm) in [
@@ -113,8 +113,8 @@ fn macs(criterion: &mut Criterion) {
 /// Each is one HMAC-SHA-256. The keys that a derivation returns are wiped
 /// when they are dropped, which the times include.
 fn key_derivations(criterion: &mut Criterion) {
-    let (ck, ik) = (Ck::new([0x11; 16]), Ik::new([0x22; 16]));
-    let autn = Autn::new([0x33; 16]);
+    let (ck, ik) = (Ck::new(&[0x11; 16]), Ik::new(&[0x22; 16]));
+    let autn = Autn::new(&[0x33; 16]);
     let sn_name = b"5G:mnc093.mcc208.3gppnetwork.org";
     let supi = Supi::imsi("208930000000001").expect("an IMSI");
     let k_ausf = derive_kausf(&ck, &ik, sn_name, &autn).expect("a short name");

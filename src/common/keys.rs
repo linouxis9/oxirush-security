@@ -22,7 +22,9 @@
 //! expected, nor CK where IK is. Each type:
 //!
 //! - is built from its octets with `new` or `from_slice`, and gives them
-//!   back with `as_octets`, and in no other way;
+//!   back with `as_octets`, and in no other way. Each takes a reference:
+//!   an array passed by value would leave a copy where the program cannot
+//!   wipe it;
 //! - is wiped when it is dropped, and is not `Copy`: a copy is a `clone`
 //!   that the program writes, and that is wiped in its turn;
 //! - prints as its name with `{:?}`, without its octets;
@@ -41,8 +43,8 @@ macro_rules! key {
 
         impl $name {
             #[doc = concat!("From its ", stringify!($octets), " octets.")]
-            pub const fn new(octets: [u8; $octets]) -> Self {
-                Self(octets)
+            pub const fn new(octets: &[u8; $octets]) -> Self {
+                Self(*octets)
             }
 
             #[doc = concat!(
@@ -179,14 +181,14 @@ mod tests {
 
     #[test]
     fn a_key_is_built_from_octets_and_shows_none() {
-        let ck = Ck::new([0x11; 16]);
+        let ck = Ck::new(&[0x11; 16]);
         assert_eq!(ck.as_octets(), &[0x11; 16]);
         assert_eq!(format!("{ck:?}"), "Ck(..)");
         assert_eq!(ck, ck.clone());
         assert_eq!(ck, [0x11; 16]);
-        assert_ne!(ck, Ck::new([0x12; 16]));
+        assert_ne!(ck, Ck::new(&[0x12; 16]));
 
-        assert_eq!(Ik::from_slice(&[0x22; 16]), Ok(Ik::new([0x22; 16])));
+        assert_eq!(Ik::from_slice(&[0x22; 16]), Ok(Ik::new(&[0x22; 16])));
         assert_eq!(
             Ik::from_slice(&[0x22; 15]),
             Err(SecurityError::InvalidKeyLength {
@@ -198,7 +200,7 @@ mod tests {
 
     #[test]
     fn autn_gives_sqn_xor_ak() {
-        let autn = Autn::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        let autn = Autn::new(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         assert_eq!(autn.sqn_xor_ak(), &[1, 2, 3, 4, 5, 6]);
     }
 }

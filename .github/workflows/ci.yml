@@ -37,6 +37,12 @@ jobs:
         env:
           RUSTFLAGS: -C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq,+avx2
         run: cargo test --no-default-features
+      # Without the clearing of the stack and of the registers that
+      # follows a piece of work
+      - name: Test without the clearing
+        env:
+          RUSTFLAGS: --cfg oxirush_security_unwiped
+        run: cargo test
 
   # The code on the vector and AES instructions of AArch64, which the tests
   # compare with the scalar one: with the processor asked, with and without
@@ -77,6 +83,60 @@ jobs:
             emulated-aarch64/guest
             emulated-aarch64/host
       - run: emulated-aarch64/run.sh
+
+  # What an operation leaves on the stack and in the registers of x86-64:
+  # `leftovers/` runs each public operation that handles a key, looks for
+  # its keys and its keystream where it was, and measures how deep it went
+  # against what the crate clears. A release build, then builds that lay
+  # the code out otherwise.
+  leftovers:
+    name: Leftovers (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: release build
+            toolchain: stable
+            arguments: --release
+          - name: release build, Rust 1.88
+            toolchain: 1.88.0
+            arguments: --release
+          - name: AES and SHA-256 without their instructions
+            toolchain: stable
+            arguments: --release
+            cfg: --cfg aes_backend="soft" --cfg sha2_backend="soft"
+          - name: one codegen unit and link-time optimization
+            toolchain: stable
+            arguments: >-
+              --release --config profile.release.codegen-units=1
+              --config profile.release.lto=true
+          - name: optimized for size
+            toolchain: stable
+            arguments: --release --config 'profile.release.opt-level="s"'
+          # The scan itself stays optimized: what it does after an
+          # operation must not write on the stack that it reads
+          - name: the crate and its dependencies not optimized
+            toolchain: stable
+            arguments: >-
+              --release --config 'profile.release.package."*".opt-level=0'
+              --config 'profile.release.package."*".debug-assertions=true'
+    env:
+      RUSTFLAGS: --cfg oxirush_security_hooks ${{ matrix.cfg }}
+    defaults:
+      run:
+        working-directory: leftovers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: leftovers
+      - run: cargo run ${{ matrix.arguments }}
+      - run: cargo clippy --all-targets -- -D warnings
 
   # Targets without the standard library: the crate and each set of features
   # that is `no_std` build there. A library needs no source of random
@@ -167,6 +227,10 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
       - run: cargo clippy --all-targets --no-default-features --features suci -- -D warnings
+      - name: Clippy without the clearing
+        env:
+          RUSTFLAGS: --cfg oxirush_security_unwiped
+        run: cargo clippy --all-targets -- -D warnings
 
   doc:
     name: Doc
@@ -196,6 +260,7 @@ jobs:
       - run: cargo fmt --check --manifest-path benches/Cargo.toml
       - run: cargo fmt --check --manifest-path emulated-aarch64/guest/Cargo.toml
       - run: cargo fmt --check --manifest-path emulated-aarch64/host/Cargo.toml
+      - run: cargo fmt --check --manifest-path leftovers/Cargo.toml
 
   fuzz:
     name: Fuzz ${{ matrix.target }} (1 minute)

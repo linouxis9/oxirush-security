@@ -26,7 +26,7 @@ use oxirush_security::{Direction, IntegrityAlgorithm, NasCount};
 
 fn main() {
     // Example 128-bit integrity key (KNASint)
-    let key = KNasInt::new([
+    let key = KNasInt::new(&[
         0x2b, 0xd6, 0x45, 0x9f, 0x82, 0xc5, 0xb3, 0x00, 0x95, 0x2c, 0x49, 0x10, 0x48, 0x81, 0xff,
         0x48,
     ]);

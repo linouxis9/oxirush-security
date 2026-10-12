@@ -60,7 +60,7 @@ fn ciphers_of<const N: usize>(criterion: &mut Criterion) {
             ("128-EEA2", CipheringAlgorithm::Aes),
             ("128-EEA3", CipheringAlgorithm::Zuc),
         ] {
-            let keys = keys::<N>().map(KNasEnc::new);
+            let keys = keys::<N>().each_ref().map(KNasEnc::new);
             let contexts = keys
                 .each_ref()
                 .map(|key| CipheringContext::new(key, algorithm));
@@ -120,7 +120,7 @@ fn macs_of<const N: usize>(criterion: &mut Criterion) {
             ("128-EIA2", IntegrityAlgorithm::Aes),
             ("128-EIA3", IntegrityAlgorithm::Zuc),
         ] {
-            let keys = keys::<N>().map(KNasInt::new);
+            let keys = keys::<N>().each_ref().map(KNasInt::new);
             let contexts = keys
                 .each_ref()
                 .map(|key| IntegrityContext::new(key, algorithm));

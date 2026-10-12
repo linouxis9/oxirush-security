@@ -19,13 +19,16 @@
 //! polynomial-multiplication instructions of x86-64 and AArch64.
 //!
 //! This is the one module of the crate with `unsafe` code, and what the
-//! crate writes of it is of one kind: a call of a function that is compiled
-//! for instructions which the build does not assume. Such a call is sound
-//! when the processor has the instructions, which [`available`] has seen
-//! before every one of them, and [`wide_available`] before those of the
-//! 256-bit vectors. The functions themselves, in the module of the
-//! architecture, are safe code. The rest is inside `cpufeatures::new!`,
-//! which asks the processor or the system what it has.
+//! crate writes of it is of two kinds. The first is a call of a function
+//! that is compiled for instructions which the build does not assume. Such
+//! a call is sound when the processor has the instructions, which
+//! [`available`] has seen before every one of them, and [`wide_available`]
+//! before those of the 256-bit vectors. The functions themselves, in the
+//! module of the architecture, are safe code. The second is [`clear`],
+//! instructions that set to zero registers and the stack below the stack
+//! pointer, where what has returned was. The rest is inside
+//! `cpufeatures::new!`, which asks the processor or the system what it
+//! has.
 //!
 //! The scalar generators of `snow3g` and `zuc` are used where the
 //! instructions are missing, and the tests compare the two.
@@ -63,6 +66,8 @@ mod wide;
 cpufeatures::new!(vector_128, "ssse3", "sse4.1", "aes", "pclmulqdq");
 #[cfg(target_arch = "x86_64")]
 cpufeatures::new!(vector_256, "avx2");
+#[cfg(all(target_arch = "x86_64", not(oxirush_security_unwiped)))]
+cpufeatures::new!(avx, "avx");
 #[cfg(target_arch = "aarch64")]
 cpufeatures::new!(vector_128, "aes");
 
@@ -190,6 +195,251 @@ pub(crate) fn wide_available() -> bool {
     return available() && vector_256::get();
     #[cfg(not(target_arch = "x86_64"))]
     false
+}
+
+/// Set to zero `depth` octets of the stack below the stack pointer, and
+/// the registers that a function need not give back as it found them:
+/// work that has returned may have left a key, a round key or keystream in
+/// any of them. `depth` is a multiple of 64.
+///
+/// One block of instructions does both, without a call: a value that the
+/// function holds across it, its result for instance, stays in a register
+/// that the block does not write, which the function gives back to its
+/// caller as it found it.
+///
+/// On x86-64 the registers are RAX, RCX, RDX, RSI, RDI, R8 to R11 and the
+/// sixteen vector registers, whole. A build that enables AVX-512 for every
+/// processor may use ZMM16 to ZMM31 and the mask registers as well, which
+/// are not cleared here.
+///
+/// The stack is written from the stack pointer down, 64 octets at a time,
+/// so that a stack that is too short for `depth` ends at its guard page,
+/// as it does for a function with a frame of that size.
+#[cfg(all(target_arch = "x86_64", not(oxirush_security_unwiped)))]
+#[inline(always)]
+pub(crate) fn clear(depth: usize) {
+    if avx::get() {
+        // SAFETY: `vzeroall` and the stores of 256 bits are instructions
+        // of AVX, which the processor has: `avx` has just seen it. The
+        // block writes the registers that the compiler is told are
+        // written, and the stack below the stack pointer, where nothing
+        // lives: the compiler is not told that the block leaves the stack
+        // alone, so it keeps nothing there, and what the work put there
+        // has returned. It reads no memory.
+        unsafe {
+            core::arch::asm!(
+                "vzeroall",
+                "mov rax, rsp",
+                "neg rcx",
+                "add rcx, rax",
+                // The 64 octets below the stack pointer, then whole
+                // lines of 64 octets down to the last
+                "vmovdqu ymmword ptr [rax - 32], ymm0",
+                "vmovdqu ymmword ptr [rax - 64], ymm0",
+                "and rax, -64",
+                "2:",
+                "sub rax, 64",
+                "vmovdqa ymmword ptr [rax], ymm0",
+                "vmovdqa ymmword ptr [rax + 32], ymm0",
+                "cmp rax, rcx",
+                "ja 2b",
+                "xor eax, eax",
+                "xor ecx, ecx",
+                "xor edx, edx",
+                "xor esi, esi",
+                "xor edi, edi",
+                "xor r8d, r8d",
+                "xor r9d, r9d",
+                "xor r10d, r10d",
+                "xor r11d, r11d",
+                inout("rcx") depth => _,
+                out("rax") _, out("rdx") _, out("rsi") _, out("rdi") _,
+                out("r8") _, out("r9") _, out("r10") _, out("r11") _,
+                out("xmm0") _, out("xmm1") _, out("xmm2") _, out("xmm3") _,
+                out("xmm4") _, out("xmm5") _, out("xmm6") _, out("xmm7") _,
+                out("xmm8") _, out("xmm9") _, out("xmm10") _, out("xmm11") _,
+                out("xmm12") _, out("xmm13") _, out("xmm14") _, out("xmm15") _,
+            );
+        }
+    } else {
+        // SAFETY: as above, with the instructions of SSE2, which every
+        // x86-64 processor has. Without AVX the vector registers have 128
+        // bits.
+        unsafe {
+            core::arch::asm!(
+                "pxor xmm0, xmm0",
+                "pxor xmm1, xmm1",
+                "pxor xmm2, xmm2",
+                "pxor xmm3, xmm3",
+                "pxor xmm4, xmm4",
+                "pxor xmm5, xmm5",
+                "pxor xmm6, xmm6",
+                "pxor xmm7, xmm7",
+                "pxor xmm8, xmm8",
+                "pxor xmm9, xmm9",
+                "pxor xmm10, xmm10",
+                "pxor xmm11, xmm11",
+                "pxor xmm12, xmm12",
+                "pxor xmm13, xmm13",
+                "pxor xmm14, xmm14",
+                "pxor xmm15, xmm15",
+                "mov rax, rsp",
+                "neg rcx",
+                "add rcx, rax",
+                "movdqu xmmword ptr [rax - 16], xmm0",
+                "movdqu xmmword ptr [rax - 32], xmm0",
+                "movdqu xmmword ptr [rax - 48], xmm0",
+                "movdqu xmmword ptr [rax - 64], xmm0",
+                "and rax, -64",
+                "2:",
+                "sub rax, 64",
+                "movdqa xmmword ptr [rax], xmm0",
+                "movdqa xmmword ptr [rax + 16], xmm0",
+                "movdqa xmmword ptr [rax + 32], xmm0",
+                "movdqa xmmword ptr [rax + 48], xmm0",
+                "cmp rax, rcx",
+                "ja 2b",
+                "xor eax, eax",
+                "xor ecx, ecx",
+                "xor edx, edx",
+                "xor esi, esi",
+                "xor edi, edi",
+                "xor r8d, r8d",
+                "xor r9d, r9d",
+                "xor r10d, r10d",
+                "xor r11d, r11d",
+                inout("rcx") depth => _,
+                out("rax") _, out("rdx") _, out("rsi") _, out("rdi") _,
+                out("r8") _, out("r9") _, out("r10") _, out("r11") _,
+                out("xmm0") _, out("xmm1") _, out("xmm2") _, out("xmm3") _,
+                out("xmm4") _, out("xmm5") _, out("xmm6") _, out("xmm7") _,
+                out("xmm8") _, out("xmm9") _, out("xmm10") _, out("xmm11") _,
+                out("xmm12") _, out("xmm13") _, out("xmm14") _, out("xmm15") _,
+            );
+        }
+    }
+}
+
+/// Set to zero `depth` octets of the stack below the stack pointer, and
+/// the registers that a function need not give back as it found them, as
+/// the function of x86-64 does. `depth` is a multiple of 64.
+///
+/// On AArch64 the registers are X0 to X17 and the thirty-two vector
+/// registers. A function gives the low halves of V8 to V15 back as it
+/// found them, and not their high halves: the compiler, which is told that
+/// the block writes them, keeps the low halves of the caller.
+#[cfg(all(target_arch = "aarch64", not(oxirush_security_unwiped)))]
+#[inline(always)]
+pub(crate) fn clear(depth: usize) {
+    // SAFETY: the block writes the registers that the compiler is told
+    // are written, and the stack below the stack pointer, where nothing
+    // lives: the compiler is not told that the block leaves the stack
+    // alone, so it keeps nothing there, and what the work put there has
+    // returned. It reads no memory. Its instructions are those of every
+    // AArch64 processor.
+    unsafe {
+        core::arch::asm!(
+            "mov x9, sp",
+            "sub x10, x9, x10",
+            "2:",
+            "stp xzr, xzr, [x9, #-16]!",
+            "stp xzr, xzr, [x9, #-16]!",
+            "stp xzr, xzr, [x9, #-16]!",
+            "stp xzr, xzr, [x9, #-16]!",
+            "cmp x9, x10",
+            "b.hi 2b",
+            "mov x0, xzr",
+            "mov x1, xzr",
+            "mov x2, xzr",
+            "mov x3, xzr",
+            "mov x4, xzr",
+            "mov x5, xzr",
+            "mov x6, xzr",
+            "mov x7, xzr",
+            "mov x8, xzr",
+            "mov x9, xzr",
+            "mov x10, xzr",
+            "mov x11, xzr",
+            "mov x12, xzr",
+            "mov x13, xzr",
+            "mov x14, xzr",
+            "mov x15, xzr",
+            "mov x16, xzr",
+            "mov x17, xzr",
+            inout("x10") depth => _,
+            out("x0") _, out("x1") _, out("x2") _, out("x3") _, out("x4") _, out("x5") _,
+            out("x6") _, out("x7") _, out("x8") _, out("x9") _, out("x11") _,
+            out("x12") _, out("x13") _, out("x14") _, out("x15") _, out("x16") _, out("x17") _,
+        );
+    }
+    // SAFETY: the block writes registers alone, each of which the
+    // compiler is told is written, and neither memory nor the stack. Its
+    // instructions are those of NEON, which the build has for every
+    // processor of the target.
+    #[cfg(target_feature = "neon")]
+    unsafe {
+        core::arch::asm!(
+            "movi v0.16b, #0",
+            "movi v1.16b, #0",
+            "movi v2.16b, #0",
+            "movi v3.16b, #0",
+            "movi v4.16b, #0",
+            "movi v5.16b, #0",
+            "movi v6.16b, #0",
+            "movi v7.16b, #0",
+            "movi v8.16b, #0",
+            "movi v9.16b, #0",
+            "movi v10.16b, #0",
+            "movi v11.16b, #0",
+            "movi v12.16b, #0",
+            "movi v13.16b, #0",
+            "movi v14.16b, #0",
+            "movi v15.16b, #0",
+            "movi v16.16b, #0",
+            "movi v17.16b, #0",
+            "movi v18.16b, #0",
+            "movi v19.16b, #0",
+            "movi v20.16b, #0",
+            "movi v21.16b, #0",
+            "movi v22.16b, #0",
+            "movi v23.16b, #0",
+            "movi v24.16b, #0",
+            "movi v25.16b, #0",
+            "movi v26.16b, #0",
+            "movi v27.16b, #0",
+            "movi v28.16b, #0",
+            "movi v29.16b, #0",
+            "movi v30.16b, #0",
+            "movi v31.16b, #0",
+            out("v0") _, out("v1") _, out("v2") _, out("v3") _, out("v4") _, out("v5") _,
+            out("v6") _, out("v7") _, out("v8") _, out("v9") _, out("v10") _, out("v11") _,
+            out("v12") _, out("v13") _, out("v14") _, out("v15") _, out("v16") _,
+            out("v17") _, out("v18") _, out("v19") _, out("v20") _, out("v21") _,
+            out("v22") _, out("v23") _, out("v24") _, out("v25") _, out("v26") _,
+            out("v27") _, out("v28") _, out("v29") _, out("v30") _, out("v31") _,
+            options(nomem, nostack),
+        );
+    }
+}
+
+/// The stack pointer, for the scan of `leftovers/` to know which octets
+/// [`clear`] has just written: those below it.
+#[cfg(all(
+    oxirush_security_hooks,
+    not(oxirush_security_unwiped),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[inline(always)]
+pub(crate) fn stack_pointer() -> usize {
+    let pointer: usize;
+    // SAFETY: the instruction reads the stack pointer and nothing else.
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!("mov {}, rsp", out(reg) pointer, options(nomem, nostack, preserves_flags));
+        #[cfg(target_arch = "aarch64")]
+        core::arch::asm!("mov {}, sp", out(reg) pointer, options(nomem, nostack, preserves_flags));
+    }
+    pointer
 }
 
 /// SNOW 3G on vector instructions. It exists only on a processor that has

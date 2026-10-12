@@ -27,9 +27,9 @@ use oxirush_security::{
 
 fn main() -> Result<(), SecurityError> {
     // Example key material; in practice CK, IK and AUTN come from EPS AKA
-    let ck = Ck::new([0x11; 16]);
-    let ik = Ik::new([0x22; 16]);
-    let autn = Autn::new([0; 16]);
+    let ck = Ck::new(&[0x11; 16]);
+    let ik = Ik::new(&[0x22; 16]);
+    let autn = Autn::new(&[0; 16]);
     let serving_network = Plmn::new("208", "93")?;
 
     // CK || IK -> KASME

@@ -18,20 +18,20 @@
 //! Shared 3GPP TS 33.220 Annex B.2 HMAC-SHA-256 KDF framing.
 
 use crate::common::error::SecurityError;
+use crate::common::wipe;
 use zeroize::Zeroizing;
 
 /// Longest KDF parameter: its length field L has two octets.
 const MAXIMUM_PARAMETER: usize = u16::MAX as usize;
 
-/// The KDF of TS 33.220 Annex B.2: HMAC-SHA-256(key, S), where S is FC,
-/// then each parameter with its length after it. `build_s` lays it out,
-/// with the `alloc` feature.
+/// The KDF of TS 33.220 Annex B.2: HMAC-SHA-256(key, S), where S is what
+/// [`build_s`] lays out.
 ///
 /// The 256 bits are a key, of a kind that the crate does not know: they
 /// are wiped when the value is dropped, and `*` gives the array. The HMAC
 /// state is wiped on return.
 pub fn kdf(key: &[u8], s: &[u8]) -> Zeroizing<[u8; 32]> {
-    Zeroizing::new(super::sha256::hmac_sha256(key, s))
+    wipe::derivation(|| Zeroizing::new(super::sha256::hmac_sha256(key, s)))
 }
 
 /// Build the S parameter: FC || (P_i || L_i)*.
@@ -99,7 +99,7 @@ pub(crate) fn derive_algorithm_key(key: &[u8; 32], fc: u8, algo_type: u8, algo_i
 /// how the algorithm keys are taken from it (TS 33.501 Annex A.8,
 /// TS 33.401 Annex A.7). They are wiped when the value is dropped.
 pub fn extract_128(full: &[u8; 32]) -> Zeroizing<[u8; 16]> {
-    Zeroizing::new(low_128(full))
+    wipe::words(|| Zeroizing::new(low_128(full)))
 }
 
 /// The 128 least significant bits of 256.

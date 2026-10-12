@@ -157,7 +157,7 @@ fn block_4() {
 
     // KASME from CK, IK, the serving network and the AUTN of the
     // authentication, whose SQN xor AK the derivation takes
-    let (ck, ik, autn) = (Ck::new([0x11; 16]), Ik::new([0x22; 16]), Autn::new([0; 16]));
+    let (ck, ik, autn) = (Ck::new(&[0x11; 16]), Ik::new(&[0x22; 16]), Autn::new(&[0; 16]));
     let kasme = derive_kasme(&ck, &ik, Plmn::new("208", "93").unwrap(), &autn);
 
     // The NAS keys of the selected algorithms
@@ -194,8 +194,8 @@ fn block_5() {
     };
 
     // Three UEs: the NAS keys, the downlink NAS COUNT and the algorithms of each
-    let k_nas_enc = [[0x11; 16], [0x22; 16], [0x33; 16]].map(KNasEnc::new);
-    let k_nas_int = [[0x44; 16], [0x55; 16], [0x66; 16]].map(KNasInt::new);
+    let k_nas_enc = [[0x11; 16], [0x22; 16], [0x33; 16]].each_ref().map(KNasEnc::new);
+    let k_nas_int = [[0x44; 16], [0x55; 16], [0x66; 16]].each_ref().map(KNasInt::new);
     let counts = [7, 0, 41].map(|count| NasCount::new(count).unwrap());
     let nea = [CipheringAlgorithm::NEA2, CipheringAlgorithm::NEA1, CipheringAlgorithm::NEA2];
     let nia = [IntegrityAlgorithm::NIA2, IntegrityAlgorithm::NIA1, IntegrityAlgorithm::NIA2];
@@ -238,8 +238,8 @@ fn block_6() {
     };
 
     // The contexts of a UE, made once, when its NAS keys are derived
-    let ciphering = CipheringContext::new(&KNasEnc::new([0x11; 16]), CipheringAlgorithm::NEA2);
-    let integrity = IntegrityContext::new(&KNasInt::new([0x44; 16]), IntegrityAlgorithm::NIA2);
+    let ciphering = CipheringContext::new(&KNasEnc::new(&[0x11; 16]), CipheringAlgorithm::NEA2);
+    let integrity = IntegrityContext::new(&KNasInt::new(&[0x44; 16]), IntegrityAlgorithm::NIA2);
     let (access, downlink) = (NasConnection::ThreeGpp, Direction::Downlink);
 
     // Each downlink message takes the next NAS COUNT

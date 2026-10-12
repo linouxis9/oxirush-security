@@ -118,7 +118,7 @@ fn a_sidf_chooses_its_key_and_the_supi_gives_kamf() {
     assert_eq!(supi.to_string(), "imsi-274012001002086");
     assert_eq!(supi.identity(), "274012001002086");
 
-    let kseaf = KSeaf::new(octets(
+    let kseaf = KSeaf::new(&octets(
         "e51039fe94eee5044488cde4ffd610ece389153baf7f6736ef41d998df11a149",
     ));
     let kamf = derive_kamf(&kseaf, &supi, &[0x00, 0x00]).unwrap();
