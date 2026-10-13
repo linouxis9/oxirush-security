@@ -189,7 +189,7 @@ fuzz_target!(|bytes: &[u8]| {
     // The bits after the length are as they were, and the octets too
     let octets = bits.div_ceil(8) as usize;
     assert_eq!(data[octets..], message[octets..]);
-    if bits % 8 != 0 {
+    if !bits.is_multiple_of(8) {
         let unused = 0xffu8 >> (bits % 8);
         assert_eq!(data[octets - 1] & unused, message[octets - 1] & unused);
     }
@@ -202,7 +202,7 @@ fuzz_target!(|bytes: &[u8]| {
     for octet in &mut changed[octets..] {
         *octet ^= 0xff;
     }
-    if bits % 8 != 0 {
+    if !bits.is_multiple_of(8) {
         changed[octets - 1] ^= 0xffu8 >> (bits % 8);
     }
     assert_eq!(

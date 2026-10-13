@@ -82,12 +82,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-unknown-none
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             emulated-aarch64/guest
             emulated-aarch64/host
       - run: emulated-aarch64/run.sh
+      # From the directory of each package, whose configuration has its
+      # target and its flags
+      - run: cargo clippy -- -D warnings
+        working-directory: emulated-aarch64/guest
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: emulated-aarch64/host
 
   # What an operation leaves on the stack and in the registers of x86-64:
   # `leftovers/` runs each public operation that handles a key, looks for
@@ -258,6 +265,11 @@ jobs:
         env:
           RUSTFLAGS: --cfg oxirush_security_unwiped
         run: cargo clippy --all-targets -- -D warnings
+      # The fuzz targets, with the hooks of the crate that they use
+      - name: Clippy of the fuzz targets
+        env:
+          RUSTFLAGS: --cfg oxirush_security_hooks
+        run: cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
 
   doc:
     name: Doc

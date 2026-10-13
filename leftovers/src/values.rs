@@ -78,9 +78,7 @@ pub fn round_keys(key: &[u8; 16]) -> [[u8; 16]; 11] {
             ];
             constant = (constant << 1) ^ if constant & 0x80 != 0 { 0x1b } else { 0 };
         }
-        for octet in 0..4 {
-            words[at][octet] = words[at - 4][octet] ^ word[octet];
-        }
+        words[at] = core::array::from_fn(|octet| words[at - 4][octet] ^ word[octet]);
     }
     core::array::from_fn(|round| core::array::from_fn(|at| words[4 * round + at / 4][at % 4]))
 }
