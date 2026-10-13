@@ -101,7 +101,7 @@ pub(crate) fn mac_message(
             if let Some(instructions) = Instructions::detect() {
                 return wipe::aes(|| cmac_lanes(instructions, [key], &[blocks])[0]);
             }
-            wipe::message(|| eia2_portable(key, &blocks))
+            wipe::portable(|| eia2_portable(key, &blocks))
         }
         IntegrityAlgorithm::Zuc => wipe::message(|| eia3(key, count, bearer, direction, message)),
     }
@@ -377,7 +377,7 @@ pub(crate) fn cmac_message(
         return wipe::aes_keyed(|| cmac_instructions(instructions, schedule, subkeys, blocks));
     }
     let _ = round_keys;
-    wipe::message(|| cmac_portable(key, subkeys, blocks))
+    wipe::portable(|| cmac_portable(key, subkeys, blocks))
 }
 
 /// The chain of AES-CMAC on the AES instructions, with the round keys.

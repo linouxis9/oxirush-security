@@ -248,7 +248,7 @@ cannot say is a `Result`. No public function panics on its arguments.
   standard library, without an allocator and without SUCI: see Added.
 
 - **The stack.** Each operation that computes with a key needs the stack
-  that is cleared after it, 1280 to 16384 octets by kind of work and 49152
+  that is cleared after it, 1536 to 18432 octets by kind of work and 49152
   in a build with debug assertions: see Changed.
 
 ### Changed
@@ -265,16 +265,29 @@ cannot say is a `Result`. No public function panics on its arguments.
   `leftovers/` in the repository runs every such operation on x86-64 and
   looks for its key, its round keys, its subkeys, the stages of its
   generator, its keystream and its HMAC values on the stack and in the
-  registers: it finds 1277 to 1869 of them without the clearing, by the
-  build, and none with it, in eleven optimized builds with Rust 1.98.1 and
-  1.88, and CI runs it.
+  registers: it finds 1267 to 1904 of them without the clearing, by the
+  build, and none with it, in eighteen optimized builds with Rust 1.99,
+  1.98 and 1.88, and CI runs it at each change and each week.
   `emulated-aarch64/` does the same for 22 operations on an emulated
   AArch64 processor. The front page of the documentation says what stays:
   what an operation returns, the copies that a program makes by moving a
   key, and an unoptimized build without debug assertions.
 
-  The clearing adds about 13 ns to a message of AES with a keyed context,
-  16 ns from a key, 30 ns to a message of SNOW 3G or ZUC and to a
+  What is cleared is at least twice the deepest work of each kind that was
+  seen, and the scan fails above three quarters. The `aes` crate has code
+  for 64 blocks side by side on AVX-512F from its version 0.9.3, with a
+  frame for as many whatever the number that it is given, and it writes
+  ZMM16 and ZMM17, which are not cleared: 128-EEA2 without the vector code
+  went 1500 octets deeper on such a processor than on another. The counter
+  mode without the vector code now runs inside the code that `aes` has
+  chosen: it gives the code without instructions the 2 or 4 blocks that it
+  works on at once, encrypts eight counter blocks one after the other on
+  the AES instructions, and calls no code for more. What `aes` still does
+  for AVX-512F before it calls the counter mode is counted in what is
+  cleared on x86, from the frames of the binaries.
+
+  The clearing adds about 16 ns to a message of AES with a keyed context,
+  18 ns from a key, 30 ns to a message of SNOW 3G or ZUC and to a
   derivation, and 75 to 140 ns to each algorithm of a batch.
   `RUSTFLAGS="--cfg oxirush_security_unwiped"` builds the crate without
   it.
@@ -357,7 +370,7 @@ cannot say is a `Result`. No public function panics on its arguments.
   the round keys of AES and the subkeys of CMAC: 240 and 208 octets. A
   context serves both directions, takes the COUNT and the BEARER at each
   message, and makes the job of a message for a batch. With a context
-  128-EEA2 takes 26 ns on 64 octets and 128-EIA2 81 ns,
+  128-EEA2 takes 29 ns on 64 octets and 128-EIA2 81 ns,
   where the functions that take a key take 52 ns and
   121 ns.
 

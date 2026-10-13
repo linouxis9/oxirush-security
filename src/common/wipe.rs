@@ -38,27 +38,43 @@
 //! operations need no more stack than their own.
 
 /// Octets of stack that are cleared after a piece of work, by its kind:
-/// multiples of 64. Each is at least one and a half times what the deepest
-/// work of the kind was measured to use in an optimized build, on x86-64
-/// and on AArch64: `leftovers/README.md` has the measures.
+/// multiples of 64. Each is at least twice what the deepest work of the
+/// kind used wherever it was run in an optimized build: on x86-64 in each
+/// form of the code, with three versions of the compiler and several ways
+/// of building, here and on the runners of CI, and on an emulated AArch64
+/// processor. `leftovers/README.md` has the measures, and the scan fails
+/// when a piece of work uses more than three quarters of what is cleared
+/// after it.
 pub(crate) mod depth {
     /// AES on its instructions with the round keys of a context, for one
     /// message.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    pub(crate) const AES_KEYED: usize = 1280;
+    pub(crate) const AES_KEYED: usize = 1792;
     /// AES on its instructions from a key, for one message or for one
     /// after the other.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    pub(crate) const AES: usize = 2048;
-    /// SNOW 3G, ZUC, and AES without its instructions, for one message;
-    /// the making of a keyed context and of a generator.
+    pub(crate) const AES: usize = 2304;
+    /// SNOW 3G and ZUC, for one message; the making of a generator.
     pub(crate) const MESSAGE: usize = 4096;
-    /// The messages of a batch one after the other, on a processor without
-    /// the vector code: any of the algorithms, from one frame.
-    pub(crate) const ALONE: usize = 6144;
+    /// What goes through the `aes` crate with a key: AES for one message
+    /// on a processor without its instructions or a target without the
+    /// vector code, the making of a keyed context, and the messages of a
+    /// batch one after the other.
+    ///
+    /// On x86 the `aes` crate has code for a processor with AVX-512F, in
+    /// which the counter mode of this crate is compiled as well. No
+    /// machine here runs it: in the builds whose binary was read, its
+    /// frames are up to 1700 octets more than those of its code on the AES
+    /// instructions, and the figure is twice what that gives.
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    pub(crate) const PORTABLE: usize = 8192;
+    /// What goes through the `aes` crate with a key, on a target where it
+    /// has one code on instructions at most.
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    pub(crate) const PORTABLE: usize = 6144;
     /// Several messages side by side.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    pub(crate) const LANES: usize = 16384;
+    pub(crate) const LANES: usize = 18432;
     /// Words of keystream from a generator, and a comparison.
     pub(crate) const WORDS: usize = 1536;
     /// A key derivation: one HMAC-SHA-256.
@@ -82,16 +98,16 @@ pub(crate) fn aes<R>(work: impl FnOnce() -> R) -> R {
     after::<{ depth::AES }, R>(work)
 }
 
-/// An algorithm on one message.
+/// SNOW 3G or ZUC on one message, or a new generator.
 #[inline(always)]
 pub(crate) fn message<R>(work: impl FnOnce() -> R) -> R {
     after::<{ depth::MESSAGE }, R>(work)
 }
 
-/// The messages of a batch one after the other.
+/// What goes through the `aes` crate with a key.
 #[inline(always)]
-pub(crate) fn alone<R>(work: impl FnOnce() -> R) -> R {
-    after::<{ depth::ALONE }, R>(work)
+pub(crate) fn portable<R>(work: impl FnOnce() -> R) -> R {
+    after::<{ depth::PORTABLE }, R>(work)
 }
 
 /// Several messages side by side.

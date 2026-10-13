@@ -31,7 +31,7 @@
 //! operation, and reads the stack and the registers when it has returned.
 //! Each operation runs without the clearing that follows its work, to
 //! measure how deep the work goes below where the clearing starts, which
-//! must stay above the end of what is cleared by a margin, and then as a
+//! may be three quarters of what is cleared at most, and then as a
 //! program has it. Nothing of its keys may be found then, the areas that
 //! the crate cleared are zero, and the vector registers are zero.
 //!
@@ -190,10 +190,11 @@ const UNWIPED: u64 = 2;
 const SCANNED: u64 = 256 * 1024;
 const PATTERN: u8 = 0xa5;
 
-/// What the cleared depth has to exceed the measured one by: a quarter of
-/// it, for a compiler that would lay the frames out otherwise.
-fn margin(depth: u64) -> u64 {
-    (depth / 4).max(128)
+/// Whether a piece of work that went `depth` octets deep used more than
+/// three quarters of the `cleared` octets: the rule of `leftovers/`, which
+/// says why.
+fn too_deep(depth: u64, cleared: u64) -> bool {
+    depth * 4 > cleared * 3
 }
 
 /// What an operation left on the emulated processor.
@@ -411,9 +412,10 @@ fn scan(file: &[u8], case: u64, kind: Kind, scalar: bool) -> Result<(String, boo
     let (depth, of) = match bare.cleared.iter().min_by_key(|area| area.0) {
         Some((address, octets)) => {
             let depth = (address + octets).saturating_sub(bare.lowest_written());
-            if depth + margin(depth) > *octets {
+            if too_deep(depth, *octets) {
                 wrong.push(format!(
-                    "the work goes {depth} octets deep, and {octets} are cleared"
+                    "the work goes {depth} octets deep, more than three quarters of the \
+                     {octets} that are cleared"
                 ));
             }
             (depth, *octets)

@@ -15,6 +15,10 @@ aes = "0.9.2"
 sha2 = "0.11"
 hex = "0.4.3"
 
+# What a build of the `aes` crate without its instructions is told by
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(aes_backend, values("soft"))'] }
+
 # The operations as a program has them
 [profile.release]
 debug = 1

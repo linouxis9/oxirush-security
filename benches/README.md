@@ -38,10 +38,10 @@ RUSTFLAGS="--cfg oxirush_security_hooks" FORM=scalar cargo bench --bench algorit
 | | 64 octets | 1500 octets | scalar code, 64 | scalar code, 1500 | 0.2.0, 64 | 0.2.0, 1500 |
 |---|---|---|---|---|---|---|
 | 128-EEA1, 128-NEA1 (SNOW 3G) | 0.35 µs | 2.3 µs | 2.1 µs | 17.2 µs | 0.53 µs | 5.1 µs |
-| 128-EEA2, 128-NEA2 (AES-CTR) | 0.052 µs | 0.19 µs | 0.19 µs | 0.61 µs | 0.15 µs | 2.8 µs |
+| 128-EEA2, 128-NEA2 (AES-CTR) | 0.052 µs | 0.19 µs | 0.23 µs | 0.75 µs | 0.15 µs | 2.8 µs |
 | 128-EEA3, 128-NEA3 (ZUC) | 0.46 µs | 3.2 µs | 1.4 µs | 11.4 µs | 0.61 µs | 5.2 µs |
 | 128-EIA1, 128-NIA1 (SNOW 3G) | 0.31 µs | 0.41 µs | 1.8 µs | 4.5 µs | 0.75 µs | 8.4 µs |
-| 128-EIA2, 128-NIA2 (AES-CMAC) | 0.12 µs | 0.98 µs | 0.27 µs | 1.9 µs | 0.24 µs | 2.8 µs |
+| 128-EIA2, 128-NIA2 (AES-CMAC) | 0.12 µs | 0.98 µs | 0.31 µs | 1.9 µs | 0.24 µs | 2.8 µs |
 | 128-EIA3, 128-NIA3 (ZUC) | 0.50 µs | 3.6 µs | 1.6 µs | 14.3 µs | 0.99 µs | 13.8 µs |
 
 On the vector instructions SNOW 3G and ZUC are 1.3 to 2.2 times as fast as
@@ -68,7 +68,11 @@ eight counter blocks at a time for 128-EEA2, and a block after the other
 for 128-EIA2. Without the instructions of the first two columns AES is the
 `aes` crate, whose time is in the scalar columns: on this processor that
 crate finds the AES instruction itself, and its bitsliced code, which a
-processor without the instruction runs, was not measured.
+processor without the instruction runs, was not measured. The counter mode
+gives `aes` eight counter blocks one after the other there, and not
+together: its code for several blocks follows the processor, up to 64 on
+AVX-512F with a frame for as many, and 128-EEA2 took 0.19 µs and 0.61 µs
+with it.
 
 A key derivation, one HMAC-SHA-256, takes 0.24 µs, and 0.16 µs in 0.2.0,
 whose HMAC did not wipe its state. SUCI concealment takes 59 µs with
@@ -82,8 +86,8 @@ CMAC from one message to the next. The time of one call, in nanoseconds:
 
 | | 64 octets, from a key | 64 octets, with a context | 1500 octets, from a key | 1500 octets, with a context |
 |---|---|---|---|---|
-| 128-EEA2 | 52 | 26 | 185 | 164 |
-| 128-EIA2 | 121 | 81 | 982 | 944 |
+| 128-EEA2 | 52 | 29 | 183 | 160 |
+| 128-EIA2 | 117 | 81 | 937 | 928 |
 
 A context of SNOW 3G or ZUC has nothing to keep but the key, and takes the
 time of the function.
@@ -99,43 +103,51 @@ cargo bench --bench algorithms
 RUSTFLAGS="--cfg oxirush_security_unwiped" cargo bench --bench algorithms
 ```
 
-The time of one call in nanoseconds, without the clearing and with it, on
-the same processor: the lowest median of three runs without it, and of
-three or more with it.
+The time of one call on 64 octets in nanoseconds, without the clearing and
+with it, on the same processor: the lowest median of three runs or more of
+each.
 
-| | 64 octets | 1500 octets |
+| | Without | With |
 |---|---|---|
-| 128-EEA2 with a keyed context | 12.7, 26.0 | 151, 164 |
-| 128-EEA2 from a key | 35.5, 51.6 | 172, 185 |
-| 128-EIA2 with a keyed context | 69.6, 80.5 | 936, 944 |
-| 128-EIA2 from a key | 105, 121 | 974, 982 |
-| 128-EEA1 | 320, 349 | 2276, 2293 |
-| 128-EEA3 | 430, 460 | 3236, 3241 |
-| 128-EIA1 | 276, 309 | 379, 411 |
-| 128-EIA3 | 471, 504 | 3552, 3598 |
+| 128-EEA2 with a keyed context | 12.7 | 28.7 |
+| 128-EEA2 from a key | 34.3 | 52.3 |
+| 128-EIA2 with a keyed context | 68.7 | 80.6 |
+| 128-EIA2 from a key | 105 | 117 |
+| 128-EEA1 | 320 | 349 |
+| 128-EEA3 | 430 | 460 |
+| 128-EIA1 | 276 | 309 |
+| 128-EIA3 | 471 | 504 |
 
-A derivation takes 204 to 208 ns without the clearing and 235 to 241 ns
-with it; SUCI changes by less than the runs differ.
+The clearing does not grow with the message: on 1500 octets it is the same
+10 to 33 ns, which is less than the 3 % by which two runs of one benchmark
+differ on this machine. A derivation takes 204 to 208 ns without the
+clearing and 235 to 241 ns with it; SUCI changes by less than the runs
+differ.
 
 Sixteen messages of 64 octets in one call:
 
 | | Without | With |
 |---|---|---|
-| 128-EEA1 | 1752 | 1838 |
-| 128-EEA2 from keys | 631 | 636 |
-| 128-EEA2 with keyed contexts | 256 | 275 |
-| 128-EIA1 | 2094 | 2213 |
-| 128-EIA2 from keys | 940 | 1078 |
-| 128-EIA2 with keyed contexts | 735 | 810 |
-| 128-EIA3 | 2689 | 2812 |
+| 128-EEA1 | 1752 | 1871 |
+| 128-EEA2 from keys | 631 | 633 |
+| 128-EEA2 with keyed contexts | 256 | 276 |
+| 128-EIA1 | 2094 | 2070 |
+| 128-EIA2 from keys | 940 | 1077 |
+| 128-EIA2 with keyed contexts | 727 | 836 |
+| 128-EIA3 | 2617 | 2780 |
 
-The cost is that of the stores: 1280 octets after AES with a keyed
-context, 2048 after AES from a key, 4096 after a message of SNOW 3G or ZUC
-and after a derivation, 16384 after each algorithm of a batch that runs
-side by side. It does not grow with the message. On 64 octets it is 7 to
-12 % of SNOW 3G and of ZUC, 15 % of 128-EIA2, and it doubles 128-EEA2 with
-a keyed context, which a batch avoids: sixteen such messages take 419 ns
-one by one and 275 ns in one call.
+Two runs of a batch differ by up to 5 % here, under the load of the other
+work of the machine: that is more than the clearing for SNOW 3G and ZUC,
+and 128-EIA1 came out lower with it than without.
+
+The cost is that of the stores: 1792 octets after AES with a keyed
+context, 2304 after AES from a key, 4096 after a message of SNOW 3G or ZUC
+and after a derivation, 18432 after each algorithm of a batch that runs
+side by side. Each figure is twice what the deepest work of its kind uses.
+On 64 octets the clearing is 7 to 12 % of SNOW 3G and of ZUC, 11 % of
+128-EIA2, and it more than doubles 128-EEA2 with a keyed context, which a
+batch avoids: sixteen such messages take 478 ns one by one and 276 ns in
+one call.
 
 ## Several messages in one call
 

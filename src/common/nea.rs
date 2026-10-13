@@ -86,7 +86,7 @@ pub(crate) fn cipher_message(
                     nea2_instructions(instructions, key, None, count, bearer, direction, data);
                 });
             }
-            wipe::message(|| nea2_portable(key, count, bearer, direction, data));
+            wipe::portable(|| nea2_portable(key, count, bearer, direction, data));
         }
         CipheringAlgorithm::Zuc => {
             wipe::message(|| nea3_cipher(key, count, bearer, direction, data));
@@ -330,7 +330,7 @@ pub(crate) fn nea2_message_keyed(
         });
     }
     let _ = round_keys;
-    wipe::message(|| nea2_portable(key, count, bearer, direction, data));
+    wipe::portable(|| nea2_portable(key, count, bearer, direction, data));
 }
 
 /// The upper eight octets of the counter blocks of a message, which are
@@ -341,9 +341,6 @@ pub(crate) fn ctr_prefix(count: u32, bearer: Bearer, direction: Direction) -> [u
     prefix[4] = (bearer.get() << 3) | (u8::from(direction) << 2);
     prefix
 }
-
-/// The number of counter blocks that 128-EEA2 encrypts in one call.
-pub(crate) const CTR_GROUP: usize = 8;
 
 // ── NEA3: 128-EEA3 (ZUC keystream) ────────────────────────────────────────────
 

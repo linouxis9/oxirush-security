@@ -155,7 +155,7 @@
 //!
 //! | Target | Registers that are cleared | Checked by |
 //! |--------|----------------------------|------------|
-//! | x86-64 | RAX, RCX, RDX, RSI, RDI, R8 to R11, and the vector registers 0 to 15, whole | `leftovers/` in the repository, for every operation in each form of the code, in eleven optimized builds with Rust 1.88 and 1.98.1 |
+//! | x86-64 | RAX, RCX, RDX, RSI, RDI, R8 to R11, and the vector registers 0 to 15, whole | `leftovers/` in the repository, for every operation in each form of the code, in eighteen optimized builds with Rust 1.88, 1.98 and 1.99 here, and in those of CI on its runners |
 //! | AArch64 | X0 to X17, and V0 to V31 | `emulated-aarch64/`, for 22 operations on an emulated processor |
 //! | Another target | None. The stack is cleared by a function whose frame is where the work was | Nothing |
 //!
@@ -163,22 +163,24 @@
 //! its subkeys, the stages of its generator, its keystream and its HMAC
 //! values on the stack and in the registers. They also see that what was
 //! cleared is zero, that the vector registers are zero, and that the work
-//! went less deep than what is cleared. CI runs both.
+//! used three quarters of what is cleared at most. CI runs both, at each
+//! change and each week.
 //!
 //! | Work | Stack cleared after it, in octets |
 //! |------|-----------------------------------|
-//! | AES on its instructions, one message with a keyed context | 1280 |
-//! | AES on its instructions, from a key | 2048 |
-//! | One message of SNOW 3G or ZUC, AES without its instructions, a derivation, a new context or generator | 4096 |
+//! | AES on its instructions, one message with a keyed context | 1792 |
+//! | AES on its instructions, from a key | 2304 |
+//! | One message of SNOW 3G or ZUC, a derivation, a new generator | 4096 |
+//! | What goes through the `aes` crate: AES without its instructions, a new keyed context, the messages of a batch one after the other | 8192 on x86 and x86-64, 6144 elsewhere |
 //! | Words of a generator, a comparison | 1536 |
 //! | SUCI | 12288 |
-//! | Several messages side by side | 16384 |
-//! | The messages of a batch one after the other, without the vector code | 6144 |
+//! | Several messages side by side | 18432 |
 //! | Any, in a build with debug assertions | 49152 |
 //!
-//! An operation needs that much stack. Each figure is between one and a
-//! half times and twice what the deepest work of its kind was measured to
-//! use, and more for a derivation and for SUCI.
+//! An operation needs that much stack. Each figure is at least twice what
+//! the deepest work of its kind used wherever it was run, and the scan
+//! fails above three quarters. `leftovers/README.md` has the figures, and
+//! says what of them depends on the processor.
 //!
 //! What stays:
 //!
@@ -195,15 +197,20 @@
 //! - ZMM16 to ZMM31 and the mask registers, in a build that enables
 //!   AVX-512 for every processor.
 //! - What the system copies of the memory of a process: swap, a core dump.
+//! - Work that goes deeper than what is cleared after it. The figures are
+//!   measured, not proven: a processor, a compiler or a later version of
+//!   `aes`, `sha2`, `x25519-dalek` or `p256` may go deeper than what was
+//!   seen.
 //!
-//! On an AMD Ryzen 7 5700G the clearing adds about 13 ns to a message of
-//! AES with a keyed context, 16 ns to one from a key, 30 ns to a message
+//! On an AMD Ryzen 7 5700G the clearing adds about 16 ns to a message of
+//! AES with a keyed context, 18 ns to one from a key, 30 ns to a message
 //! of SNOW 3G or ZUC or to a derivation, and 75 to 140 ns to each
 //! algorithm of a batch that runs side by side. For 64 octets that is 7 to
-//! 12 % of SNOW 3G and of ZUC, and it doubles 128-EEA2 with a keyed
-//! context, from 13 ns to 26. A batch pays once for all its messages:
-//! sixteen of 128-EEA2 with their contexts take 275 ns in one call, and
-//! 419 one by one. `benches/README.md` in the repository has the figures.
+//! 12 % of SNOW 3G and of ZUC, and it more than doubles 128-EEA2 with a
+//! keyed context, from 13 ns to 29. A batch pays once for all its
+//! messages: sixteen of 128-EEA2 with their contexts take 276 ns in one
+//! call, and 478 one by one. `benches/README.md` in the repository has the
+//! figures.
 //!
 //! A program that cannot afford it is built with
 //! `RUSTFLAGS="--cfg oxirush_security_unwiped"`. The named values are

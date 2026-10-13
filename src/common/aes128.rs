@@ -21,11 +21,15 @@
 //!
 //! A block that is a number has its first octet as the low one.
 
-use crate::common::nea::CTR_GROUP;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::common::simd::{AesSchedule, Instructions};
 use aes::Aes128Enc;
-use aes::cipher::{BlockCipherEncrypt, KeyInit};
+use aes::cipher::consts::U16;
+use aes::cipher::typenum::Unsigned;
+use aes::cipher::{
+    BlockCipherEncBackend, BlockCipherEncClosure, BlockCipherEncrypt, BlockSizeUser, KeyInit,
+    ParBlocks,
+};
 use zeroize::Zeroize;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use zeroize::Zeroizing;
@@ -124,31 +128,177 @@ impl Aes128 {
     /// Counter mode, as 128-EEA2 has it: the counter blocks begin with the
     /// eight octets of `prefix` and end with their number, from zero.
     pub(crate) fn ctr(&self, prefix: [u8; 8], data: &mut [u8]) {
-        let cipher = &self.0;
+        self.0.encrypt_with_backend(Counter { prefix, data });
+    }
+}
 
-        // The counter blocks of a group are encrypted in one call
-        let mut keystream = [aes::Block::default(); CTR_GROUP];
-        let mut counter = 0u64;
-        for group in data.chunks_mut(16 * CTR_GROUP) {
-            let blocks = &mut keystream[..group.len().div_ceil(16)];
-            for block in blocks.iter_mut() {
-                block[..8].copy_from_slice(&prefix);
-                block[8..].copy_from_slice(&counter.to_be_bytes());
-                counter += 1;
+/// The most blocks that the code of the `aes` crate without instructions
+/// works on at once: 2 with words of 32 bits, 4 with words of 64.
+const BITSLICED: usize = 4;
+
+/// The counter blocks that are made, then encrypted one after the other
+/// on the AES instructions, before the octets of the message are written.
+const GROUP: usize = 8;
+
+/// Counter mode over `data`, for the code that the `aes` crate has chosen
+/// for the processor.
+///
+/// That code encrypts some number of blocks side by side. Its code without
+/// instructions has them in the bits of its words and costs the same for
+/// one block as for [`BITSLICED`]: it is given the counter blocks so many
+/// at a time. Its codes on the AES instructions take 8 blocks, 30 on VAES
+/// and 64 on AVX-512F, with a frame for as many whatever the number of
+/// blocks of a message, and the last one writes registers that this crate
+/// does not clear. They are not called: on these instructions the counter
+/// blocks are encrypted one after the other, which the processor overlaps,
+/// with the same frame and one register on each of them. What an
+/// operation uses of the stack then does not follow the processor that it
+/// runs on.
+struct Counter<'a> {
+    prefix: [u8; 8],
+    data: &'a mut [u8],
+}
+
+/// The counter block of a number.
+fn counter_block(prefix: &[u8; 8], number: u64) -> aes::Block {
+    let mut block = aes::Block::default();
+    block[..8].copy_from_slice(prefix);
+    block[8..].copy_from_slice(&number.to_be_bytes());
+    block
+}
+
+/// Add a block of keystream to the octets of a message, 16 or fewer for
+/// its last ones.
+#[inline(always)]
+fn add_keystream(octets: &mut [u8], keystream: &aes::Block) {
+    if let Ok(whole) = <&mut [u8; 16]>::try_from(&mut *octets) {
+        // As one number: an octet at a time is most of the time of a block
+        // on the AES instructions
+        let keystream = u128::from_ne_bytes((*keystream).into());
+        *whole = (u128::from_ne_bytes(*whole) ^ keystream).to_ne_bytes();
+    } else {
+        for (octet, key_octet) in octets.iter_mut().zip(keystream) {
+            *octet ^= key_octet;
+        }
+    }
+}
+
+impl BlockSizeUser for Counter<'_> {
+    type BlockSize = U16;
+}
+
+impl BlockCipherEncClosure for Counter<'_> {
+    #[inline(always)]
+    fn call<B: BlockCipherEncBackend<BlockSize = U16>>(self, backend: &B) {
+        let Self { prefix, mut data } = self;
+        let side_by_side = B::ParBlocksSize::USIZE;
+        let mut number = 0u64;
+        if side_by_side <= BITSLICED {
+            // The blocks of a group in one call, the last group whole as
+            // well: a call costs the same for fewer blocks
+            let mut blocks = ParBlocks::<B>::default();
+            while !data.is_empty() {
+                let (group, rest) = data.split_at_mut(data.len().min(16 * side_by_side));
+                for block in blocks.iter_mut() {
+                    *block = counter_block(&prefix, number);
+                    number += 1;
+                }
+                backend.encrypt_par_blocks_inplace(&mut blocks);
+                for (octets, block) in group.chunks_mut(16).zip(blocks.iter()) {
+                    add_keystream(octets, block);
+                }
+                data = rest;
             }
-            cipher.encrypt_blocks(blocks);
-            for (octets, block) in group.chunks_mut(16).zip(blocks.iter()) {
+            for block in blocks.iter_mut() {
+                block.as_mut_slice().zeroize();
+            }
+        } else {
+            // The counter blocks of a group first, then their encryption
+            // one after the other, which the processor overlaps: it does
+            // not when the octets of the message are written between two
+            // of them
+            let mut blocks = [aes::Block::default(); GROUP];
+            for group in data.chunks_mut(16 * GROUP) {
+                let blocks = &mut blocks[..group.len().div_ceil(16)];
+                for block in blocks.iter_mut() {
+                    *block = counter_block(&prefix, number);
+                    number += 1;
+                }
+                for block in blocks.iter_mut() {
+                    backend.encrypt_block_inplace(block);
+                }
+                for (octets, block) in group.chunks_mut(16).zip(blocks.iter()) {
+                    add_keystream(octets, block);
+                }
+            }
+            for block in &mut blocks {
+                block.as_mut_slice().zeroize();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aes::cipher::consts::{U2, U4, U8, U30};
+    use aes::cipher::{ParBlocksSizeUser, array::ArraySize, inout::InOut};
+    use core::marker::PhantomData;
+
+    /// A code that says it encrypts `Blocks` blocks side by side, and
+    /// encrypts each with the `aes` crate.
+    struct Code<'a, Blocks>(&'a Aes128, PhantomData<Blocks>);
+
+    impl<Blocks> BlockSizeUser for Code<'_, Blocks> {
+        type BlockSize = U16;
+    }
+
+    impl<Blocks: ArraySize> ParBlocksSizeUser for Code<'_, Blocks> {
+        type ParBlocksSize = Blocks;
+    }
+
+    impl<Blocks: ArraySize> BlockCipherEncBackend for Code<'_, Blocks> {
+        fn encrypt_block(&self, mut block: InOut<'_, '_, aes::Block>) {
+            let mut octets: [u8; 16] = block.clone_in().into();
+            self.0.encrypt_in_place(&mut octets);
+            *block.get_out() = octets.into();
+        }
+    }
+
+    /// The counter mode gives the same octets whatever the number of
+    /// blocks that the code of the `aes` crate takes side by side: 2 or 4
+    /// without instructions, together, and 8 or 30 on instructions, one
+    /// after the other. A processor runs one of them alone.
+    #[test]
+    fn the_counter_mode_is_the_same_for_each_code_of_the_aes_crate() {
+        let key: [u8; 16] = core::array::from_fn(|at| 0x3c ^ (at as u8).wrapping_mul(29));
+        let aes = Aes128::new(&key);
+        let prefix = [0x39, 0x8a, 0x59, 0xb4, 0xac, 0, 0, 0];
+        let text: [u8; 301] = core::array::from_fn(|at| (at as u8).wrapping_mul(7));
+        for length in (0..=145).chain([255, 256, 257, 300, 301]) {
+            // Each block from the encryption of its counter block
+            let mut expected = text;
+            for (number, octets) in expected[..length].chunks_mut(16).enumerate() {
+                let mut block = [0u8; 16];
+                block[..8].copy_from_slice(&prefix);
+                block[8..].copy_from_slice(&(number as u64).to_be_bytes());
+                aes.encrypt_in_place(&mut block);
                 for (octet, key_octet) in octets.iter_mut().zip(block) {
                     *octet ^= key_octet;
                 }
             }
-        }
-
-        // A group overwrites the blocks of the one before it: the array
-        // holds keystream in as many blocks as the longest group had
-        let written = CTR_GROUP.min(data.len().div_ceil(16));
-        for block in &mut keystream[..written] {
-            block.as_mut_slice().zeroize();
+            fn with<Blocks: ArraySize>(aes: &Aes128, prefix: [u8; 8], data: &mut [u8]) {
+                Counter { prefix, data }.call(&Code::<Blocks>(aes, PhantomData));
+            }
+            for code in [with::<U2>, with::<U4>, with::<U8>, with::<U30>] {
+                let mut data = text;
+                code(&aes, prefix, &mut data[..length]);
+                assert_eq!(data, expected, "{length} octets");
+            }
+            // And the code that this processor has
+            let mut data = text;
+            aes.ctr(prefix, &mut data[..length]);
+            assert_eq!(data, expected, "{length} octets");
         }
     }
 }

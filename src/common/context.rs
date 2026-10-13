@@ -100,7 +100,7 @@ impl IntegrityContext {
     /// The context of a key and its algorithm.
     pub fn new(key: &impl IntegrityKey, algorithm: IntegrityAlgorithm) -> Self {
         let key = key.key_octets();
-        wipe::message(|| {
+        wipe::portable(|| {
             let key = Zeroizing::new(*key);
             let ((mut expanded, mut schedule), mut subkeys) =
                 (no_round_keys(), Zeroizing::new([0; 2]));
@@ -291,7 +291,7 @@ impl CipheringContext {
     /// The context of a key and its algorithm.
     pub fn new(key: &impl CipheringKey, algorithm: CipheringAlgorithm) -> Self {
         let key = key.key_octets();
-        wipe::message(|| {
+        wipe::portable(|| {
             let key = Zeroizing::new(*key);
             let (expanded, schedule) = match algorithm {
                 CipheringAlgorithm::Aes => expand(&key),

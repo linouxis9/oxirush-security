@@ -33,8 +33,8 @@
 //! - without the clearing that follows its work, to see that the scan does
 //!   find what an operation leaves, and to measure how deep the work goes
 //!   below where the clearing starts: the crate says which areas of the
-//!   stack it would have cleared, and the deepest of them must go deeper
-//!   than the work did, by a margin;
+//!   stack it would have cleared, and the work may use three quarters of
+//!   the deepest of them at most;
 //! - as a program has it. Nothing may be found then, each area that the
 //!   crate cleared is zero, and the vector registers are zero.
 //!
@@ -61,10 +61,68 @@ const PATTERN: u8 = 0xa5;
 /// Octets at the deep end of a cleared area that are not looked at.
 const SLACK: usize = 64;
 
-/// What the cleared depth has to exceed the measured one by: a quarter of
-/// it, for a compiler that would lay the frames out otherwise.
-fn margin(depth: usize) -> usize {
-    (depth / 4).max(128)
+/// Whether a piece of work that went `depth` octets deep used more than
+/// three quarters of the `cleared` octets.
+///
+/// The crate clears twice what the deepest work of each kind used where it
+/// was run. A processor that nobody ran it on, a compiler or a new version
+/// of a crate that it uses may go deeper: up to half as deep again, the
+/// scan passes, and beyond that it fails while a quarter of what is
+/// cleared is still not used, so that the figure is raised before an
+/// operation leaves anything.
+fn too_deep(depth: usize, cleared: usize) -> bool {
+    depth * 4 > cleared * 3
+}
+
+/// The processor, and what of it chooses the code of the `aes` and `sha2`
+/// crates: how deep an operation goes depends on it.
+fn processor() -> String {
+    // What Linux says of the first processor: the names of the features
+    // of AVX-512 are not ones that Rust 1.88 lets a program ask for
+    let text = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
+    let field = |name: &str| {
+        let line = text.lines().find(|line| line.starts_with(name))?;
+        Some(line.split_once(':')?.1.trim())
+    };
+    let model = field("model name").unwrap_or("unknown");
+    let flag =
+        |name: &str| field("flags").is_some_and(|flags| flags.split(' ').any(|flag| flag == name));
+    let has = [
+        ("AES", flag("aes")),
+        ("VAES", flag("vaes")),
+        ("AVX2", flag("avx2")),
+        ("AVX-512F", flag("avx512f")),
+        ("SHA", flag("sha_ni")),
+    ];
+    let with: Vec<_> = has
+        .iter()
+        .filter(|(_, has)| *has)
+        .map(|(name, _)| *name)
+        .collect();
+    let without: Vec<_> = has
+        .iter()
+        .filter(|(_, has)| !*has)
+        .map(|(name, _)| *name)
+        .collect();
+    // On the AES instructions the counter mode of the crate has `aes`
+    // encrypt a block after the other: its code for several, which the
+    // processor chooses, is not called
+    let aes = if cfg!(aes_backend = "soft") {
+        "without instructions, as it is built"
+    } else if has[0].1 {
+        "on the AES instructions, a block after the other"
+    } else {
+        "without instructions"
+    };
+    format!(
+        "processor: {model}, with {}{}\nthe aes crate runs {aes}",
+        with.join(", "),
+        if without.is_empty() {
+            String::new()
+        } else {
+            format!(", without {}", without.join(", "))
+        }
+    )
 }
 
 /// The registers that an x86-64 function need not give back as it found
@@ -404,6 +462,11 @@ fn main() -> ExitCode {
     let only: Vec<String> = std::env::args().skip(1).collect();
     let cases = cases::all();
     let (mut failures, mut seen_unwiped) = (0, 0);
+    // The deepest work for each number of octets that is cleared
+    let mut deepest_of = std::collections::BTreeMap::<usize, (usize, String)>::new();
+    println!("{}", processor());
+    let implementation = oxirush_security::implementation();
+    println!("oxirush-security runs: {implementation:?} ({implementation})");
     println!(
         "{:<58} {:>22} {:>6} {:>8} {:>6}",
         "operation", "form", "depth", "cleared", "areas"
@@ -429,10 +492,15 @@ fn main() -> ExitCode {
             let (depth, of) = match deepest {
                 Some((address, octets)) => {
                     let depth = (address + octets).saturating_sub(bare.lowest_written());
-                    if depth + margin(depth) > *octets {
+                    if too_deep(depth, *octets) {
                         wrong.push(format!(
-                            "the work goes {depth} octets deep, and {octets} are cleared"
+                            "the work goes {depth} octets deep, more than three quarters \
+                             of the {octets} that are cleared"
                         ));
+                    }
+                    let deepest = deepest_of.entry(*octets).or_default();
+                    if depth > deepest.0 {
+                        *deepest = (depth, format!("{}, {form_name}", case.name));
                     }
                     (depth, *octets)
                 }
@@ -506,6 +574,11 @@ fn main() -> ExitCode {
         }
     }
     println!("{seen_unwiped} leftovers are seen when nothing is cleared after an operation");
+    println!("the deepest work for each number of octets that is cleared:");
+    for (cleared, (depth, name)) in &deepest_of {
+        let share = depth * 100 / cleared;
+        println!("{cleared:>8} {depth:>6} {share:>3} %   {name}");
+    }
     if failures > 0 {
         println!("FAILED: {failures} operation(s) leave something, or go deeper than is cleared");
         return ExitCode::FAILURE;

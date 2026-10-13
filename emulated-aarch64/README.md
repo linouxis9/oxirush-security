@@ -40,15 +40,15 @@ how deep the work goes, and then as a program has it:
 
 ```text
 operation                                                          form  depth  cleared  areas
-nea_cipher 128-EEA2, 64 octets                              vector code   1088     2048      1   nothing left (8 without the clearing)
-nia_mac_batch of 128-EIA2, 8 x 300 octets, from contexts    vector code   8304    16384      1   nothing left
+nea_cipher 128-EEA2, 64 octets                              vector code   1088     2304      1   nothing left (8 without the clearing)
+nia_mac_batch of 128-EIA2, 8 x 300 octets, from contexts    vector code   8304    18432      1   nothing left
 ```
 
 The run fails when a key, a round key, a subkey of CMAC, keystream or a
 value of HMAC is on the stack or in a register, when an area that the crate
 cleared is not zero, when a vector register is not zero, or when the work
-went deeper than what is cleared less a margin. SUCI is not in the program,
-which has no allocator.
+used more than three quarters of what is cleared. SUCI is not in the
+program, which has no allocator.
 
 An emulator is not a processor of silicon: the AArch64 job of CI runs the
 tests of the crate on one. Unicorn is under the GNU GPL, version 2. This
