@@ -16,9 +16,9 @@ cannot say is a `Result`. No public function panics on its arguments.
 
   | Path | What is there |
   |------|---------------|
-  | `oxirush_security::` | What both systems share: the algorithms (`nia_mac`, `nea_cipher` and their `*_bits` forms), the batches, the keyed contexts, `IntegrityAlgorithm`, `CipheringAlgorithm`, `Direction`, `Bearer`, `NasCount`, `AccessKeyCount`, `SecurityError`, `Ck`, `Ik`, `Rand`, `Autn`, `Plmn`, `tbcd_encode`, `tbcd_decode`, `Snow3G`, `Zuc`, `constant_time_eq`, the selection of the algorithms and `implementation` |
+  | `oxirush_security::` | What both systems share: the algorithms (`nia_mac`, `nea_cipher` and their `*_bits` forms), the batches, the keyed contexts, `IntegrityAlgorithm`, `CipheringAlgorithm`, `Direction`, `Bearer`, `NasCount`, `AccessKeyCount`, `SecurityError`, `Ck`, `Ik`, `Rand`, `Autn`, `Plmn`, `tbcd`, `identity` (the module of oxirush-utils), `Snow3G`, `Zuc`, `constant_time_eq`, the selection of the algorithms and `implementation` |
   | `oxirush_security::kdf::` | `kdf`, `build_s` and `extract_128` of TS 33.220 |
-  | `oxirush_security::nas_5gs::` | The keys of TS 33.501 and their derivations, `nas_mac`, `nas_cipher`, `NasConnection`, `Supi`, `Suci`, `Guti`, `STmsi` |
+  | `oxirush_security::nas_5gs::` | The keys of TS 33.501 and their derivations, `nas_mac`, `nas_cipher`, `NasConnection`, `Supi`, `SupiType`, `Suci`, `ProtectionScheme`, `RoutingIndicator`, `Guti`, `STmsi`, `MobileIdentityType` |
   | `oxirush_security::nas_eps::` | The keys of TS 33.401 and their derivations, `nas_mac`, `nas_cipher`, the short MAC, the re-establishment MAC, `compute_hash_mme` |
 
   `common` is private, and so are `nas_5gs::kdf`, `nas_5gs::security`,
@@ -73,7 +73,7 @@ cannot say is a `Result`. No public function panics on its arguments.
   | `AccessKeyCount` | `Nas(NasCount)`, or `Handover` for 2^32 - 1 | `try_from(u32)`; a `NasCount` converts into it |
   | `nas_5gs::NasConnection` | `ThreeGpp` (1), `Non3Gpp` (2) | `try_from(u8)` |
   | `Bearer` | 0 to 31 | `new(u8)`, `try_from(u8)`; a `NasConnection` converts into it |
-  | `Plmn` | An MCC of three digits and an MNC of two or three | `new("208", "93")`, `from_octets(&[u8; 3])` |
+  | `Plmn` | An MCC of three digits and an MNC of two or three | `new("208", "93")`, `from_nas_octets([u8; 3])` |
 
   `u8::from` and `u32::from` give the number back. An algorithm prints as
   `128-NIA2/128-EIA2`, and `name_5gs()` and `name_eps()` give one name.
@@ -166,6 +166,20 @@ cannot say is a `Result`. No public function panics on its arguments.
   interface. `identity()` is what KAMF takes, and `{}` prints the text
   with its type in front.
 
+- **The identities are those of oxirush-utils.** The PLMN, the TBCD
+  strings, the 5G-GUTI, the 5G-S-TMSI, the type of a mobile identity, the
+  SUPI and its type, the routing indicator and the protection scheme of a
+  SUCI are the values of the crate that the OxiRush crates share, which
+  `oxirush_security::identity` is, at the paths of this list: `Guti`,
+  `STmsi` and `MobileIdentityType` are its `Guti5g`, `STmsi5g` and
+  `MobileIdentityType5gs`. Its readers are canonical: `from_nas_octets`
+  refuses a spare bit that is set, and `from_nas_octets_tolerant` reads it
+  with a list of what was not by the clause. An identity that is refused
+  is `SecurityError::Identity`, with the member at fault and why, where a
+  function of this crate takes one. It adds oxirush-utils to the tree of
+  the crate and no other crate, needs no allocator without `alloc`, and
+  takes `base64` and `hex` out of that of `nai`.
+
 - **The SUCI.** `nas_5gs::Suci` replaces the functions that took and
   returned octets and strings. It holds the SUPI type, the home network,
   the routing indicator, the protection scheme, the home network public
@@ -174,12 +188,12 @@ cannot say is a `Result`. No public function panics on its arguments.
 
   | 0.2.0 | 0.3.0 |
   |-------|-------|
-  | `msin_to_bcd`, `suci_scheme_output_a`, `suci_scheme_output_b`, `suci_conceal` | `Suci::conceal_imsi(plmn, msin, routing_indicator, Protection)`, then `to_nas()` |
-  | `suci_to_supi(&octets, Some(&key)) -> Option<String>` | `Suci::from_nas(&octets)?.deconceal(Some(&key)) -> Result<Supi, SuciError>` |
+  | `msin_to_bcd`, `suci_scheme_output_a`, `suci_scheme_output_b`, `suci_conceal` | `Suci::conceal_imsi(plmn, msin, RoutingIndicator, Protection)`, then `to_nas_octets()` |
+  | `suci_to_supi(&octets, Some(&key)) -> Option<String>` | `Suci::from_nas_octets(&octets)?.deconceal(Some(&key)) -> Result<Supi, SuciError>` |
   | `suci_decrypt_a`, `suci_decrypt_b` | `Suci::deconceal` |
-  | `suci_to_string(&octets)` | `Suci::from_nas(&octets)?` with `{}` |
-  | `parse_nai_suci`, `encode_nai_suci`, `NaiSuci` | `Suci::from_nai`, `Suci::to_nai` |
-  | `conceal_network_specific_supi`, `NaiProtectionScheme` | `Suci::conceal_nai(&supi, routing_indicator, Protection)` |
+  | `suci_to_string(&octets)` | `Suci::from_nas_octets(&octets)?` with `{}` |
+  | `parse_nai_suci`, `encode_nai_suci`, `NaiSuci` | `Suci::from_nai`, `Suci::to_nai() -> Result<String, SuciError>` |
+  | `conceal_network_specific_supi`, `NaiProtectionScheme` | `Suci::conceal_nai(&supi, RoutingIndicator, Protection)` |
   | `deconceal_nai_suci`, `deconceal_network_specific_suci` | `Suci::deconceal` |
   | a home network key as octets | `HomeNetworkPrivateKey::profile_a`, `profile_b`, and its `public_key()`; `HomeNetworkPublicKey::profile_a`, `profile_b` |
   | `SuciSchemeOutput` | `SchemeOutput`, from `Suci::scheme_output()` |
@@ -188,8 +202,17 @@ cannot say is a `Result`. No public function panics on its arguments.
   identity, an unknown scheme, a missing key or one of the other profile,
   a malformed point, a MAC that does not match, a plaintext that is no
   identity. Its documentation says what a SIDF may tell a peer. A NAI that
-  is refused gives a `NaiError`, and one whose username or realm is above
-  253 octets is refused before it is normalized.
+  is refused gives `SuciError::Nai` with the field at fault and why, and
+  one whose username or realm is above 253 octets is refused before it is
+  normalized. The two forms of a SUCI are the `ImsiSuci` and the `NaiSuci`
+  of oxirush-utils, which check the parts against each other; the text of
+  the service based interfaces writes the protection scheme as one
+  hexadecimal digit, as the pattern of `SupiOrSuci` of TS 29.571 has it
+  (`suci-0-208-93-0-c-1-aabb` for the first scheme of the operator).
+  `ProtectionScheme` is its identifier: `ProtectionScheme::new(12)` and
+  `identifier()`, with `NULL`, `PROFILE_A` and `PROFILE_B`, where a
+  reserved one is refused. `routing_indicator()` gives a
+  `RoutingIndicator`, whose `as_str()` has its digits.
 
   De-concealment with Profile B refuses an uncompressed ephemeral public
   key, which 0.2.0 accepted: Profile B always compresses the point
@@ -202,19 +225,19 @@ cannot say is a `Result`. No public function panics on its arguments.
 
   | 0.2.0 | 0.3.0 |
   |-------|-------|
-  | `build_guti_bytes(&plmn, region, set, pointer, tmsi) -> Vec<u8>` | `Guti::new(Plmn, region, set, pointer, tmsi)?.to_octets() -> [u8; 11]` |
-  | `parse_guti_tmsi(&identity) -> Option<u32>` | `Guti::from_octets(&identity)?`, with `tmsi()`, `plmn()`, `amf_region_id()`, `amf_set_id()`, `amf_pointer()`, `s_tmsi()` |
-  | `parse_s_tmsi(&identity) -> Option<u32>` | `STmsi::from_octets(&identity)?.tmsi()` |
-  | `mobile_identity_type(&identity) -> u8` | `MobileIdentityType::of(&identity) -> Option<MobileIdentityType>` |
-  | `plmn_to_bytes(mcc, mnc) -> Vec<u8>` | `Plmn::new(mcc, mnc)?.to_octets() -> [u8; 3]` |
-  | `plmn_from_bytes(&octets) -> Option<(String, String)>` | `Plmn::from_octets(&octets)?`, with `mcc()` and `mnc()` |
-  | `tbcd_encode(value) -> Vec<u8>` | `-> Result<Vec<u8>, SecurityError>` |
-  | `tbcd_decode(&octets) -> String`, `try_tbcd_decode` | `tbcd_decode(&octets) -> Result<String, SecurityError>` |
+  | `build_guti_bytes(&plmn, region, set, pointer, tmsi) -> Vec<u8>` | `Guti::new(Plmn, region, set, pointer, tmsi)?.to_nas_octets() -> [u8; 11]` |
+  | `parse_guti_tmsi(&identity) -> Option<u32>` | `Guti::from_nas_octets(&identity)?`, or `from_nas_octets_tolerant` for a spare bit that is set, with `tmsi()`, `plmn()`, `amf_region_id()`, `amf_set_id()`, `amf_pointer()`, `s_tmsi()` |
+  | `parse_s_tmsi(&identity) -> Option<u32>` | `STmsi::from_nas_octets(&identity)?.tmsi()` |
+  | `mobile_identity_type(&identity) -> u8` | `MobileIdentityType::of(identity[0]) -> Result<MobileIdentityType, identity::Error>` |
+  | `plmn_to_bytes(mcc, mnc) -> Vec<u8>` | `Plmn::new(mcc, mnc)?.to_nas_octets() -> [u8; 3]` |
+  | `plmn_from_bytes(&octets) -> Option<(String, String)>` | `Plmn::from_nas_octets(octets)?`, with `mcc()` and `mnc()` |
+  | `tbcd_encode(value) -> Vec<u8>` | `tbcd::encode(value) -> Result<Vec<u8>, identity::Error>` |
+  | `tbcd_decode(&octets) -> String`, `try_tbcd_decode` | `tbcd::decode(&octets) -> Result<String, identity::Error>` |
 
   An identity is read whole and strictly: a length that is not that of the
   identity, a type octet of another identity, a digit that is none, or a
   filler before the end is an error, where 0.2.0 read what it could.
-  `tbcd_decode` decodes the TBCD-STRING of TS 29.002, in which 0xA to 0xE
+  `tbcd::decode` decodes the TBCD-STRING of TS 29.002, in which 0xA to 0xE
   are `*`, `#`, `a`, `b` and `c`; 0.2.0 dropped them, and a filler
   anywhere.
 
@@ -234,7 +257,7 @@ cannot say is a `Result`. No public function panics on its arguments.
 
 - **`SecurityError`** is `#[non_exhaustive]`, `Clone`, `PartialEq` and
   `Eq`. Its variants are `InvalidKeyLength`, `InvalidParameter`,
-  `InputTooLong`, `OutOfRange`, `UnsupportedAlgorithm`,
+  `Identity`, `InputTooLong`, `OutOfRange`, `UnsupportedAlgorithm`,
   `BitLengthExceedsData` and `NasCountExhausted`; `Ecies` is gone, with
   the errors of SUCI in `SuciError`. The public enums are
   `#[non_exhaustive]` and the public structs have private fields.
@@ -348,16 +371,16 @@ cannot say is a `Result`. No public function panics on its arguments.
 ### Added
 
 - **Cargo features.** The algorithms, the keys and their derivations build
-  without the standard library and without an allocator, with 14 crates
+  without the standard library and without an allocator, with 15 crates
   and no procedural macro; 0.2.0 had no feature and 76 crates.
 
   | Feature | The crate has | Needs |
   |---------|---------------|-------|
   | none (`default-features = false`) | The algorithms, the contexts and the batches, the keys and every derivation, NAS integrity and ciphering, the selection of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone |
-  | `alloc` | And what returns a `Vec` or a `String`: `kdf::build_s`, `tbcd_encode`, `tbcd_decode`, `Supi::into_owned` | An allocator |
+  | `alloc` | And what returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | An allocator |
   | `std`, a default | And, on an AArch64 system other than Linux, Android and Apple's, the choice of the vector code when the program runs | The standard library |
-  | `suci`, a default | And `nas_5gs::Suci` with the null scheme, Profile A and Profile B: 41 crates | `alloc`, and a source of random numbers for `getrandom` |
-  | `nai`, a default | And the SUCI in the NAI format and that of a SUPI that is a NAI: 71 crates | `suci` |
+  | `suci`, a default | And `nas_5gs::Suci` with the null scheme, Profile A and Profile B: 42 crates | `alloc`, and a source of random numbers for `getrandom` |
+  | `nai`, a default | And the SUCI in the NAI format and that of a SUPI that is a NAI: 70 crates | `suci` |
 
   On a target without an operating system the vector code runs when the
   build enables its instructions. CI builds each set of features for

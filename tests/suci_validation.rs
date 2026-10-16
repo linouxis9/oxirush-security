@@ -20,7 +20,7 @@
 use oxirush_security::Plmn;
 use oxirush_security::nas_5gs::{
     HomeNetwork, HomeNetworkPrivateKey, HomeNetworkPublicKey, KSeaf, Protection, ProtectionScheme,
-    SchemeOutput, Suci, SuciError, SupiType, derive_kamf,
+    RoutingIndicator, SchemeOutput, Suci, SuciError, SupiType, derive_kamf,
 };
 
 // Home network keys of TS 33.501 Annex C.4.
@@ -72,22 +72,22 @@ fn annex_c4_profile_a() -> Vec<u8> {
 #[test]
 fn a_sidf_chooses_its_key_and_the_supi_gives_kamf() {
     let keys = [
-        (ProtectionScheme::ProfileA, 27, private_a()),
-        (ProtectionScheme::ProfileB, 27, private_b()),
+        (ProtectionScheme::PROFILE_A, 27, private_a()),
+        (ProtectionScheme::PROFILE_B, 27, private_b()),
         (
-            ProtectionScheme::ProfileA,
+            ProtectionScheme::PROFILE_A,
             28,
             HomeNetworkPrivateKey::profile_a(&[0x42; 32]),
         ),
     ];
-    let suci = Suci::from_nas(&identity(1, 27, &annex_c4_profile_a())).unwrap();
+    let suci = Suci::from_nas_octets(&identity(1, 27, &annex_c4_profile_a())).unwrap();
     assert_eq!(suci.supi_type(), SupiType::Imsi);
     assert_eq!(
         suci.home_network(),
         HomeNetwork::Plmn(Plmn::new("274", "012").unwrap())
     );
-    assert_eq!(suci.routing_indicator(), "0");
-    assert_eq!(suci.protection_scheme(), ProtectionScheme::ProfileA);
+    assert_eq!(suci.routing_indicator().as_str(), "0");
+    assert_eq!(suci.protection_scheme(), ProtectionScheme::PROFILE_A);
     assert_eq!(suci.home_network_public_key_id(), 27);
     let SchemeOutput::Ecies {
         ephemeral_public_key,
@@ -133,12 +133,12 @@ fn a_sidf_chooses_its_key_and_the_supi_gives_kamf() {
 #[test]
 fn each_failure_of_a_sidf_has_its_error() {
     let nas = identity(1, 27, &annex_c4_profile_a());
-    let suci = Suci::from_nas(&nas).unwrap();
+    let suci = Suci::from_nas_octets(&nas).unwrap();
 
     let mut tampered = nas.clone();
     *tampered.last_mut().unwrap() ^= 0x01;
     assert_eq!(
-        Suci::from_nas(&tampered)
+        Suci::from_nas_octets(&tampered)
             .unwrap()
             .deconceal(Some(&private_a())),
         Err(SuciError::MacMismatch)
@@ -147,26 +147,29 @@ fn each_failure_of_a_sidf_has_its_error() {
     assert_eq!(
         suci.deconceal(Some(&private_b())),
         Err(SuciError::WrongKeyType {
-            suci: ProtectionScheme::ProfileA,
-            key: ProtectionScheme::ProfileB,
+            suci: ProtectionScheme::PROFILE_A,
+            key: ProtectionScheme::PROFILE_B,
         })
     );
     for length in [0, 1, 7, 8, 20, nas.len() - 5] {
         assert_eq!(
-            Suci::from_nas(&nas[..length]),
+            Suci::from_nas_octets(&nas[..length]),
             Err(SuciError::Truncated),
             "{length} octets"
         );
     }
     let mut unknown = nas.clone();
     unknown[6] = 3;
-    assert_eq!(Suci::from_nas(&unknown), Err(SuciError::UnknownScheme(3)));
+    assert_eq!(
+        Suci::from_nas_octets(&unknown),
+        Err(SuciError::UnknownScheme(3))
+    );
     // A SUCI of a scheme of the operator is read, for the SIDF that
     // knows the scheme
     let mut proprietary = nas.clone();
     proprietary[6] = 13;
     assert_eq!(
-        Suci::from_nas(&proprietary)
+        Suci::from_nas_octets(&proprietary)
             .unwrap()
             .deconceal(Some(&private_a())),
         Err(SuciError::ProprietaryScheme(13))
@@ -183,7 +186,7 @@ fn profile_b_rejects_uncompressed_ephemeral_public_key() {
         "46A33FC2716AC7DAE96AA30A4D",
     ))
     .unwrap();
-    let suci = Suci::from_nas(&identity(2, 2, &uncompressed)).unwrap();
+    let suci = Suci::from_nas_octets(&identity(2, 2, &uncompressed)).unwrap();
     assert_eq!(
         suci.deconceal(Some(&private_b())),
         Err(SuciError::MalformedPoint)
@@ -196,7 +199,7 @@ fn profile_b_rejects_uncompressed_ephemeral_public_key() {
         "46A33FC2716AC7DAE96AA30A4D",
     ))
     .unwrap();
-    let suci = Suci::from_nas(&identity(2, 2, &compressed)).unwrap();
+    let suci = Suci::from_nas_octets(&identity(2, 2, &compressed)).unwrap();
     assert_eq!(
         suci.deconceal(Some(&private_b())).unwrap().to_string(),
         "imsi-274012001002086"
@@ -217,13 +220,13 @@ fn profile_a_rejects_non_contributory_public_keys() {
             key: &key,
         };
         assert_eq!(
-            Suci::conceal_imsi(plmn, "001002086", "0", protection),
+            Suci::conceal_imsi(plmn, "001002086", RoutingIndicator::default(), protection),
             Err(SuciError::InvalidKey)
         );
         let mut output = point.to_vec();
         output.extend_from_slice(&[0; 9]);
         assert_eq!(
-            Suci::from_nas(&identity(1, 1, &output))
+            Suci::from_nas_octets(&identity(1, 1, &output))
                 .unwrap()
                 .deconceal(Some(&HomeNetworkPrivateKey::profile_a(&[0x55; 32]))),
             Err(SuciError::MalformedPoint)
@@ -241,12 +244,13 @@ fn profile_b_takes_a_compressed_or_an_uncompressed_home_network_key_only() {
     for accepted in [format!("02{x}"), format!("04{x}{y}")] {
         let key = HomeNetworkPublicKey::profile_b(&hex::decode(&accepted).unwrap()).unwrap();
         assert_eq!(key, private_b().public_key(), "{accepted}");
-        assert_eq!(key.scheme(), ProtectionScheme::ProfileB);
+        assert_eq!(key.scheme(), ProtectionScheme::PROFILE_B);
         let protection = Protection::Ecies {
             key_id: 2,
             key: &key,
         };
-        let suci = Suci::conceal_imsi(plmn, "001002086", "0", protection).unwrap();
+        let suci =
+            Suci::conceal_imsi(plmn, "001002086", RoutingIndicator::default(), protection).unwrap();
         assert_eq!(
             suci.deconceal(Some(&private_b())).unwrap().identity(),
             "274012001002086",
@@ -291,19 +295,19 @@ fn ecies_profiles_refuse_an_empty_identity_and_its_output() {
             key: public,
         };
         assert_eq!(
-            Suci::conceal_imsi(plmn, "", "0", protection),
+            Suci::conceal_imsi(plmn, "", RoutingIndicator::default(), protection),
             Err(SuciError::Identity)
         );
         // The ephemeral key and the MAC tag of a real output, with its one
         // octet of ciphertext taken out.
-        let suci = Suci::conceal_imsi(plmn, "1", "0", protection).unwrap();
+        let suci = Suci::conceal_imsi(plmn, "1", RoutingIndicator::default(), protection).unwrap();
         assert_eq!(
             suci.deconceal(Some(&private)).unwrap().identity(),
             "2740121"
         );
-        let mut nas = suci.to_nas().unwrap();
+        let mut nas = suci.to_nas_octets().unwrap();
         assert_eq!(nas[6], scheme);
         nas.remove(8 + key_len);
-        assert_eq!(Suci::from_nas(&nas), Err(SuciError::Truncated));
+        assert_eq!(Suci::from_nas_octets(&nas), Err(SuciError::Truncated));
     }
 }

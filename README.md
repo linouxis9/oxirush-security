@@ -350,7 +350,7 @@ home network public key identifier of the SUCI that it read.
 
 ```rust
 use oxirush_security::Plmn;
-use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, Suci};
+use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci};
 
 // Home network: its private key, and the public key that its subscribers
 // have under the identifier 27
@@ -364,13 +364,14 @@ println!("public key {}", hex::encode(public.to_octets()));
 // ephemeral public key, drawn at each call, the ciphered MSIN and a MAC tag
 let protection = Protection::Ecies { key_id: 27, key: &public };
 let plmn = Plmn::new("274", "012").unwrap();
-let suci = Suci::conceal_imsi(plmn, "001002086", "0", protection).unwrap();
-let identity = suci.to_nas().unwrap();
+let routing = RoutingIndicator::default();
+let suci = Suci::conceal_imsi(plmn, "001002086", routing, protection).unwrap();
+let identity = suci.to_nas_octets().unwrap();
 println!("mobile identity of {} octets", identity.len());
 
 // SIDF: read the SUCI, take the private key that its scheme and its key
 // identifier name, and de-conceal
-let received = Suci::from_nas(&identity).unwrap();
+let received = Suci::from_nas_octets(&identity).unwrap();
 println!("{:?}, key {}", received.protection_scheme(), received.home_network_public_key_id());
 let supi = received.deconceal(Some(&private)).unwrap();
 println!("{supi}, of which KAMF takes {}", supi.identity());
@@ -380,7 +381,7 @@ let mut identity = vec![0x01, 0x72, 0x24, 0x10, 0xf0, 0xff, 0x01, 27];
 identity.extend(hex::decode(
     "b2e92f836055a255837debf850b528997ce0201cb82adfe4be1f587d07d8457dcb02352410cddd9e730ef3fa87",
 ).unwrap());
-let annex = Suci::from_nas(&identity).unwrap();
+let annex = Suci::from_nas_octets(&identity).unwrap();
 println!("{annex}");
 println!("{:?}", annex.deconceal(Some(&private)));
 println!("{:?}", annex.deconceal(None));
@@ -389,7 +390,7 @@ println!("{:?}", annex.deconceal(None));
 ```text
 public key 5a8d38864820197c3394b92613b20b91633cbd897119273bf8e4a6f4eec0a650
 mobile identity of 53 octets
-ProfileA, key 27
+ProtectionScheme(1: profile A), key 27
 imsi-274012001002086, of which KAMF takes 274012001002086
 suci-0-274-012-0-1-27-b2e92f836055a255837debf850b528997ce0201cb82adfe4be1f587d07d8457dcb02352410cddd9e730ef3fa87
 Ok(Supi(imsi-274012001002086))
@@ -402,7 +403,7 @@ A SUPI that is a NAI is concealed as a NAI (TS 23.003 §28.7.3), with the
 `nai` feature.
 
 ```rust
-use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, Suci, Supi};
+use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci, Supi};
 
 let private = "c53c22208b61860b06c62e5406a7b330c2b577aa5558981510d128247d38bd1d";
 let private = <[u8; 32]>::try_from(hex::decode(private).unwrap()).unwrap();
@@ -412,8 +413,8 @@ let public = private.public_key();
 // UE: the username is concealed, the realm is not
 let supi = Supi::network_specific("sensor-17@example.net").unwrap();
 let protection = Protection::Ecies { key_id: 1, key: &public };
-let suci = Suci::conceal_nai(&supi, "0", protection).unwrap();
-let text = suci.to_nai();
+let suci = Suci::conceal_nai(&supi, RoutingIndicator::default(), protection).unwrap();
+let text = suci.to_nai().unwrap();
 println!("{}...", &text[..31]);
 
 // Home network
@@ -421,13 +422,13 @@ let received = Suci::from_nai(&text).unwrap();
 println!("{}", received.deconceal(Some(&private)).unwrap());
 
 // A text that is no SUCI says what is wrong with it
-println!("{:?}", Suci::from_nai("type1.rid0.schid1.hnkey1@example.net"));
+println!("{}", Suci::from_nai("type1.rid0.schid1.hnkey1@example.net").unwrap_err());
 ```
 
 ```text
 type1.rid0.schid1.hnkey1.ecckey...
 nai-sensor-17@example.net
-Err(Nai(Field("ecckey")))
+the NAI is not one: `ecckey` is written as ecckey and the ephemeral public key in hexadecimal digits
 ```
 
 ## Run an algorithm on a 3GPP test set
@@ -501,23 +502,27 @@ Err(UnsupportedAlgorithm(5))
 
 ## Encode a PLMN identity, a 5G-GUTI and TBCD digits
 
+The identities are the values of
+[oxirush-utils](https://github.com/linouxis9/oxirush-utils), which
+`oxirush_security::identity` is.
+
 ```rust
 use oxirush_security::nas_5gs::Guti;
-use oxirush_security::{Plmn, tbcd_decode, tbcd_encode};
+use oxirush_security::{Plmn, tbcd};
 
 // MCC 208 and MNC 93
 let plmn = Plmn::new("208", "93").unwrap();
-println!("{} is {plmn}", hex::encode(plmn.to_octets()));
+println!("{} is {plmn}", hex::encode(plmn.to_nas_octets()));
 
 // AMF region 1, set 1 and pointer 2, and a 5G-TMSI
 let guti = Guti::new(plmn, 0x01, 0x001, 0x02, 0x1122_3344).unwrap();
-let octets = guti.to_octets();
-let read = Guti::from_octets(&octets).unwrap();
+let octets = guti.to_nas_octets();
+let read = Guti::from_nas_octets(&octets).unwrap();
 println!("{} has 5G-TMSI {:08x}", hex::encode(octets), read.tmsi());
 
 // The digits of an IMSI
-let imsi = tbcd_encode("208930000000001").unwrap();
-println!("{} is {}", hex::encode(&imsi), tbcd_decode(&imsi).unwrap());
+let imsi = tbcd::encode("208930000000001").unwrap();
+println!("{} is {}", hex::encode(&imsi), tbcd::decode(&imsi).unwrap());
 ```
 
 ```text
@@ -551,7 +556,7 @@ The clearing takes 10 to 33 ns for a message, and a batch pays it once.
 | Feature | The crate has | Needs |
 |---------|---------------|-------|
 | none | the algorithms, the contexts and the batches, the keys and their derivations, NAS integrity and ciphering, the selection of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone: no allocator |
-| `alloc` | and what returns a `Vec` or a `String`: `kdf::build_s`, `tbcd_encode`, `tbcd_decode`, `Supi::into_owned` | an allocator |
+| `alloc` | and what returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | an allocator |
 | `std` | and, on an AArch64 system other than Linux, Android and Apple's, the choice of the code on the vector and AES instructions when the program runs | the standard library |
 | `suci` | and the SUCI of an IMSI, with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, and a source of random numbers that `getrandom` has for the target |
 | `nai` | and the SUCI in the NAI format and that of a SUPI that is a NAI, with Unicode normalization and IDNA | `suci` |

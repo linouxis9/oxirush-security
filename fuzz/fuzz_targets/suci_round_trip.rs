@@ -6,7 +6,7 @@
 use libfuzzer_sys::fuzz_target;
 use oxirush_security::Plmn;
 use oxirush_security::nas_5gs::{
-    HomeNetworkPrivateKey, Protection, ProtectionScheme, SchemeOutput, Suci, Supi,
+    HomeNetworkPrivateKey, Protection, ProtectionScheme, RoutingIndicator, SchemeOutput, Suci, Supi,
 };
 
 // The home network private keys of TS 33.501 Annex C.4
@@ -31,6 +31,7 @@ fuzz_target!(|bytes: &[u8]| {
     let key_id = 1 + head[0] % 254;
     let routing_indicator = format!("{:04}", u16::from_be_bytes([head[1], head[2]]) % 10_000);
     let routing_indicator = &routing_indicator[usize::from(head[3] % 4)..];
+    let routing_indicator = RoutingIndicator::new(routing_indicator).expect("one to four digits");
     let protections = [
         (Protection::Null, None),
         (
@@ -67,13 +68,14 @@ fuzz_target!(|bytes: &[u8]| {
                 assert_eq!(ciphertext.len(), msin.len().div_ceil(2));
                 assert_eq!(suci.home_network_public_key_id(), key_id);
             }
-            let identity = suci.to_nas().expect("an IMSI with its PLMN");
-            let received = Suci::from_nas(&identity).expect("a SUCI that was written");
+            let identity = suci.to_nas_octets().expect("an IMSI with its PLMN");
+            let received = Suci::from_nas_octets(&identity).expect("a SUCI that was written");
             assert_eq!(received, suci);
             let supi = received.deconceal(*private).expect("the key of the SUCI");
             assert_eq!(supi.identity(), digits);
             // The NAI format has the same parts, and its realm for the PLMN
-            let nai = Suci::from_nai(&suci.to_nai()).expect("a SUCI that was written");
+            let nai = Suci::from_nai(&suci.to_nai().expect("an IMSI in the NAI format"))
+                .expect("a SUCI that was written");
             assert_eq!(nai.scheme_output(), suci.scheme_output());
         }
     }
@@ -94,12 +96,12 @@ fuzz_target!(|bytes: &[u8]| {
             let username = nai.rsplit_once('@').expect("a NAI").0;
             assert_eq!(ciphertext.len(), username.len());
         } else {
-            assert_eq!(suci.protection_scheme(), ProtectionScheme::Null);
+            assert_eq!(suci.protection_scheme(), ProtectionScheme::NULL);
         }
-        let text = suci.to_nai();
+        let text = suci.to_nai().expect("a NAI");
         assert_eq!(Suci::from_nai(&text).as_ref(), Ok(&suci));
-        let identity = suci.to_nas().expect("a network specific identifier");
-        assert_eq!(Suci::from_nas(&identity).as_ref(), Ok(&suci));
+        let identity = suci.to_nas_octets().expect("a network specific identifier");
+        assert_eq!(Suci::from_nas_octets(&identity).as_ref(), Ok(&suci));
         assert_eq!(suci.deconceal(*private).as_ref(), Ok(&supi));
     }
 });

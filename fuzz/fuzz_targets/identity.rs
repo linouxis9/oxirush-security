@@ -5,39 +5,39 @@
 
 use libfuzzer_sys::fuzz_target;
 use oxirush_security::nas_5gs::{Guti, MobileIdentityType, STmsi, Supi};
-use oxirush_security::{NasCount, Plmn, tbcd_decode, tbcd_encode};
+use oxirush_security::{NasCount, Plmn, tbcd};
 
 fuzz_target!(|bytes: &[u8]| {
-    // A 5G-GUTI or a 5G-S-TMSI mobile identity: what is read is written
-    // back to the same octets, but for the spare bit of the first
-    let kind = MobileIdentityType::of(bytes);
-    assert_eq!(kind.is_none(), bytes.is_empty());
-    if let Ok(guti) = Guti::from_octets(bytes) {
-        assert_eq!(kind, Some(MobileIdentityType::Guti));
-        let octets = guti.to_octets();
+    // A 5G-GUTI or a 5G-S-TMSI mobile identity, read as other
+    // implementations send it: what is read is written back to the same
+    // octets, but for the spare bit of the first
+    let kind = bytes.first().map(|&first| MobileIdentityType::of(first));
+    if let Ok((guti, _)) = Guti::from_nas_octets_tolerant(bytes) {
+        assert_eq!(kind, Some(Ok(MobileIdentityType::Guti)));
+        let octets = guti.to_nas_octets();
         assert_eq!((octets[0], &octets[1..]), (0xf2, &bytes[1..]));
         let (plmn, region) = (guti.plmn(), guti.amf_region_id());
         let (set, pointer, tmsi) = (guti.amf_set_id(), guti.amf_pointer(), guti.tmsi());
         assert_eq!(Guti::new(plmn, region, set, pointer, tmsi), Ok(guti));
         assert_eq!(STmsi::new(set, pointer, tmsi), Ok(guti.s_tmsi()));
     }
-    if let Ok(s_tmsi) = STmsi::from_octets(bytes) {
-        assert_eq!(kind, Some(MobileIdentityType::STmsi));
-        let octets = s_tmsi.to_octets();
+    if let Ok((s_tmsi, _)) = STmsi::from_nas_octets_tolerant(bytes) {
+        assert_eq!(kind, Some(Ok(MobileIdentityType::STmsi)));
+        let octets = s_tmsi.to_nas_octets();
         assert_eq!((octets[0], &octets[1..]), (0xf4, &bytes[1..]));
     }
 
     // A PLMN identity: what decodes encodes to the same three octets
-    if let Some(octets) = bytes.first_chunk::<3>()
-        && let Ok(plmn) = Plmn::from_octets(octets)
+    if let Some(&octets) = bytes.first_chunk::<3>()
+        && let Ok(plmn) = Plmn::from_nas_octets(octets)
     {
-        assert_eq!(&plmn.to_octets(), octets);
+        assert_eq!(plmn.to_nas_octets(), octets);
         assert_eq!(Plmn::new(plmn.mcc(), plmn.mnc()), Ok(plmn));
     }
 
     // A TBCD string: what decodes encodes to the same octets
-    if let Ok(text) = tbcd_decode(bytes) {
-        assert_eq!(tbcd_encode(&text).as_deref(), Ok(bytes));
+    if let Ok(text) = tbcd::decode(bytes) {
+        assert_eq!(tbcd::encode(&text).as_deref(), Ok(bytes));
     }
 
     // A NAS COUNT and a sequence number: the estimate is the first COUNT
@@ -67,7 +67,7 @@ fuzz_target!(|bytes: &[u8]| {
 
     // Text from a configuration is refused or encoded, never a panic
     if let Ok(text) = std::str::from_utf8(bytes) {
-        let _ = tbcd_encode(text);
+        let _ = tbcd::encode(text);
         if let Ok(supi) = Supi::parse(text) {
             assert_eq!(supi.to_string(), text);
         }

@@ -30,7 +30,6 @@ pub(crate) mod kdf;
 pub(crate) mod keys;
 pub(crate) mod nea;
 pub(crate) mod nia;
-pub(crate) mod plmn;
 pub(crate) mod sha256;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) mod simd;

@@ -21,13 +21,13 @@ use super::keys::{
     AccessKey, HresStar, HxresStar, KAmf, KAusf, KGnb, KIab, KN3iwf, KNasEnc, KNasInt, KRrcEnc,
     KRrcInt, KSeaf, KSn, KTnap, KUpEnc, KUpInt, Nh, NodeKey, ResStar, XresStar,
 };
-use super::supi::Supi;
 use crate::SecurityError;
 use crate::common::input::{AccessKeyCount, CipheringAlgorithm, IntegrityAlgorithm, NasCount};
 use crate::common::kdf::{checked_parameter, derive, derive_algorithm_key, low_128};
 use crate::common::keys::{Autn, Ck, Ik, Rand};
 use crate::common::wipe;
 use crate::nas_eps::KAsme;
+use oxirush_utils::identity::Supi;
 use zeroize::Zeroizing;
 
 /// FC of the algorithm key derivation function (TS 33.501 Annex A.8).

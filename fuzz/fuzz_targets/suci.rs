@@ -32,7 +32,7 @@ fuzz_target!(|bytes: &[u8]| {
             let scheme = suci.protection_scheme();
             let needs = matches!(
                 scheme,
-                ProtectionScheme::ProfileA | ProtectionScheme::ProfileB
+                ProtectionScheme::PROFILE_A | ProtectionScheme::PROFILE_B
             );
             let has = key.is_some_and(|key| key.scheme() == scheme);
             let unknown = result == Err(SuciError::MncLengthUnknown);
@@ -44,10 +44,10 @@ fuzz_target!(|bytes: &[u8]| {
     };
 
     // The SUCI mobile identity of a NAS message
-    if let Ok(suci) = Suci::from_nas(bytes) {
+    if let Ok(suci) = Suci::from_nas_octets(bytes) {
         let _ = suci.to_string();
-        let identity = suci.to_nas().expect("a SUCI of a mobile identity");
-        assert_eq!(Suci::from_nas(&identity).as_ref(), Ok(&suci));
+        let identity = suci.to_nas_octets().expect("a SUCI of a mobile identity");
+        assert_eq!(Suci::from_nas_octets(&identity).as_ref(), Ok(&suci));
         deconceal(&suci);
     }
 
@@ -56,7 +56,10 @@ fuzz_target!(|bytes: &[u8]| {
     if let Ok(text) = std::str::from_utf8(bytes)
         && let Ok(suci) = Suci::from_nai(text)
     {
-        assert_eq!(Suci::from_nai(&suci.to_nai()).as_ref(), Ok(&suci));
+        assert_eq!(
+            Suci::from_nai(&suci.to_nai().expect("a NAI")).as_ref(),
+            Ok(&suci)
+        );
         let _ = suci.to_string();
         deconceal(&suci);
     }

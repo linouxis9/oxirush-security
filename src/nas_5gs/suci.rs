@@ -21,8 +21,11 @@
 //! A [`Suci`] is a SUCI with its parts: the SUPI type, the home network,
 //! the routing indicator, the protection scheme, the home network public
 //! key identifier and the scheme output. It is read from the octets of a
-//! 5GS mobile identity ([`Suci::from_nas`]) or from the NAI format
-//! ([`Suci::from_nai`]), and written back to either.
+//! 5GS mobile identity ([`Suci::from_nas_octets`]) or from the NAI format
+//! ([`Suci::from_nai`]), and written back to either. Its two forms are the
+//! values of oxirush-utils, [`ImsiSuci`](oxirush_utils::identity::ImsiSuci)
+//! and [`NaiSuci`](oxirush_utils::identity::NaiSuci), which check the parts
+//! against each other; this module conceals and de-conceals them.
 //!
 //! - A UE makes one with [`Suci::conceal_imsi`] or [`Suci::conceal_nai`]:
 //!   the null scheme, which conceals nothing, or ECIES with a
@@ -36,69 +39,20 @@
 //! SUPIs that are not an IMSI, are the `nai` feature beside it.
 
 mod ecies;
-#[cfg(feature = "nai")]
-mod nai;
 
 pub use ecies::{HomeNetworkPrivateKey, HomeNetworkPublicKey};
+pub use oxirush_utils::identity::{ProtectionScheme, RoutingIndicator};
 
-use crate::common::plmn::{Plmn, decimal_tbcd_decode, tbcd_encode};
 use crate::common::wipe;
-use crate::nas_5gs::guti::MobileIdentityType;
-use crate::nas_5gs::supi::{Supi, SupiType};
-use alloc::{string::String, vec::Vec};
+use crate::nas_5gs::{MobileIdentityType, Supi, SupiType};
+#[cfg(feature = "nai")]
+use alloc::string::{String, ToString};
+use alloc::{format, vec::Vec};
 use core::fmt;
 use ecies::{MAC_LEN, PROFILE_A_PUBLIC_KEY_LEN, PROFILE_B_PUBLIC_KEY_LEN};
-
-/// A protection scheme of a SUCI (TS 33.501 Annex C.1).
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ProtectionScheme {
-    /// The null scheme, identifier 0: the scheme output is the identity in
-    /// clear.
-    Null,
-    /// ECIES Profile A, identifier 1: X25519 (Annex C.3.4.1).
-    ProfileA,
-    /// ECIES Profile B, identifier 2: secp256r1 with point compression
-    /// (Annex C.3.4.2).
-    ProfileB,
-    /// A scheme of the home operator, with its identifier, 12 to 15. The
-    /// crate reads and writes a SUCI of one, and cannot de-conceal it.
-    Proprietary(u8),
-}
-
-impl ProtectionScheme {
-    /// The protection scheme identifier, 0 to 15.
-    pub const fn identifier(self) -> u8 {
-        match self {
-            Self::Null => 0,
-            Self::ProfileA => 1,
-            Self::ProfileB => 2,
-            Self::Proprietary(identifier) => identifier,
-        }
-    }
-}
-
-/// The scheme of an identifier. 3 to 11 are reserved, and a number above
-/// 15 is no identifier: both are [`SuciError::UnknownScheme`].
-impl TryFrom<u8> for ProtectionScheme {
-    type Error = SuciError;
-
-    fn try_from(identifier: u8) -> Result<Self, SuciError> {
-        match identifier {
-            0 => Ok(Self::Null),
-            1 => Ok(Self::ProfileA),
-            2 => Ok(Self::ProfileB),
-            12..=15 => Ok(Self::Proprietary(identifier)),
-            _ => Err(SuciError::UnknownScheme(identifier)),
-        }
-    }
-}
-
-impl From<ProtectionScheme> for u8 {
-    fn from(scheme: ProtectionScheme) -> u8 {
-        scheme.identifier()
-    }
-}
+#[cfg(feature = "nai")]
+use oxirush_utils::identity::NaiSuci;
+use oxirush_utils::identity::{self, Fault, ImsiSuci, Plmn, tbcd};
 
 /// The home network identifier of a SUCI (TS 23.003 §2.2B).
 #[non_exhaustive]
@@ -201,8 +155,9 @@ pub enum SuciError {
     /// A GCI or a GLI with another scheme than the null scheme, the only
     /// one that they have.
     NullSchemeRequired,
-    /// A SUCI in the NAI format, or the NAI of a SUPI, that is not one.
-    Nai(NaiError),
+    /// A SUCI in the NAI format, or the NAI of a SUPI, that is not one:
+    /// the field at fault, and why (TS 23.003 §28.7.3, RFC 7542 §2.2).
+    Nai(identity::Error),
     /// A SUCI in the NAI format, in a build without the `nai` feature.
     NaiNotSupported,
     /// An IMSI of a SUCI that came in the NAI format: its realm writes the
@@ -238,8 +193,9 @@ pub enum SuciError {
     /// a public key of small order of Curve25519.
     InvalidKey,
     /// An identity that cannot be concealed: an MSIN that is not decimal
-    /// digits or is too long for its IMSI, or a SUPI of another type than
-    /// the function takes.
+    /// digits or is too long for its IMSI, an anonymous network specific
+    /// identifier under a scheme that conceals, or a SUPI of another type
+    /// than the function takes.
     Identity,
     /// The random number generator of the system failed, and no ephemeral
     /// key was drawn.
@@ -270,7 +226,7 @@ impl fmt::Display for SuciError {
             Self::NullSchemeRequired => {
                 f.write_str("a GCI or a GLI has the null scheme and no other")
             }
-            Self::Nai(error) => write!(f, "{error}"),
+            Self::Nai(error) => write!(f, "the NAI is not one: {error}"),
             Self::NaiNotSupported => {
                 f.write_str("a SUCI in the NAI format needs the `nai` feature")
             }
@@ -298,134 +254,79 @@ impl fmt::Display for SuciError {
 
 impl core::error::Error for SuciError {}
 
-/// Why a text is not a SUCI in the NAI format (TS 23.003 §28.7.3), or not
-/// the NAI of a SUPI.
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NaiError {
-    /// Longer than the longest SUCI in the NAI format. Nothing else of it
-    /// was looked at.
-    TooLong,
-    /// Octets of a mobile identity that are not a text in UTF-8.
-    Encoding,
-    /// No `@`: an NAI is a username, `@` and a realm.
-    NoRealm,
-    /// A realm that is not a domain name of RFC 7542 §2.2 and RFC 5891:
-    /// two labels at least, of letters, digits and hyphens, normalized,
-    /// and 253 octets at most.
-    Realm,
-    /// A username that is not one of RFC 7542 §2.2, is not normalized, is
-    /// longer than 253 octets, or is not a GLI in base64.
-    Username,
-    /// A field of the username of a SUCI that is missing or is not as its
-    /// format has it, by its name: `type`, `rid`, `schid`, `userid`,
-    /// `hnkey`, `ecckey`, `cip`, `mac` or `out`.
-    Field(&'static str),
-    /// An IMSI whose realm is not `5gc.mnc<MNC>.mcc<MCC>.3gppnetwork.org`,
-    /// with the NID of an SNPN or without it.
-    ImsiRealm,
-}
-
-impl fmt::Display for NaiError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::TooLong => f.write_str("the NAI is longer than a SUCI can be"),
-            Self::Encoding => f.write_str("the NAI is not a text in UTF-8"),
-            Self::NoRealm => f.write_str("the NAI has no @ and no realm"),
-            Self::Realm => f.write_str("the realm of the NAI is not a domain name"),
-            Self::Username => f.write_str("the username of the NAI is not one"),
-            Self::Field(field) => {
-                write!(f, "the `{field}` field of the SUCI is missing or malformed")
-            }
-            Self::ImsiRealm => {
-                f.write_str("the realm of an IMSI is 5gc.mnc<MNC>.mcc<MCC>.3gppnetwork.org")
-            }
-        }
-    }
-}
-
-impl core::error::Error for NaiError {}
-
-impl From<NaiError> for SuciError {
-    fn from(error: NaiError) -> Self {
-        Self::Nai(error)
-    }
-}
-
-/// A routing indicator: 1 to 4 decimal digits, each of which counts
-/// (TS 23.003 §2.2B).
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct RoutingIndicator {
-    digits: [u8; 4],
-    len: u8,
-}
-
-impl RoutingIndicator {
-    fn new(digits: &str) -> Result<Self, SuciError> {
-        if !(1..=4).contains(&digits.len()) || !digits.bytes().all(|digit| digit.is_ascii_digit()) {
-            return Err(SuciError::RoutingIndicator);
-        }
-        let mut indicator = Self {
-            digits: [0; 4],
-            len: digits.len() as u8,
+/// What a part of a SUCI that oxirush-utils refuses is here: the variant
+/// of the member at fault, and [`SuciError::Nai`] for a field of the NAI
+/// format.
+impl From<identity::Error> for SuciError {
+    fn from(error: identity::Error) -> Self {
+        let given = match error.fault {
+            Fault::Value { given, .. } | Fault::Range { given, .. } => u8::try_from(given).ok(),
+            _ => None,
         };
-        indicator.digits[..digits.len()].copy_from_slice(digits.as_bytes());
-        Ok(indicator)
-    }
-
-    /// From the two octets of a mobile identity: BCD digits, the first in
-    /// the low four bits, and the filler 0xF after the last
-    /// (TS 24.501 Table 9.11.3.4.1).
-    fn from_octets(octets: [u8; 2]) -> Result<Self, SuciError> {
-        let nibbles = [
-            octets[0] & 0x0f,
-            octets[0] >> 4,
-            octets[1] & 0x0f,
-            octets[1] >> 4,
-        ];
-        let len = nibbles.iter().take_while(|nibble| **nibble <= 9).count();
-        if len == 0 || nibbles[len..].iter().any(|nibble| *nibble != 0x0f) {
-            return Err(SuciError::RoutingIndicator);
-        }
-        let mut digits = [0; 4];
-        for (digit, nibble) in digits.iter_mut().zip(&nibbles[..len]) {
-            *digit = b'0' + nibble;
-        }
-        Ok(Self {
-            digits,
-            len: len as u8,
-        })
-    }
-
-    fn to_octets(self) -> [u8; 2] {
-        let nibble = |index: usize| {
-            if index < usize::from(self.len) {
-                self.digits[index] - b'0'
-            } else {
-                0x0f
+        match (error.member, error.fault) {
+            ("suci", Fault::Length { .. }) => Self::Truncated,
+            ("suci" | "supi-format", _) => Self::NotASuci,
+            ("plmn" | "mcc" | "mnc", _) => Self::HomeNetwork,
+            ("routing-indicator", _) => Self::RoutingIndicator,
+            // The schemes that are reserved, and one that a GCI or a GLI
+            // cannot have
+            ("protection-scheme", _) => match given {
+                Some(scheme @ 0..=2 | scheme @ 12..=15) if scheme != 0 => Self::NullSchemeRequired,
+                Some(scheme) => Self::UnknownScheme(scheme),
+                None => Self::UnknownScheme(u8::MAX),
+            },
+            ("home-network-public-key-identifier", _) => {
+                Self::KeyIdentifier(given.unwrap_or(u8::MAX))
             }
-        };
-        [(nibble(1) << 4) | nibble(0), (nibble(3) << 4) | nibble(2)]
-    }
-
-    fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.digits[..usize::from(self.len)]).expect("decimal digits")
+            ("msin" | "scheme-output" | "username", _) => Self::SchemeOutput,
+            ("supi-type", Fault::Range { .. }) => Self::SupiType(given.unwrap_or(u8::MAX)),
+            ("supi-type", _) => Self::SupiTypeMismatch,
+            _ => Self::Nai(error),
+        }
     }
 }
 
-/// The home network of a SUCI, with a realm of its own.
+/// Octets of the ephemeral public key of a profile of ECIES.
+fn public_key_len(scheme: ProtectionScheme) -> Option<usize> {
+    match scheme {
+        ProtectionScheme::PROFILE_A => Some(PROFILE_A_PUBLIC_KEY_LEN),
+        ProtectionScheme::PROFILE_B => Some(PROFILE_B_PUBLIC_KEY_LEN),
+        _ => None,
+    }
+}
+
+/// The scheme output of a scheme that conceals, in its parts.
+fn concealed(scheme: ProtectionScheme, output: &[u8]) -> SchemeOutput<'_> {
+    match public_key_len(scheme) {
+        Some(key) => {
+            let (ephemeral_public_key, rest) = output.split_at(key);
+            let (ciphertext, mac_tag) = rest.split_at(rest.len() - MAC_LEN);
+            SchemeOutput::Ecies {
+                ephemeral_public_key,
+                ciphertext,
+                mac_tag,
+            }
+        }
+        None => SchemeOutput::Proprietary(output),
+    }
+}
+
+/// The two forms of a SUCI.
 #[derive(Clone, PartialEq, Eq)]
-enum Home {
-    Plmn(Plmn),
-    #[cfg_attr(not(feature = "nai"), allow(dead_code))]
-    Realm(String),
+enum Form {
+    /// In the form of a mobile identity, whose SUPI is an IMSI.
+    Imsi(ImsiSuci),
+    /// In the NAI format.
+    #[cfg(feature = "nai")]
+    Nai(NaiSuci),
 }
 
 /// A SUCI with its parts (TS 23.003 §2.2B).
 ///
 /// ```
 /// use oxirush_security::nas_5gs::{
-///     HomeNetwork, HomeNetworkPrivateKey, Protection, ProtectionScheme, Suci, SuciError,
+///     HomeNetwork, HomeNetworkPrivateKey, Protection, ProtectionScheme, RoutingIndicator, Suci,
+///     SuciError,
 /// };
 /// use oxirush_security::Plmn;
 ///
@@ -436,14 +337,15 @@ enum Home {
 ///
 /// // A UE conceals its IMSI, 208 93 0000000001
 /// let protection = Protection::Ecies { key_id: 1, key: &public_key };
-/// let suci = Suci::conceal_imsi(Plmn::new("208", "93")?, "0000000001", "0", protection)?;
-/// let identity = suci.to_nas()?;
+/// let plmn = Plmn::new("208", "93")?;
+/// let suci = Suci::conceal_imsi(plmn, "0000000001", RoutingIndicator::default(), protection)?;
+/// let identity = suci.to_nas_octets()?;
 ///
 /// // The SIDF reads the mobile identity and chooses its key
-/// let received = Suci::from_nas(&identity)?;
-/// assert_eq!(received.home_network(), HomeNetwork::Plmn(Plmn::new("208", "93")?));
-/// assert_eq!(received.routing_indicator(), "0");
-/// assert_eq!(received.protection_scheme(), ProtectionScheme::ProfileA);
+/// let received = Suci::from_nas_octets(&identity)?;
+/// assert_eq!(received.home_network(), HomeNetwork::Plmn(plmn));
+/// assert_eq!(received.routing_indicator().as_str(), "0");
+/// assert_eq!(received.protection_scheme(), ProtectionScheme::PROFILE_A);
 /// assert_eq!(received.home_network_public_key_id(), 1);
 ///
 /// let supi = received.deconceal(Some(&private_key))?;
@@ -454,105 +356,26 @@ enum Home {
 /// let mut changed = identity.clone();
 /// *changed.last_mut().unwrap() ^= 1;
 /// assert_eq!(
-///     Suci::from_nas(&changed)?.deconceal(Some(&private_key)),
+///     Suci::from_nas_octets(&changed)?.deconceal(Some(&private_key)),
 ///     Err(SuciError::MacMismatch)
 /// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, PartialEq, Eq)]
-pub struct Suci {
-    supi_type: SupiType,
-    home: Home,
-    routing_indicator: RoutingIndicator,
-    scheme: ProtectionScheme,
-    key_id: u8,
-    /// The scheme output: with the null scheme the characters of the
-    /// identity in clear, and with another the octets of the output.
-    output: Vec<u8>,
-}
-
-/// Whether `msin` is the MSIN of an IMSI of `plmn`: decimal digits, and
-/// 15 at most with those of the PLMN (TS 23.003 §2.2).
-fn valid_msin(plmn: Plmn, msin: &str) -> bool {
-    let longest = 15 - plmn.mcc().len() - plmn.mnc().len();
-    (1..=longest).contains(&msin.len()) && msin.bytes().all(|digit| digit.is_ascii_digit())
-}
+pub struct Suci(Form);
 
 impl Suci {
-    /// A SUCI of parts that are checked here, each against the others.
-    fn checked(
-        supi_type: SupiType,
-        home: Home,
-        routing_indicator: RoutingIndicator,
-        scheme: ProtectionScheme,
-        key_id: u8,
-        output: Vec<u8>,
-    ) -> Result<Self, SuciError> {
-        // The identifier is 0 if and only if the scheme is the null one
-        // (TS 23.003 §2.2B), and 255 is reserved (TS 24.501 §9.11.3.4)
-        match (scheme, key_id) {
-            (ProtectionScheme::Null, 0) => {}
-            (ProtectionScheme::Null, _) | (_, 0 | 255) => {
-                return Err(SuciError::KeyIdentifier(key_id));
-            }
-            _ => {}
+    /// The SUCI of an IMSI, whose scheme output of a profile has to be one:
+    /// an ephemeral public key, one octet of ciphertext at least and a MAC
+    /// tag.
+    fn of_imsi(suci: ImsiSuci) -> Result<Self, SuciError> {
+        let scheme = suci.protection_scheme();
+        if let (Some(key), Some(output)) = (public_key_len(scheme), suci.concealed_output())
+            && output.len() < key + 1 + MAC_LEN
+        {
+            return Err(SuciError::Truncated);
         }
-        // A GCI and a GLI have the null scheme and the routing indicator 0
-        // (TS 23.003 §28.15.5 and §28.16.5)
-        if matches!(supi_type, SupiType::Gci | SupiType::Gli) {
-            if scheme != ProtectionScheme::Null {
-                return Err(SuciError::NullSchemeRequired);
-            }
-            if routing_indicator.as_str() != "0" {
-                return Err(SuciError::RoutingIndicator);
-            }
-        }
-        let suci = Self {
-            supi_type,
-            home,
-            routing_indicator,
-            scheme,
-            key_id,
-            output,
-        };
-        #[cfg(feature = "nai")]
-        nai::check(&suci)?;
-        match scheme {
-            ProtectionScheme::Null => {
-                let clear =
-                    core::str::from_utf8(&suci.output).map_err(|_| SuciError::SchemeOutput)?;
-                if !suci.valid_identity(clear) {
-                    return Err(SuciError::SchemeOutput);
-                }
-            }
-            ProtectionScheme::ProfileA | ProtectionScheme::ProfileB => {
-                if suci.output.len() < suci.public_key_len() + 1 + MAC_LEN {
-                    return Err(SuciError::Truncated);
-                }
-            }
-            ProtectionScheme::Proprietary(_) => {}
-        }
-        Ok(suci)
-    }
-
-    /// Octets of the ephemeral public key of the profile of the SUCI.
-    fn public_key_len(&self) -> usize {
-        match self.scheme {
-            ProtectionScheme::ProfileB => PROFILE_B_PUBLIC_KEY_LEN,
-            _ => PROFILE_A_PUBLIC_KEY_LEN,
-        }
-    }
-
-    /// Whether `clear` is the identity of a SUPI of the type and the home
-    /// network of the SUCI: its MSIN, or the username of its NAI.
-    fn valid_identity(&self, clear: &str) -> bool {
-        match (&self.home, self.supi_type) {
-            (Home::Plmn(plmn), _) => valid_msin(*plmn, clear),
-            #[cfg(feature = "nai")]
-            (Home::Realm(_), kind) => nai::valid_identity(kind, clear),
-            #[cfg(not(feature = "nai"))]
-            (Home::Realm(_), _) => false,
-        }
+        Ok(Self(Form::Imsi(suci)))
     }
 
     /// Read the SUCI of a 5GS mobile identity: its octets from the one
@@ -560,81 +383,26 @@ impl Suci {
     /// (TS 24.501 §9.11.3.4).
     ///
     /// The spare bits are ignored, and a SUPI format of 4 to 7 is read as
-    /// an IMSI, as that clause has a receiver do. A SUCI in the NAI
-    /// format is read as `Suci::from_nai` reads it, with the `nai`
-    /// feature, and is [`SuciError::NaiNotSupported`] without it.
-    pub fn from_nas(identity: &[u8]) -> Result<Self, SuciError> {
-        let Some((first, rest)) = identity.split_first() else {
+    /// an IMSI, as that clause has a receiver do: the tolerant readers of
+    /// oxirush-utils read them. A SUCI in the NAI format is read as
+    /// `Suci::from_nai` reads it, with the `nai` feature, and is
+    /// [`SuciError::NaiNotSupported`] without it.
+    pub fn from_nas_octets(identity: &[u8]) -> Result<Self, SuciError> {
+        let Some(&first) = identity.first() else {
             return Err(SuciError::Truncated);
         };
-        if MobileIdentityType::of(identity) != Some(MobileIdentityType::Suci) {
+        if MobileIdentityType::of(first) != Ok(MobileIdentityType::Suci) {
             return Err(SuciError::NotASuci);
         }
-        let supi_type = match (first >> 4) & 0x07 {
-            1 => SupiType::NetworkSpecific,
-            // The SUPI format of NAS has GCI before GLI, and the SUPI
-            // type of TS 23.003 the other way round
-            2 => SupiType::Gci,
-            3 => SupiType::Gli,
-            _ => SupiType::Imsi,
-        };
-        if supi_type != SupiType::Imsi {
+        if matches!((first >> 4) & 0x07, 1..=3) {
             #[cfg(feature = "nai")]
-            {
-                // The length first: a text that is too long is not read
-                if rest.len() > nai::LONGEST_SUCI_NAI {
-                    return Err(NaiError::TooLong.into());
-                }
-                let text = core::str::from_utf8(rest).map_err(|_| NaiError::Encoding)?;
-                let suci = nai::parse(text)?;
-                return if suci.supi_type == supi_type {
-                    Ok(suci)
-                } else {
-                    Err(SuciError::SupiTypeMismatch)
-                };
-            }
+            return Ok(Self(Form::Nai(
+                NaiSuci::from_nas_octets_tolerant(identity)?.0,
+            )));
             #[cfg(not(feature = "nai"))]
             return Err(SuciError::NaiNotSupported);
         }
-
-        // The PLMN, the routing indicator, the scheme, the key identifier
-        // and one octet of scheme output at least
-        let [
-            plmn_1,
-            plmn_2,
-            plmn_3,
-            routing_1,
-            routing_2,
-            scheme,
-            key_id,
-            output @ ..,
-        ] = rest
-        else {
-            return Err(SuciError::Truncated);
-        };
-        if output.is_empty() {
-            return Err(SuciError::Truncated);
-        }
-        let plmn =
-            Plmn::from_octets(&[*plmn_1, *plmn_2, *plmn_3]).map_err(|_| SuciError::HomeNetwork)?;
-        let routing_indicator = RoutingIndicator::from_octets([*routing_1, *routing_2])?;
-        // Bits 8 to 5 of the octet of the scheme are spare
-        let scheme = ProtectionScheme::try_from(scheme & 0x0f)?;
-        let output = match scheme {
-            // The MSIN in BCD: its digits are kept
-            ProtectionScheme::Null => decimal_tbcd_decode(output)
-                .ok_or(SuciError::SchemeOutput)?
-                .into_bytes(),
-            _ => output.to_vec(),
-        };
-        Self::checked(
-            SupiType::Imsi,
-            Home::Plmn(plmn),
-            routing_indicator,
-            scheme,
-            *key_id,
-            output,
-        )
+        Self::of_imsi(ImsiSuci::from_nas_octets_tolerant(identity)?.0)
     }
 
     /// The octets of the 5GS mobile identity of the SUCI, from the one
@@ -642,38 +410,16 @@ impl Suci {
     ///
     /// An IMSI that came in the NAI format has no such form here: the
     /// result is [`SuciError::MncLengthUnknown`].
-    pub fn to_nas(&self) -> Result<Vec<u8>, SuciError> {
-        let plmn = match (&self.home, self.supi_type) {
-            (Home::Plmn(plmn), _) => plmn,
-            (Home::Realm(_), SupiType::Imsi) => return Err(SuciError::MncLengthUnknown),
+    pub fn to_nas_octets(&self) -> Result<Vec<u8>, SuciError> {
+        match &self.0 {
+            Form::Imsi(suci) => Ok(suci.to_nas_octets()),
             #[cfg(feature = "nai")]
-            (Home::Realm(_), kind) => {
-                let format = match kind {
-                    SupiType::Gci => 2,
-                    SupiType::Gli => 3,
-                    _ => 1,
-                };
-                let mut identity = alloc::vec![(format << 4) | MobileIdentityType::Suci as u8];
-                identity.extend_from_slice(nai::encode(self).as_bytes());
-                return Ok(identity);
+            Form::Nai(suci) if suci.supi_type() == SupiType::Imsi => {
+                Err(SuciError::MncLengthUnknown)
             }
-            #[cfg(not(feature = "nai"))]
-            (Home::Realm(_), _) => return Err(SuciError::NaiNotSupported),
-        };
-        let mut identity = Vec::with_capacity(8 + self.output.len());
-        identity.push(MobileIdentityType::Suci as u8);
-        identity.extend_from_slice(&plmn.to_octets());
-        identity.extend_from_slice(&self.routing_indicator.to_octets());
-        identity.push(self.scheme.identifier());
-        identity.push(self.key_id);
-        match self.scheme_output() {
-            SchemeOutput::Clear(msin) => {
-                let bcd = tbcd_encode(msin).expect("the MSIN is decimal digits");
-                identity.extend_from_slice(&bcd);
-            }
-            _ => identity.extend_from_slice(&self.output),
+            #[cfg(feature = "nai")]
+            Form::Nai(suci) => Ok(suci.to_nas_octets()?),
         }
-        Ok(identity)
     }
 
     /// Read a SUCI in the NAI format (TS 23.003 §28.7.3, §28.15.5 and
@@ -685,22 +431,42 @@ impl Suci {
     #[cfg(feature = "nai")]
     #[cfg_attr(docsrs, doc(cfg(feature = "nai")))]
     pub fn from_nai(nai: &str) -> Result<Self, SuciError> {
-        nai::parse(nai)
+        Ok(Self(Form::Nai(NaiSuci::parse(nai)?)))
     }
 
     /// The SUCI in the NAI format (TS 23.003 §28.7.3). The octets of a
     /// scheme output are written in lower-case hexadecimal digits, and the
     /// realm of an IMSI is `5gc.mnc<MNC>.mcc<MCC>.3gppnetwork.org`.
+    ///
+    /// The SUCI of an IMSI under a scheme of the operator whose output is
+    /// longer than a NAI can hold, 3253 octets, is
+    /// [`SuciError::SchemeOutput`].
     #[cfg(feature = "nai")]
     #[cfg_attr(docsrs, doc(cfg(feature = "nai")))]
-    pub fn to_nai(&self) -> String {
-        nai::encode(self)
+    pub fn to_nai(&self) -> Result<String, SuciError> {
+        match &self.0 {
+            Form::Nai(suci) => Ok(suci.to_string()),
+            Form::Imsi(suci) => {
+                let realm = identity::nai::home_network_domain(suci.plmn());
+                let (routing, scheme) = (suci.routing_indicator(), suci.protection_scheme());
+                let key_id = suci.home_network_public_key_identifier();
+                let nai = match (suci.msin(), suci.concealed_output()) {
+                    (Some(msin), _) => NaiSuci::null(SupiType::Imsi, routing, msin, &realm),
+                    (None, Some(output)) => {
+                        let output = output.to_vec();
+                        NaiSuci::concealed(SupiType::Imsi, routing, scheme, key_id, output, &realm)
+                    }
+                    (None, None) => return Err(SuciError::SchemeOutput),
+                };
+                Ok(nai?.to_string())
+            }
+        }
     }
 
     /// Conceal an IMSI: the PLMN of its home network, then its MSIN.
     ///
-    /// `routing_indicator` is 1 to 4 decimal digits, `"0"` when the USIM
-    /// has none (TS 23.003 §2.2B). With [`Protection::Ecies`], a fresh
+    /// The routing indicator is the default one, `0`, when the USIM has
+    /// none (TS 23.003 §2.2B). With [`Protection::Ecies`], a fresh
     /// ephemeral key is drawn from the random number generator of the
     /// system, so two SUCIs of one IMSI are not alike.
     ///
@@ -709,31 +475,23 @@ impl Suci {
     pub fn conceal_imsi(
         plmn: Plmn,
         msin: &str,
-        routing_indicator: &str,
+        routing_indicator: RoutingIndicator,
         protection: Protection<'_>,
     ) -> Result<Self, SuciError> {
         wipe::suci(|| {
-            if !valid_msin(plmn, msin) {
-                return Err(SuciError::Identity);
-            }
-            let routing_indicator = RoutingIndicator::new(routing_indicator)?;
-            let (scheme, key_id, output) = match protection {
-                Protection::Null => (ProtectionScheme::Null, 0, msin.as_bytes().to_vec()),
+            let clear =
+                ImsiSuci::null(plmn, routing_indicator, msin).map_err(|_| SuciError::Identity)?;
+            match protection {
+                Protection::Null => Ok(Self(Form::Imsi(clear))),
                 Protection::Ecies { key_id, key } => {
                     // The MSIN in BCD is the plaintext (TS 33.501 Annex C.3.1)
-                    let bcd = tbcd_encode(msin).expect("the MSIN is decimal digits");
-                    (key.scheme(), key_id, Self::protect(key_id, key, &bcd)?)
+                    let bcd = tbcd::encode(msin).map_err(|_| SuciError::Identity)?;
+                    let output = Self::protect(key_id, key, &bcd)?;
+                    let routing = routing_indicator;
+                    let suci = ImsiSuci::concealed(plmn, routing, key.scheme(), key_id, output)?;
+                    Self::of_imsi(suci)
                 }
-            };
-            let home = Home::Plmn(plmn);
-            Self::checked(
-                SupiType::Imsi,
-                home,
-                routing_indicator,
-                scheme,
-                key_id,
-                output,
-            )
+            }
         })
     }
 
@@ -741,15 +499,16 @@ impl Suci {
     /// identifier, a GCI or a GLI.
     ///
     /// The username is what is concealed, and the realm stays in clear. A
-    /// GCI and a GLI have the null scheme and the routing indicator `"0"`
+    /// GCI and a GLI have the null scheme and the routing indicator `0`
     /// (TS 23.003 §28.15.5 and §28.16.5). An IMSI is
     /// [`SuciError::Identity`]: [`conceal_imsi`](Self::conceal_imsi) takes
-    /// it with its PLMN.
+    /// it with its PLMN, and so is the anonymous identifier, which has no
+    /// username, under a scheme that conceals.
     #[cfg(feature = "nai")]
     #[cfg_attr(docsrs, doc(cfg(feature = "nai")))]
     pub fn conceal_nai(
         supi: &Supi<'_>,
-        routing_indicator: &str,
+        routing_indicator: RoutingIndicator,
         protection: Protection<'_>,
     ) -> Result<Self, SuciError> {
         wipe::suci(|| {
@@ -757,24 +516,31 @@ impl Suci {
             if kind == SupiType::Imsi {
                 return Err(SuciError::Identity);
             }
-            let (username, realm) = nai::username_and_realm(kind, supi.identity())?;
-            let routing_indicator = RoutingIndicator::new(routing_indicator)?;
-            let (scheme, key_id, output) = match protection {
-                Protection::Null => (ProtectionScheme::Null, 0, username.as_bytes().to_vec()),
+            let (username, realm) = supi
+                .identity()
+                .rsplit_once('@')
+                .ok_or(SuciError::Identity)?;
+            // What the SUPI is, as the SUCI of the null scheme has it: a
+            // realm and a username of its type
+            let refused = |error: identity::Error| match error.member {
+                "routing-indicator" => SuciError::RoutingIndicator,
+                _ => SuciError::Nai(error),
+            };
+            let clear = NaiSuci::null(kind, routing_indicator, username, realm).map_err(refused)?;
+            match protection {
+                Protection::Null => Ok(Self(Form::Nai(clear))),
                 Protection::Ecies { .. } if kind != SupiType::NetworkSpecific => {
-                    return Err(SuciError::NullSchemeRequired);
+                    Err(SuciError::NullSchemeRequired)
                 }
                 // A scheme output without ciphertext is none
-                Protection::Ecies { .. } if username.is_empty() => {
-                    return Err(NaiError::Username.into());
-                }
+                Protection::Ecies { .. } if username.is_empty() => Err(SuciError::Identity),
                 Protection::Ecies { key_id, key } => {
                     let output = Self::protect(key_id, key, username.as_bytes())?;
-                    (key.scheme(), key_id, output)
+                    let (routing, scheme) = (routing_indicator, key.scheme());
+                    let suci = NaiSuci::concealed(kind, routing, scheme, key_id, output, realm)?;
+                    Ok(Self(Form::Nai(suci)))
                 }
-            };
-            let home = Home::Realm(String::from(realm));
-            Self::checked(kind, home, routing_indicator, scheme, key_id, output)
+            }
         })
     }
 
@@ -793,51 +559,88 @@ impl Suci {
 
     /// The SUPI type.
     pub fn supi_type(&self) -> SupiType {
-        self.supi_type
+        match &self.0 {
+            Form::Imsi(_) => SupiType::Imsi,
+            #[cfg(feature = "nai")]
+            Form::Nai(suci) => suci.supi_type(),
+        }
     }
 
     /// The home network identifier.
     pub fn home_network(&self) -> HomeNetwork<'_> {
-        match &self.home {
-            Home::Plmn(plmn) => HomeNetwork::Plmn(*plmn),
-            Home::Realm(realm) => HomeNetwork::Realm(realm),
+        match &self.0 {
+            Form::Imsi(suci) => HomeNetwork::Plmn(suci.plmn()),
+            #[cfg(feature = "nai")]
+            Form::Nai(suci) => HomeNetwork::Realm(suci.realm()),
         }
     }
 
     /// The routing indicator: 1 to 4 decimal digits, each of which
-    /// counts, so `"012"` is not `"12"`.
-    pub fn routing_indicator(&self) -> &str {
-        self.routing_indicator.as_str()
+    /// counts, so `012` is not `12`.
+    pub fn routing_indicator(&self) -> RoutingIndicator {
+        match &self.0 {
+            Form::Imsi(suci) => suci.routing_indicator(),
+            #[cfg(feature = "nai")]
+            Form::Nai(suci) => suci.routing_indicator(),
+        }
     }
 
     /// The protection scheme.
     pub fn protection_scheme(&self) -> ProtectionScheme {
-        self.scheme
+        match &self.0 {
+            Form::Imsi(suci) => suci.protection_scheme(),
+            #[cfg(feature = "nai")]
+            Form::Nai(suci) => suci.protection_scheme(),
+        }
     }
 
     /// The home network public key identifier: 0 with the null scheme,
     /// and 1 to 254 with another. With the protection scheme, it names
     /// the private key that de-conceals the SUCI.
     pub fn home_network_public_key_id(&self) -> u8 {
-        self.key_id
+        match &self.0 {
+            Form::Imsi(suci) => suci.home_network_public_key_identifier(),
+            #[cfg(feature = "nai")]
+            Form::Nai(suci) => suci.home_network_public_key_identifier(),
+        }
     }
 
     /// The scheme output.
     pub fn scheme_output(&self) -> SchemeOutput<'_> {
-        match self.scheme {
-            ProtectionScheme::Null => SchemeOutput::Clear(
-                core::str::from_utf8(&self.output).expect("checked when the SUCI was made"),
-            ),
-            ProtectionScheme::ProfileA | ProtectionScheme::ProfileB => {
-                let (ephemeral_public_key, rest) = self.output.split_at(self.public_key_len());
-                let (ciphertext, mac_tag) = rest.split_at(rest.len() - MAC_LEN);
-                SchemeOutput::Ecies {
-                    ephemeral_public_key,
-                    ciphertext,
-                    mac_tag,
-                }
+        let scheme = self.protection_scheme();
+        match &self.0 {
+            Form::Imsi(suci) => match (suci.msin(), suci.concealed_output()) {
+                (Some(msin), _) => SchemeOutput::Clear(msin),
+                (None, output) => concealed(scheme, output.unwrap_or_default()),
+            },
+            #[cfg(feature = "nai")]
+            Form::Nai(suci) => match (suci.clear(), suci.concealed_output()) {
+                (Some(clear), _) => SchemeOutput::Clear(clear),
+                (None, output) => concealed(scheme, output.unwrap_or_default()),
+            },
+        }
+    }
+
+    /// The output that the protection scheme concealed, and what a SUPI
+    /// is made of with what comes out of it.
+    fn deconcealed(&self, plaintext: &[u8]) -> Option<Supi<'static>> {
+        match &self.0 {
+            Form::Imsi(suci) => {
+                // The MSIN in BCD, decimal digits alone
+                let msin = tbcd::decode(plaintext).ok()?;
+                let routing = suci.routing_indicator();
+                ImsiSuci::null(suci.plmn(), routing, &msin).ok()?;
+                let imsi = format!("{}{msin}", suci.plmn().digits());
+                Some(Supi::imsi(&imsi).ok()?.into_owned())
             }
-            ProtectionScheme::Proprietary(_) => SchemeOutput::Proprietary(&self.output),
+            #[cfg(feature = "nai")]
+            Form::Nai(suci) => {
+                let username = core::str::from_utf8(plaintext).ok()?;
+                let (kind, routing, realm) =
+                    (suci.supi_type(), suci.routing_indicator(), suci.realm());
+                NaiSuci::null(kind, routing, username, realm).ok()?;
+                Some(supi_of_nai(kind, &format!("{username}@{realm}"))?.into_owned())
+            }
         }
     }
 
@@ -864,82 +667,86 @@ impl Suci {
         key: Option<&HomeNetworkPrivateKey>,
     ) -> Result<Supi<'static>, SuciError> {
         wipe::suci(|| {
-            if matches!(
-                (&self.home, self.supi_type),
-                (Home::Realm(_), SupiType::Imsi)
-            ) {
-                return Err(SuciError::MncLengthUnknown);
-            }
-            let identity = match self.scheme {
-                ProtectionScheme::Null => {
-                    String::from_utf8(self.output.clone()).expect("checked when the SUCI was made")
+            let scheme = self.protection_scheme();
+            match (&self.0, self.scheme_output()) {
+                #[cfg(feature = "nai")]
+                (Form::Nai(suci), _) if suci.supi_type() == SupiType::Imsi => {
+                    Err(SuciError::MncLengthUnknown)
                 }
-                ProtectionScheme::ProfileA | ProtectionScheme::ProfileB => {
+                (Form::Imsi(suci), SchemeOutput::Clear(msin)) => {
+                    let imsi = format!("{}{msin}", suci.plmn().digits());
+                    Ok(Supi::imsi(&imsi)?.into_owned())
+                }
+                #[cfg(feature = "nai")]
+                (Form::Nai(suci), SchemeOutput::Clear(clear)) => {
+                    let nai = format!("{clear}@{}", suci.realm());
+                    supi_of_nai(suci.supi_type(), &nai)
+                        .map(Supi::into_owned)
+                        .ok_or(SuciError::SchemeOutput)
+                }
+                (_, SchemeOutput::Ecies { .. }) => {
                     let key = key.ok_or(SuciError::MissingKey)?;
-                    if key.scheme() != self.scheme {
+                    if key.scheme() != scheme {
                         return Err(SuciError::WrongKeyType {
-                            suci: self.scheme,
+                            suci: scheme,
                             key: key.scheme(),
                         });
                     }
-                    let plaintext = ecies::deconceal(key, &self.output)?;
-                    let identity = match self.home {
-                        // The MSIN in BCD
-                        Home::Plmn(_) => decimal_tbcd_decode(&plaintext),
-                        Home::Realm(_) => String::from_utf8(plaintext.to_vec()).ok(),
+                    let output = match &self.0 {
+                        Form::Imsi(suci) => suci.concealed_output(),
+                        #[cfg(feature = "nai")]
+                        Form::Nai(suci) => suci.concealed_output(),
                     };
-                    identity
-                        .filter(|identity| self.valid_identity(identity))
-                        .ok_or(SuciError::Plaintext)?
+                    let plaintext = ecies::deconceal(key, output.unwrap_or_default())?;
+                    self.deconcealed(&plaintext).ok_or(SuciError::Plaintext)
                 }
-                ProtectionScheme::Proprietary(identifier) => {
-                    return Err(SuciError::ProprietaryScheme(identifier));
-                }
-            };
-            Ok(match &self.home {
-                Home::Plmn(plmn) => {
-                    let imsi = alloc::format!("{}{}{identity}", plmn.mcc(), plmn.mnc());
-                    Supi::owned(SupiType::Imsi, imsi)
-                }
-                Home::Realm(realm) => {
-                    Supi::owned(self.supi_type, alloc::format!("{identity}@{realm}"))
-                }
-            })
+                _ => Err(SuciError::ProprietaryScheme(scheme.identifier())),
+            }
         })
     }
 }
 
-/// The SUCI as the service based interfaces write it (TS 29.571 §5.3.2):
-/// `suci-`, then the SUPI type, the home network, the routing indicator,
-/// the protection scheme identifier, the home network public key
-/// identifier and the scheme output, with hyphens between them. The home
-/// network of an IMSI is its MCC and its MNC, and a scheme output that is
-/// not in clear is in hexadecimal digits:
-/// `suci-0-208-93-0-0-0-0000000001`.
+/// The SUPI of a type that is a NAI.
+#[cfg(feature = "nai")]
+fn supi_of_nai(kind: SupiType, nai: &str) -> Option<Supi<'_>> {
+    match kind {
+        SupiType::NetworkSpecific => Supi::network_specific(nai).ok(),
+        SupiType::Gli => Supi::gli(nai).ok(),
+        SupiType::Gci => Supi::gci(nai).ok(),
+        _ => None,
+    }
+}
+
+/// The SUCI as the service based interfaces write it (`SupiOrSuci` of
+/// TS 29.571 §5.3.2): `suci-`, then the SUPI type, the home network, the
+/// routing indicator, the protection scheme identifier as one hexadecimal
+/// digit, the home network public key identifier and the scheme output,
+/// with hyphens between them. The home network of an IMSI is its MCC and
+/// its MNC, and a scheme output that is not in clear is in hexadecimal
+/// digits: `suci-0-208-93-0-0-0-0000000001`, and `suci-0-208-93-0-c-1-aabb`
+/// for the first scheme of the operator.
 ///
 /// An IMSI that came in the NAI format has its realm in the place of the
 /// MCC and the MNC, which the realm does not tell apart.
 impl fmt::Display for Suci {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let kind = match self.supi_type {
-            SupiType::Imsi => 0,
-            SupiType::NetworkSpecific => 1,
-            SupiType::Gli => 2,
-            SupiType::Gci => 3,
-        };
-        write!(f, "suci-{kind}-")?;
-        match &self.home {
-            Home::Plmn(plmn) => write!(f, "{}-{}", plmn.mcc(), plmn.mnc())?,
-            Home::Realm(realm) => f.write_str(realm)?,
-        }
-        let (routing_indicator, scheme) = (self.routing_indicator(), self.scheme.identifier());
-        write!(f, "-{routing_indicator}-{scheme}-{}-", self.key_id)?;
-        match self.scheme_output() {
-            SchemeOutput::Clear(clear) => f.write_str(clear),
-            _ => self
-                .output
-                .iter()
-                .try_for_each(|octet| write!(f, "{octet:02x}")),
+        match &self.0 {
+            Form::Imsi(suci) => write!(f, "{suci}"),
+            #[cfg(feature = "nai")]
+            Form::Nai(suci) => {
+                let (kind, realm) = (suci.supi_type().type_number(), suci.realm());
+                let (routing, scheme) = (suci.routing_indicator(), suci.protection_scheme());
+                let (scheme, key) = (
+                    scheme.identifier(),
+                    suci.home_network_public_key_identifier(),
+                );
+                write!(f, "suci-{kind}-{realm}-{routing}-{scheme:x}-{key}-")?;
+                match (suci.clear(), suci.concealed_output()) {
+                    (Some(clear), _) => f.write_str(clear),
+                    (None, output) => (output.unwrap_or_default().iter())
+                        .try_for_each(|octet| write!(f, "{octet:02x}")),
+                }
+            }
         }
     }
 }
@@ -1029,11 +836,17 @@ mod tests {
             ("0123456789", &[0x10, 0x32, 0x54, 0x76, 0x98]),
             ("0000000001", &[0x00, 0x00, 0x00, 0x00, 0x10]),
         ] {
-            let suci = Suci::conceal_imsi(plmn("208", "93"), msin, "0", Protection::Null).unwrap();
+            let suci = Suci::conceal_imsi(
+                plmn("208", "93"),
+                msin,
+                RoutingIndicator::default(),
+                Protection::Null,
+            )
+            .unwrap();
             assert_eq!(suci.scheme_output(), SchemeOutput::Clear(msin));
-            let nas = suci.to_nas().unwrap();
+            let nas = suci.to_nas_octets().unwrap();
             assert_eq!(nas, identity(0, 0, bcd), "{msin}");
-            let read = Suci::from_nas(&nas).unwrap();
+            let read = Suci::from_nas_octets(&nas).unwrap();
             assert_eq!(read, suci);
             assert_eq!(
                 read.deconceal(None).unwrap().to_string(),
@@ -1046,10 +859,18 @@ mod tests {
     /// the IMSI 274012001002086 is its MSIN, 001002086.
     #[test]
     fn annex_c4_null_scheme_vector() {
-        let suci =
-            Suci::conceal_imsi(plmn("274", "012"), "001002086", "0", Protection::Null).unwrap();
+        let suci = Suci::conceal_imsi(
+            plmn("274", "012"),
+            "001002086",
+            RoutingIndicator::default(),
+            Protection::Null,
+        )
+        .unwrap();
         assert_eq!(suci.to_string(), "suci-0-274-012-0-0-0-001002086");
-        assert_eq!(hex::encode(&suci.to_nas().unwrap()[8..]), "00012080f6");
+        assert_eq!(
+            hex::encode(&suci.to_nas_octets().unwrap()[8..]),
+            "00012080f6"
+        );
         assert_eq!(
             suci.deconceal(None).unwrap(),
             Supi::imsi("274012001002086").unwrap()
@@ -1067,11 +888,16 @@ mod tests {
             "1",
         ] {
             for (public, private, scheme, key_len) in [
-                (public_a(), private_a(), ProtectionScheme::ProfileA, 32),
-                (public_b(), private_b(), ProtectionScheme::ProfileB, 33),
+                (public_a(), private_a(), ProtectionScheme::PROFILE_A, 32),
+                (public_b(), private_b(), ProtectionScheme::PROFILE_B, 33),
             ] {
-                let suci =
-                    Suci::conceal_imsi(plmn("208", "93"), msin, "0", ecies(7, &public)).unwrap();
+                let suci = Suci::conceal_imsi(
+                    plmn("208", "93"),
+                    msin,
+                    RoutingIndicator::default(),
+                    ecies(7, &public),
+                )
+                .unwrap();
                 assert_eq!(suci.supi_type(), SupiType::Imsi);
                 assert_eq!(suci.home_network(), HomeNetwork::Plmn(plmn("208", "93")));
                 assert_eq!(suci.protection_scheme(), scheme);
@@ -1088,7 +914,7 @@ mod tests {
                 assert_eq!(ciphertext.len(), msin.len().div_ceil(2));
                 assert_eq!(mac_tag.len(), 8);
 
-                let received = Suci::from_nas(&suci.to_nas().unwrap()).unwrap();
+                let received = Suci::from_nas_octets(&suci.to_nas_octets().unwrap()).unwrap();
                 assert_eq!(received, suci);
                 assert_eq!(
                     received.deconceal(Some(&private)).unwrap().to_string(),
@@ -1098,7 +924,13 @@ mod tests {
         }
         // Each concealment draws a key of its own
         let conceal = || {
-            Suci::conceal_imsi(plmn("208", "93"), "0000000001", "0", ecies(1, &public_a())).unwrap()
+            Suci::conceal_imsi(
+                plmn("208", "93"),
+                "0000000001",
+                RoutingIndicator::default(),
+                ecies(1, &public_a()),
+            )
+            .unwrap()
         };
         assert_ne!(conceal(), conceal());
     }
@@ -1116,7 +948,7 @@ mod tests {
         .unwrap();
         let mut nas = vec![0x01, 0x72, 0x24, 0x10, 0xf0, 0xff, 0x01, 27];
         nas.extend_from_slice(&profile_a);
-        let suci = Suci::from_nas(&nas).unwrap();
+        let suci = Suci::from_nas_octets(&nas).unwrap();
         assert_eq!(suci.home_network(), HomeNetwork::Plmn(plmn("274", "012")));
         assert_eq!(
             suci.to_string(),
@@ -1136,7 +968,7 @@ mod tests {
         let mut nas = vec![0x01, 0x72, 0x24, 0x10, 0xf0, 0xff, 0x02, 27];
         nas.extend_from_slice(&profile_b);
         assert_eq!(
-            Suci::from_nas(&nas)
+            Suci::from_nas_octets(&nas)
                 .unwrap()
                 .deconceal(Some(&private_b()))
                 .unwrap()
@@ -1153,7 +985,7 @@ mod tests {
         let mut nas = vec![0x01, 0x00, 0xf1, 0x10, 0xf0, 0xff, 0x02, 2];
         nas.extend_from_slice(&ten_digits);
         assert_eq!(
-            Suci::from_nas(&nas)
+            Suci::from_nas_octets(&nas)
                 .unwrap()
                 .deconceal(Some(&private_b()))
                 .unwrap()
@@ -1165,17 +997,22 @@ mod tests {
     /// Each step of a de-concealment has its error.
     #[test]
     fn a_de_concealment_says_which_step_failed() {
-        let suci =
-            Suci::conceal_imsi(plmn("208", "93"), "001002086", "0", ecies(1, &public_a())).unwrap();
-        let nas = suci.to_nas().unwrap();
+        let suci = Suci::conceal_imsi(
+            plmn("208", "93"),
+            "001002086",
+            RoutingIndicator::default(),
+            ecies(1, &public_a()),
+        )
+        .unwrap();
+        let nas = suci.to_nas_octets().unwrap();
 
         // The key: none, and one of the other profile
         assert_eq!(suci.deconceal(None), Err(SuciError::MissingKey));
         assert_eq!(
             suci.deconceal(Some(&private_b())),
             Err(SuciError::WrongKeyType {
-                suci: ProtectionScheme::ProfileA,
-                key: ProtectionScheme::ProfileB
+                suci: ProtectionScheme::PROFILE_A,
+                key: ProtectionScheme::PROFILE_B
             })
         );
         // Another key of the same profile: the tag is not the one it gives
@@ -1187,7 +1024,9 @@ mod tests {
             let mut nas = nas.clone();
             nas[changed] ^= 0x01;
             assert_eq!(
-                Suci::from_nas(&nas).unwrap().deconceal(Some(&private_a())),
+                Suci::from_nas_octets(&nas)
+                    .unwrap()
+                    .deconceal(Some(&private_a())),
                 Err(SuciError::MacMismatch)
             );
         }
@@ -1197,22 +1036,22 @@ mod tests {
         small_order[8..40].fill(0);
         small_order[8] = 1;
         assert_eq!(
-            Suci::from_nas(&small_order)
+            Suci::from_nas_octets(&small_order)
                 .unwrap()
                 .deconceal(Some(&private_a())),
             Err(SuciError::MalformedPoint)
         );
         // Too few octets for a key, one octet of ciphertext and a tag
         assert_eq!(
-            Suci::from_nas(&nas[..8 + 32 + 8]),
+            Suci::from_nas_octets(&nas[..8 + 32 + 8]),
             Err(SuciError::Truncated)
         );
-        assert!(Suci::from_nas(&nas[..8 + 32 + 1 + 8]).is_ok());
+        assert!(Suci::from_nas_octets(&nas[..8 + 32 + 1 + 8]).is_ok());
 
         // A plaintext that is no MSIN, under a tag that is right
         let not_digits = super::ecies::conceal(&public_a(), &[0xab, 0xcd]).unwrap();
         assert_eq!(
-            Suci::from_nas(&identity(1, 1, &not_digits))
+            Suci::from_nas_octets(&identity(1, 1, &not_digits))
                 .unwrap()
                 .deconceal(Some(&private_a())),
             Err(SuciError::Plaintext)
@@ -1220,23 +1059,25 @@ mod tests {
         // An MSIN that makes an IMSI of more than fifteen digits
         let too_long = super::ecies::conceal(&public_a(), &[0x21, 0x43, 0x65, 0x87, 0x09, 0xf1]);
         assert_eq!(
-            Suci::from_nas(&identity(1, 1, &too_long.unwrap()))
+            Suci::from_nas_octets(&identity(1, 1, &too_long.unwrap()))
                 .unwrap()
                 .deconceal(Some(&private_a())),
             Err(SuciError::Plaintext)
         );
 
         // A scheme of the operator is read, and not de-concealed
-        let proprietary = Suci::from_nas(&identity(12, 1, &[0xaa, 0xbb])).unwrap();
+        let proprietary = Suci::from_nas_octets(&identity(12, 1, &[0xaa, 0xbb])).unwrap();
         assert_eq!(
             proprietary.protection_scheme(),
-            ProtectionScheme::Proprietary(12)
+            ProtectionScheme::new(12).unwrap()
         );
         assert_eq!(
             proprietary.scheme_output(),
             SchemeOutput::Proprietary(&[0xaa, 0xbb])
         );
-        assert_eq!(proprietary.to_string(), "suci-0-208-93-0-12-1-aabb");
+        // The scheme is one hexadecimal digit in the text of the service
+        // based interfaces (the pattern of `SupiOrSuci`, TS 29.571 §5.3.2)
+        assert_eq!(proprietary.to_string(), "suci-0-208-93-0-c-1-aabb");
         assert_eq!(
             proprietary.deconceal(Some(&private_a())),
             Err(SuciError::ProprietaryScheme(12))
@@ -1254,7 +1095,7 @@ mod tests {
              46A33FC2716AC7DAE96AA30A4D",
         )
         .unwrap();
-        let suci = Suci::from_nas(&identity(2, 2, &scheme_output)).unwrap();
+        let suci = Suci::from_nas_octets(&identity(2, 2, &scheme_output)).unwrap();
         assert_eq!(
             suci.deconceal(Some(&private_b())),
             Err(SuciError::MalformedPoint)
@@ -1268,14 +1109,14 @@ mod tests {
         )
         .unwrap();
         assert!(
-            Suci::from_nas(&identity(2, 2, &x_only))
+            Suci::from_nas_octets(&identity(2, 2, &x_only))
                 .unwrap()
                 .deconceal(Some(&private_b()))
                 .is_ok()
         );
         x_only[0] = 0x05;
         assert_eq!(
-            Suci::from_nas(&identity(2, 2, &x_only))
+            Suci::from_nas_octets(&identity(2, 2, &x_only))
                 .unwrap()
                 .deconceal(Some(&private_b())),
             Err(SuciError::MalformedPoint)
@@ -1286,7 +1127,7 @@ mod tests {
         no_point[0] = 0x02;
         no_point[1..33].fill(0x01);
         assert_eq!(
-            Suci::from_nas(&identity(2, 2, &no_point))
+            Suci::from_nas_octets(&identity(2, 2, &no_point))
                 .unwrap()
                 .deconceal(Some(&private_b())),
             Err(SuciError::MalformedPoint)
@@ -1296,9 +1137,9 @@ mod tests {
     /// TS 24.501 §9.11.3.4: what a mobile identity has to have.
     #[test]
     fn a_mobile_identity_that_is_no_suci_is_refused_with_its_reason() {
-        let read = |octets: &[u8]| Suci::from_nas(octets).unwrap_err();
+        let read = |octets: &[u8]| Suci::from_nas_octets(octets).unwrap_err();
         let null = identity(0, 0, &[0x00, 0x00, 0x00, 0x00, 0x10]);
-        assert!(Suci::from_nas(&null).is_ok());
+        assert!(Suci::from_nas_octets(&null).is_ok());
 
         assert_eq!(read(&[]), SuciError::Truncated);
         assert_eq!(read(&null[..8]), SuciError::Truncated);
@@ -1351,9 +1192,9 @@ mod tests {
     #[test]
     fn a_receiver_ignores_the_spare_bits_and_reads_a_spare_format_as_imsi() {
         let canonical = [0x01, 0x02, 0xf8, 0x39, 0xf0, 0xff, 0x00, 0x00, 0x00];
-        let expected = Suci::from_nas(&canonical).unwrap();
+        let expected = Suci::from_nas_octets(&canonical).unwrap();
         assert_eq!(expected.to_string(), "suci-0-208-93-0-0-0-00");
-        assert_eq!(expected.to_nas().unwrap(), canonical);
+        assert_eq!(expected.to_nas_octets().unwrap(), canonical);
         for received in [
             [0x81, 0x02, 0xf8, 0x39, 0xf0, 0xff, 0x00, 0x00, 0x00],
             [0x09, 0x02, 0xf8, 0x39, 0xf0, 0xff, 0x00, 0x00, 0x00],
@@ -1361,7 +1202,7 @@ mod tests {
             [0x71, 0x02, 0xf8, 0x39, 0xf0, 0xff, 0x00, 0x00, 0x00],
             [0x01, 0x02, 0xf8, 0x39, 0xf0, 0xff, 0xf0, 0x00, 0x00],
         ] {
-            assert_eq!(Suci::from_nas(&received), Ok(expected.clone()));
+            assert_eq!(Suci::from_nas_octets(&received), Ok(expected.clone()));
         }
     }
 
@@ -1379,27 +1220,32 @@ mod tests {
             ("0000", [0x00, 0x00]),
             ("9876", [0x89, 0x67]),
         ] {
+            let routing = RoutingIndicator::new(digits).unwrap();
             let suci =
-                Suci::conceal_imsi(plmn("208", "93"), "0000000001", digits, Protection::Null)
+                Suci::conceal_imsi(plmn("208", "93"), "0000000001", routing, Protection::Null)
                     .unwrap();
-            assert_eq!(suci.routing_indicator(), digits);
-            let nas = suci.to_nas().unwrap();
+            assert_eq!(suci.routing_indicator().as_str(), digits);
+            let nas = suci.to_nas_octets().unwrap();
             assert_eq!(nas[4..6], octets, "{digits}");
-            assert_eq!(Suci::from_nas(&nas).unwrap().routing_indicator(), digits);
+            let read = Suci::from_nas_octets(&nas).unwrap();
+            assert_eq!(read.routing_indicator().as_str(), digits);
         }
+        // What is no routing indicator is refused with the variant of its member
         for digits in ["", "12345", "1a", "-1", " 1"] {
-            assert_eq!(
-                Suci::conceal_imsi(plmn("208", "93"), "1", digits, Protection::Null),
-                Err(SuciError::RoutingIndicator),
-                "{digits:?}"
-            );
+            let error = SuciError::from(RoutingIndicator::new(digits).unwrap_err());
+            assert_eq!(error, SuciError::RoutingIndicator, "{digits:?}");
         }
     }
 
     #[test]
     fn what_cannot_be_concealed_is_refused_with_its_reason() {
         fn conceal(msin: &str, protection: Protection<'_>) -> Result<Suci, SuciError> {
-            Suci::conceal_imsi(Plmn::new("208", "93").unwrap(), msin, "0", protection)
+            Suci::conceal_imsi(
+                Plmn::new("208", "93").unwrap(),
+                msin,
+                RoutingIndicator::default(),
+                protection,
+            )
         }
         // No MSIN, one that is not digits, and one too long for 208 93
         for msin in ["", "12a4", "12345678901", " 1"] {
@@ -1407,7 +1253,14 @@ mod tests {
         }
         assert!(conceal("1234567890", Protection::Null).is_ok());
         // An MNC of three digits leaves nine for the MSIN
-        let three = |msin| Suci::conceal_imsi(plmn("274", "012"), msin, "0", Protection::Null);
+        let three = |msin| {
+            Suci::conceal_imsi(
+                plmn("274", "012"),
+                msin,
+                RoutingIndicator::default(),
+                Protection::Null,
+            )
+        };
         assert!(three("123456789").is_ok());
         assert_eq!(three("1234567890"), Err(SuciError::Identity));
 
@@ -1435,7 +1288,10 @@ mod tests {
     fn a_nai_suci_is_not_read_without_the_nai_feature() {
         let mut suci = vec![0x11];
         suci.extend_from_slice(b"type1.rid0.schid0.useriduser17@example.com");
-        assert_eq!(Suci::from_nas(&suci), Err(SuciError::NaiNotSupported));
+        assert_eq!(
+            Suci::from_nas_octets(&suci),
+            Err(SuciError::NaiNotSupported)
+        );
     }
 
     #[test]
@@ -1452,31 +1308,37 @@ mod tests {
             ),
             (
                 SuciError::WrongKeyType {
-                    suci: ProtectionScheme::ProfileA,
-                    key: ProtectionScheme::ProfileB,
+                    suci: ProtectionScheme::PROFILE_A,
+                    key: ProtectionScheme::PROFILE_B,
                 },
-                "a home network private key of ProfileB for a SUCI of ProfileA",
+                "a home network private key of ProtectionScheme(2: profile B) for a SUCI of \
+                 ProtectionScheme(1: profile A)",
             ),
             (SuciError::MacMismatch, "MAC verification failed"),
-            (
-                SuciError::Nai(NaiError::Field("mac")),
-                "the `mac` field of the SUCI is missing or malformed",
-            ),
         ] {
             assert_eq!(error.to_string(), text);
         }
+        // A field of the NAI format, with what oxirush-utils says of it
+        #[cfg(feature = "nai")]
+        assert_eq!(
+            SuciError::from(NaiSuci::parse("type1.rid0.schid1.hnkey1.ecckey00@a.b").unwrap_err())
+                .to_string(),
+            "the NAI is not one: `ecckey` is written as the octets of the ephemeral public key \
+             of its profile"
+        );
         fn is_an_error<T: core::error::Error + Send + Sync + Copy + 'static>() {}
         is_an_error::<SuciError>();
-        is_an_error::<NaiError>();
-        // The identifiers of the schemes
+        // The identifiers of the schemes, and what a reserved one is refused with
         for identifier in 0..=255u8 {
-            match ProtectionScheme::try_from(identifier) {
-                Ok(scheme) => assert_eq!(u8::from(scheme), identifier),
-                Err(error) => assert_eq!(error, SuciError::UnknownScheme(identifier)),
+            match ProtectionScheme::new(identifier) {
+                Ok(scheme) => assert_eq!(scheme.identifier(), identifier),
+                Err(error) => {
+                    assert_eq!(SuciError::from(error), SuciError::UnknownScheme(identifier))
+                }
             }
         }
-        assert!(ProtectionScheme::try_from(15).is_ok());
-        assert!(ProtectionScheme::try_from(16).is_err());
+        assert!(ProtectionScheme::new(15).is_ok());
+        assert!(ProtectionScheme::new(16).is_err());
     }
 
     /// One data set of TS 33.501 Annex C.4 step by step on the UE side:

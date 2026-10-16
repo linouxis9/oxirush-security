@@ -97,9 +97,9 @@
 //! | HASHMME | `nas_eps::compute_hash_mme` | TS 33.401 Annex I.2 | other implementations |
 //! | 5GS/EPS key mapping | Idle mobility and connected handover in both directions, and KASME_SRVCC | TS 33.501 Annexes A.14, A.15 and A.21 | calculated |
 //! | Other NAS MACs | `nas_5gs::nas_container_mac`; `nas_eps::re_establishment_nas_mac`; `nas_eps::service_request_short_mac` | TS 33.501 §6.9.2.3.3; TS 33.401 §7.4.4; TS 24.301 §9.9.3.28 | calculated |
-//! | SUPI and SUCI | `nas_5gs::Supi`; `nas_5gs::Suci` with the null scheme, Profile A (X25519) and Profile B (secp256r1), for an IMSI and for a NAI | TS 33.501 Annex C, TS 23.003 §2.2A, §2.2B and §28.7.3 | 3GPP |
-//! | 5G-GUTI, 5G-S-TMSI | `nas_5gs::Guti`, `nas_5gs::STmsi` | TS 24.501 §9.11.3.4 | calculated |
-//! | PLMN and TBCD | [`Plmn`], `tbcd_encode`, `tbcd_decode` | TS 24.501 §9.11.3.4, TS 29.002 | calculated |
+//! | SUPI and SUCI | `nas_5gs::Supi`; `nas_5gs::Suci` with the null scheme, Profile A (X25519) and Profile B (secp256r1), for an IMSI and for a NAI, on the SUPI and the two forms of a SUCI of oxirush-utils | TS 33.501 Annex C, TS 23.003 §2.2A, §2.2B and §28.7.3 | 3GPP |
+//! | 5G-GUTI, 5G-S-TMSI | `nas_5gs::Guti`, `nas_5gs::STmsi`: the values of oxirush-utils | TS 24.501 §9.11.3.4 | calculated |
+//! | PLMN and TBCD | [`Plmn`], `tbcd::encode`, `tbcd::decode`: those of oxirush-utils | TS 24.008 §10.5.1.3, TS 29.002 | calculated |
 //! | Algorithm selection | [`select_integrity_algo`], [`select_ciphering_algo`] and their `*_with_preference` forms | TS 33.401 §7.2.4.3.1, TS 33.501 §6.7.1 | calculated |
 //!
 //! The default order of the selection is NIA2, NIA1, NIA3, never NIA0, and
@@ -118,9 +118,9 @@
 //!
 //! A value that a specification bounds has a type that holds only the
 //! values in range. A number from a peer or from a configuration enters
-//! through `TryFrom`, `new` or `from_octets`, which return a
-//! [`SecurityError`], and the functions that take these types have nothing
-//! left to refuse.
+//! through `TryFrom`, `new` or `from_nas_octets`, which return a
+//! [`SecurityError`] or, for an identity, an error of [`identity`], and the
+//! functions that take these types have nothing left to refuse.
 //!
 //! | Input | Type or check |
 //! |-------|---------------|
@@ -134,7 +134,7 @@
 //! | COUNT and BEARER of the algorithms themselves | Any `u32`, and [`Bearer`], 5 bits |
 //! | Length in bits | `Err(BitLengthExceedsData)` when the buffer is shorter |
 //! | PCI, ARFCN, AMF Set ID, AMF Pointer, cell identity | `Err(OutOfRange)` above the largest value |
-//! | PLMN, TBCD string, 5G-GUTI, 5G-S-TMSI | [`Plmn`], `nas_5gs::Guti`, `nas_5gs::STmsi`: `Err(InvalidParameter)` for a length, a digit or a first octet that the format does not have |
+//! | PLMN, TBCD string, 5G-GUTI, 5G-S-TMSI | [`Plmn`], `nas_5gs::Guti`, `nas_5gs::STmsi`: an error of [`identity`] that names the member at fault and says why, which is `Err(Identity)` in a function of this crate |
 //! | SUPI | `nas_5gs::Supi`: an IMSI or a NAI, from its identity or from the text of a service based interface |
 //! | SUCI from a peer | `nas_5gs::Suci`: a `nas_5gs::SuciError` that says what could not be read, or which step of the de-concealment failed |
 //! | KDF parameter of variable length | `Err(InputTooLong)` above 65535 octets |
@@ -343,11 +343,11 @@
 //!
 //! | Feature | Adds | Needs |
 //! |---------|------|-------|
-//! | none | The algorithms, the keyed contexts and the batches, the keys and every derivation, NAS integrity and ciphering, the selection of the algorithms, the types of the inputs, the SUPI, the 5G-GUTI and the PLMN | `core` alone: no allocator. 14 crates in its tree, and no procedural macro |
-//! | `alloc` | What returns a `Vec` or a `String`: `kdf::build_s`, `tbcd_encode`, `tbcd_decode`, `Supi::into_owned` | An allocator |
+//! | none | The algorithms, the keyed contexts and the batches, the keys and every derivation, NAS integrity and ciphering, the selection of the algorithms, the types of the inputs, the SUPI, the 5G-GUTI and the PLMN | `core` alone: no allocator. 15 crates in its tree, oxirush-utils one of them, and no procedural macro |
+//! | `alloc` | What returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | An allocator |
 //! | `std` | On an AArch64 system other than Linux, Android and Apple's: the choice of the code on the vector and AES instructions when the program runs. Nothing else | The standard library. It brings `alloc` |
-//! | `suci` | `nas_5gs::Suci`: the SUCI of an IMSI in a mobile identity, concealed and de-concealed with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, which it brings, and a source of random numbers that `getrandom` has for the target: concealment draws a key. 41 crates |
-//! | `nai` | The SUCI in the NAI format, and the SUCI of a SUPI that is a NAI: a network specific identifier, a GCI or a GLI | `suci`, which it brings, with Unicode normalization and IDNA. 71 crates |
+//! | `suci` | `nas_5gs::Suci`: the SUCI of an IMSI in a mobile identity, concealed and de-concealed with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, which it brings, and a source of random numbers that `getrandom` has for the target: concealment draws a key. 42 crates |
+//! | `nai` | The SUCI in the NAI format, and the SUCI of a SUPI that is a NAI: a network specific identifier, a GCI or a GLI | `suci`, which it brings, with the Unicode normalization and the IDNA of oxirush-utils. 70 crates |
 //!
 //! Without `std` the crate is `no_std`. The key derivations give the
 //! hasher their parameters part after part: the string S of TS 33.220 is
@@ -430,12 +430,18 @@ pub use common::input::{
 pub use common::keys::{Autn, CipheringKey, Ck, Ik, IntegrityKey, Rand};
 pub use common::nea::{nea_cipher, nea_cipher_bits};
 pub use common::nia::{nia_mac, nia_mac_bits};
-pub use common::plmn::Plmn;
-#[cfg(feature = "alloc")]
-#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-pub use common::plmn::{tbcd_decode, tbcd_encode};
 pub use common::snow3g::Snow3G;
 pub use common::zuc::Zuc;
+/// The identities of 3GPP networks as values: those of oxirush-utils,
+/// whose errors [`SecurityError::Identity`] holds.
+pub use oxirush_utils::identity;
+/// The PLMN identity: an MCC and an MNC (TS 23.003 §2.2), with its octets
+/// in a NAS message (`to_nas_octets`, TS 24.008 §10.5.1.3).
+pub use oxirush_utils::identity::Plmn;
+/// TBCD strings (TS 29.002): `tbcd::encode` and `tbcd::decode`.
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+pub use oxirush_utils::identity::tbcd;
 
 /// What the crate's fuzz targets, its emulated AArch64 program and its scan
 /// of leftovers drive beside the public functions. A build with

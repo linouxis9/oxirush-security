@@ -969,7 +969,7 @@ fn derivations(cases: &mut Cases) {
     });
 
     let plmn = Plmn::new("208", "93").expect("an MCC and an MNC");
-    let s_kasme = s(0x10, &[&plmn.to_octets(), &autn.as_octets()[..6]]);
+    let s_kasme = s(0x10, &[&plmn.to_nas_octets(), &autn.as_octets()[..6]]);
     derivation(
         cases,
         "nas_eps::derive_kasme",
@@ -1166,7 +1166,7 @@ fn comparisons(cases: &mut Cases) {
 /// SUCI with the home network keys and the data of TS 33.501 Annex C.4,
 /// whose intermediate values the Annex gives.
 fn suci(cases: &mut Cases) {
-    use nas_5gs::{HomeNetworkPrivateKey, Protection, Suci};
+    use nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci};
     let h = |hexadecimal: &str| hex::decode(hexadecimal).expect("hexadecimal digits");
     let plmn = Plmn::new("274", "012").expect("an MCC and an MNC");
     let identity = |scheme: u8, output: &str| -> &'static [u8] {
@@ -1207,8 +1207,9 @@ fn suci(cases: &mut Cases) {
         1,
         secrets_a.clone(),
         move || {
-            let suci =
-                prepared(|| Suci::from_nas(black_box(suci_a)).expect("the SUCI of Annex C.4.3.1"));
+            let suci = prepared(|| {
+                Suci::from_nas_octets(black_box(suci_a)).expect("the SUCI of Annex C.4.3.1")
+            });
             crate::here();
             let supi = spare(suci.deconceal(Some(black_box(private_a))));
             crate::owned(&supi);
@@ -1247,7 +1248,7 @@ fn suci(cases: &mut Cases) {
         let suci = spare(Suci::conceal_imsi(
             plmn,
             black_box("001002086"),
-            "0",
+            RoutingIndicator::default(),
             protection,
         ));
         crate::owned(&suci);
@@ -1286,8 +1287,9 @@ fn suci(cases: &mut Cases) {
         1,
         secrets_b.clone(),
         move || {
-            let suci =
-                prepared(|| Suci::from_nas(black_box(suci_b)).expect("the SUCI of Annex C.4.4.1"));
+            let suci = prepared(|| {
+                Suci::from_nas_octets(black_box(suci_b)).expect("the SUCI of Annex C.4.4.1")
+            });
             crate::here();
             let supi = spare(suci.deconceal(Some(black_box(private_b))));
             crate::owned(&supi);
@@ -1324,7 +1326,7 @@ fn suci(cases: &mut Cases) {
         let suci = spare(Suci::conceal_imsi(
             plmn,
             black_box("001002086"),
-            "0",
+            RoutingIndicator::default(),
             protection,
         ));
         crate::owned(&suci);

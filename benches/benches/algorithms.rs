@@ -37,8 +37,8 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 use oxirush_security::nas_5gs::{
-    HomeNetworkPrivateKey, HomeNetworkPublicKey, KNasEnc, KNasInt, Protection, Suci, Supi,
-    derive_kamf, derive_kausf, derive_knas_int, derive_kseaf,
+    HomeNetworkPrivateKey, HomeNetworkPublicKey, KNasEnc, KNasInt, Protection, RoutingIndicator,
+    Suci, Supi, derive_kamf, derive_kausf, derive_knas_int, derive_kseaf,
 };
 use oxirush_security::{
     Autn, Bearer, CipheringAlgorithm, CipheringContext, Ck, Direction, Ik, IntegrityAlgorithm,
@@ -146,7 +146,12 @@ fn suci(criterion: &mut Criterion) {
     let public_b = HomeNetworkPublicKey::profile_b(&public_b).expect("a key of Profile B");
     let conceal = |key| {
         let protection = Protection::Ecies { key_id: 1, key };
-        Suci::conceal_imsi(plmn, black_box("001002086"), "0", protection)
+        Suci::conceal_imsi(
+            plmn,
+            black_box("001002086"),
+            RoutingIndicator::default(),
+            protection,
+        )
     };
     let suci_a = conceal(&public_a).expect("Profile A conceals");
     let suci_b = conceal(&public_b).expect("Profile B conceals");

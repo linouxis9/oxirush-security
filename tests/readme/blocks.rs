@@ -288,7 +288,7 @@ fn block_7() {
 /// The Rust block 8 of README.md.
 fn block_8() {
     use oxirush_security::Plmn;
-    use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, Suci};
+    use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci};
 
     // Home network: its private key, and the public key that its subscribers
     // have under the identifier 27
@@ -302,13 +302,14 @@ fn block_8() {
     // ephemeral public key, drawn at each call, the ciphered MSIN and a MAC tag
     let protection = Protection::Ecies { key_id: 27, key: &public };
     let plmn = Plmn::new("274", "012").unwrap();
-    let suci = Suci::conceal_imsi(plmn, "001002086", "0", protection).unwrap();
-    let identity = suci.to_nas().unwrap();
+    let routing = RoutingIndicator::default();
+    let suci = Suci::conceal_imsi(plmn, "001002086", routing, protection).unwrap();
+    let identity = suci.to_nas_octets().unwrap();
     println!("mobile identity of {} octets", identity.len());
 
     // SIDF: read the SUCI, take the private key that its scheme and its key
     // identifier name, and de-conceal
-    let received = Suci::from_nas(&identity).unwrap();
+    let received = Suci::from_nas_octets(&identity).unwrap();
     println!("{:?}, key {}", received.protection_scheme(), received.home_network_public_key_id());
     let supi = received.deconceal(Some(&private)).unwrap();
     println!("{supi}, of which KAMF takes {}", supi.identity());
@@ -318,7 +319,7 @@ fn block_8() {
     identity.extend(hex::decode(
         "b2e92f836055a255837debf850b528997ce0201cb82adfe4be1f587d07d8457dcb02352410cddd9e730ef3fa87",
     ).unwrap());
-    let annex = Suci::from_nas(&identity).unwrap();
+    let annex = Suci::from_nas_octets(&identity).unwrap();
     println!("{annex}");
     println!("{:?}", annex.deconceal(Some(&private)));
     println!("{:?}", annex.deconceal(None));
@@ -326,7 +327,7 @@ fn block_8() {
 
 /// The Rust block 9 of README.md.
 fn block_9() {
-    use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, Suci, Supi};
+    use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci, Supi};
 
     let private = "c53c22208b61860b06c62e5406a7b330c2b577aa5558981510d128247d38bd1d";
     let private = <[u8; 32]>::try_from(hex::decode(private).unwrap()).unwrap();
@@ -336,8 +337,8 @@ fn block_9() {
     // UE: the username is concealed, the realm is not
     let supi = Supi::network_specific("sensor-17@example.net").unwrap();
     let protection = Protection::Ecies { key_id: 1, key: &public };
-    let suci = Suci::conceal_nai(&supi, "0", protection).unwrap();
-    let text = suci.to_nai();
+    let suci = Suci::conceal_nai(&supi, RoutingIndicator::default(), protection).unwrap();
+    let text = suci.to_nai().unwrap();
     println!("{}...", &text[..31]);
 
     // Home network
@@ -345,7 +346,7 @@ fn block_9() {
     println!("{}", received.deconceal(Some(&private)).unwrap());
 
     // A text that is no SUCI says what is wrong with it
-    println!("{:?}", Suci::from_nai("type1.rid0.schid1.hnkey1@example.net"));
+    println!("{}", Suci::from_nai("type1.rid0.schid1.hnkey1@example.net").unwrap_err());
 }
 
 /// The Rust block 10 of README.md.
@@ -401,21 +402,21 @@ fn block_11() {
 /// The Rust block 12 of README.md.
 fn block_12() {
     use oxirush_security::nas_5gs::Guti;
-    use oxirush_security::{Plmn, tbcd_decode, tbcd_encode};
+    use oxirush_security::{Plmn, tbcd};
 
     // MCC 208 and MNC 93
     let plmn = Plmn::new("208", "93").unwrap();
-    println!("{} is {plmn}", hex::encode(plmn.to_octets()));
+    println!("{} is {plmn}", hex::encode(plmn.to_nas_octets()));
 
     // AMF region 1, set 1 and pointer 2, and a 5G-TMSI
     let guti = Guti::new(plmn, 0x01, 0x001, 0x02, 0x1122_3344).unwrap();
-    let octets = guti.to_octets();
-    let read = Guti::from_octets(&octets).unwrap();
+    let octets = guti.to_nas_octets();
+    let read = Guti::from_nas_octets(&octets).unwrap();
     println!("{} has 5G-TMSI {:08x}", hex::encode(octets), read.tmsi());
 
     // The digits of an IMSI
-    let imsi = tbcd_encode("208930000000001").unwrap();
-    println!("{} is {}", hex::encode(&imsi), tbcd_decode(&imsi).unwrap());
+    let imsi = tbcd::encode("208930000000001").unwrap();
+    println!("{} is {}", hex::encode(&imsi), tbcd::decode(&imsi).unwrap());
 }
 
 /// The Rust block 1 of src/lib.rs.

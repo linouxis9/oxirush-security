@@ -10,7 +10,7 @@ rust-version = "1.88"
 keywords = ["5g", "lte", "eps", "nas", "security"]
 categories = ["cryptography", "network-programming"]
 readme = "README.md"
-exclude = [".github/", ".gitignore", "benches/", "emulated-aarch64/", "fuzz/", "leftovers/"]
+exclude = [".cargo/", ".github/", ".gitignore", "benches/", "emulated-aarch64/", "fuzz/", "leftovers/"]
 
 [features]
 default = ["std", "suci", "nai"]
@@ -21,15 +21,16 @@ std = ["alloc"]
 # An allocator: what returns a `Vec` or a `String` (`kdf::build_s`,
 # `tbcd_encode`, `tbcd_decode`) and `Supi::into_owned`. The algorithms, the
 # keys and their derivations need none.
-alloc = ["zeroize/alloc"]
+alloc = ["zeroize/alloc", "oxirush-utils/alloc"]
 # SUCI concealment and deconcealment with the null scheme, Profile A (X25519)
 # and Profile B (P-256), TS 33.501 Annex C. Concealment draws a key with
 # `getrandom`, which needs a source of random numbers for the target.
 suci = ["alloc", "dep:x25519-dalek", "dep:p256", "dep:getrandom"]
 # The SUCI in the NAI format, TS 23.003 clause 28.7.3, and the SUCI of a SUPI
-# that is a NAI: a network specific identifier, a GCI or a GLI. It brings
-# Unicode normalization and IDNA.
-nai = ["suci", "dep:unicode-normalization", "dep:idna", "dep:base64", "dep:hex"]
+# that is a NAI: a network specific identifier, a GCI or a GLI. Its realm and
+# its username are also checked as internationalized names: it brings the
+# Unicode normalization and the IDNA of oxirush-utils.
+nai = ["suci", "oxirush-utils/idna"]
 
 [dependencies]
 # KDF and SUCI: SHA-256 whose state is wiped on drop
@@ -50,12 +51,10 @@ x25519-dalek = { version = "3", features = ["static_secrets"], optional = true }
 p256 = { version = "0.14", default-features = false, features = ["ecdh", "getrandom"], optional = true }
 getrandom = { version = "0.4", optional = true }
 
-# `nai`: RFC 7542 requires NFC-normalized UTF-8 NAIs and RFC 5891 realms; the
-# keys and the ciphertext of a NAI are hexadecimal, and a GLI is base64.
-unicode-normalization = { version = "0.1.13", default-features = false, optional = true }
-idna = { version = "1", default-features = false, features = ["alloc", "compiled_data"], optional = true }
-base64 = { version = "0.22", default-features = false, features = ["alloc"], optional = true }
-hex = { version = "0.4.3", default-features = false, features = ["alloc"], optional = true }
+# The identities: PLMN, 5G-GUTI, 5G-S-TMSI, SUPI, the two forms of a SUCI and
+# the grammar of a NAI, with no feature of its own (`alloc` and `nai` above
+# turn on those that they need). It adds no crate to the tree.
+oxirush-utils = { version = "0.1.0", default-features = false }
 
 # The instructions of the processor, asked without the standard library:
 # CPUID on x86-64, the system on AArch64. `aes` has it in the tree already.

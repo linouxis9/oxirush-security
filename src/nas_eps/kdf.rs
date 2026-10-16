@@ -25,9 +25,9 @@ use crate::SecurityError;
 use crate::common::input::{AccessKeyCount, CipheringAlgorithm, IntegrityAlgorithm, NasCount};
 use crate::common::kdf::{checked_parameter, derive, derive_algorithm_key, kdf};
 use crate::common::keys::{Autn, Ck, Ik};
-use crate::common::plmn::Plmn;
 use crate::common::wipe;
 use crate::nas_5gs::KGnb;
+use oxirush_utils::identity::Plmn;
 use zeroize::Zeroizing;
 
 /// FC of the algorithm key derivation function (TS 33.401 Annex A.7).
@@ -55,7 +55,7 @@ fn halves(full: Zeroizing<[u8; 32]>) -> ([u8; 16], [u8; 16]) {
 /// Annex A.2, FC=0x10).
 pub fn derive_kasme(ck: &Ck, ik: &Ik, serving_network: Plmn, autn: &Autn) -> KAsme {
     wipe::derivation(|| {
-        let sn_id = serving_network.to_octets();
+        let sn_id = serving_network.to_nas_octets();
         let parameters: [&[u8]; 2] = [&sn_id, autn.sqn_xor_ak()];
         KAsme::new(&derive(ck_ik(ck, ik).as_ref(), 0x10, &parameters))
     })

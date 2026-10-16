@@ -34,17 +34,13 @@ fn an_identity_is_printed_whole() {
     assert_eq!(format!("{plmn}"), "208-93");
     assert_eq!(format!("{plmn:?}"), "Plmn(208-93)");
 
+    // The 5G-GUTI and the 5G-S-TMSI in their text, by their parts in
+    // hexadecimal digits (the forms of oxirush-utils)
     let guti = Guti::new(plmn, 0xca, 0x3fe, 0x01, 0x1234_5678).unwrap();
-    assert_eq!(
-        format!("{guti:?}"),
-        "Guti { plmn: Plmn(208-93), amf_region_id: 202, \
-         s_tmsi: STmsi { amf_set_id: 1022, amf_pointer: 1, tmsi: 305419896 } }"
-    );
+    assert_eq!(format!("{guti}"), "5g-guti-20893caff8112345678");
+    assert_eq!(format!("{guti:?}"), "Guti5g(5g-guti-20893caff8112345678)");
     let s_tmsi = STmsi::new(0x3fe, 0x01, 0x1234_5678).unwrap();
-    assert_eq!(
-        format!("{s_tmsi:?}"),
-        "STmsi { amf_set_id: 1022, amf_pointer: 1, tmsi: 305419896 }"
-    );
+    assert_eq!(format!("{s_tmsi:?}"), "STmsi5g(5g-s-tmsi-ff8112345678)");
 }
 
 #[cfg(feature = "suci")]
@@ -59,7 +55,7 @@ fn a_suci_and_a_home_network_public_key_are_printed_whole() {
     );
     let mut identity = vec![0x01, 0x72, 0x24, 0x10, 0xf0, 0xff, 0x01, 27];
     identity.extend(hex::decode(output).unwrap());
-    let suci = Suci::from_nas(&identity).unwrap();
+    let suci = Suci::from_nas_octets(&identity).unwrap();
     assert_eq!(format!("{suci}"), format!("suci-0-274-012-0-1-27-{output}"));
     assert_eq!(
         format!("{suci:?}"),
@@ -71,14 +67,14 @@ fn a_suci_and_a_home_network_public_key_are_printed_whole() {
     let key = HomeNetworkPublicKey::profile_a(&octets);
     assert_eq!(
         format!("{key:?}"),
-        format!("HomeNetworkPublicKey(ProfileA, {public})")
+        format!("HomeNetworkPublicKey(ProtectionScheme(1: profile A), {public})")
     );
 
     // The private key is a key
     let private = HomeNetworkPrivateKey::profile_a(&[0x5a; 32]);
     assert_eq!(
         format!("{private:?}"),
-        "HomeNetworkPrivateKey(ProfileA, ..)"
+        "HomeNetworkPrivateKey(ProtectionScheme(1: profile A), ..)"
     );
 }
 

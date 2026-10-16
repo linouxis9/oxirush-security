@@ -25,7 +25,7 @@
 
 use oxirush_security::Plmn;
 use oxirush_security::nas_5gs::{
-    HomeNetworkPrivateKey, Protection, SchemeOutput, Suci, SuciError, Supi,
+    HomeNetworkPrivateKey, Protection, RoutingIndicator, SchemeOutput, Suci, SuciError, Supi,
 };
 
 fn main() -> Result<(), SuciError> {
@@ -33,11 +33,13 @@ fn main() -> Result<(), SuciError> {
     let plmn = Plmn::new("208", "93").expect("an MCC and an MNC");
     let msin = "0000000001";
     println!("IMSI: {} {} {msin}", plmn.mcc(), plmn.mnc());
+    // The routing indicator of a USIM that has none
+    let routing = RoutingIndicator::default();
 
     // ── Null scheme ──────────────────────────────────────────────────────
-    let suci = Suci::conceal_imsi(plmn, msin, "0", Protection::Null)?;
+    let suci = Suci::conceal_imsi(plmn, msin, routing, Protection::Null)?;
     println!("\n--- Null scheme ---\n{suci}");
-    println!("mobile identity: {}", hex::encode(suci.to_nas()?));
+    println!("mobile identity: {}", hex::encode(suci.to_nas_octets()?));
     println!("(the MSIN is in clear)");
 
     // ── Profile A (X25519) ───────────────────────────────────────────────
@@ -60,7 +62,7 @@ fn main() -> Result<(), SuciError> {
         key_id: 1,
         key: &public_a,
     };
-    let suci = Suci::conceal_imsi(plmn, msin, "0", protection)?;
+    let suci = Suci::conceal_imsi(plmn, msin, routing, protection)?;
     if let SchemeOutput::Ecies {
         ephemeral_public_key,
         ciphertext,
@@ -74,10 +76,10 @@ fn main() -> Result<(), SuciError> {
         println!("ciphertext:              {}", hex::encode(ciphertext));
         println!("MAC tag:                 {}", hex::encode(mac_tag));
     }
-    let identity = suci.to_nas()?;
+    let identity = suci.to_nas_octets()?;
 
     // SIDF: read the mobile identity, choose the key, de-conceal
-    let received = Suci::from_nas(&identity)?;
+    let received = Suci::from_nas_octets(&identity)?;
     println!(
         "received: {:?}, key {}, routing indicator {}",
         received.protection_scheme(),
@@ -100,7 +102,7 @@ fn main() -> Result<(), SuciError> {
         key_id: 2,
         key: &public_b,
     };
-    let nai = Suci::conceal_nai(&supi, "0", protection)?.to_nai();
+    let nai = Suci::conceal_nai(&supi, routing, protection)?.to_nai()?;
     println!("{nai}");
 
     // SIDF: a key of the other profile is refused, and its own de-conceals

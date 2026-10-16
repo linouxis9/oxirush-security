@@ -70,12 +70,12 @@ impl HomeNetworkPrivateKey {
         })
     }
 
-    /// The profile of the key: [`ProtectionScheme::ProfileA`] or
-    /// [`ProtectionScheme::ProfileB`].
+    /// The profile of the key: [`ProtectionScheme::PROFILE_A`] or
+    /// [`ProtectionScheme::PROFILE_B`].
     pub fn scheme(&self) -> ProtectionScheme {
         match self.0 {
-            Private::A(_) => ProtectionScheme::ProfileA,
-            Private::B(_) => ProtectionScheme::ProfileB,
+            Private::A(_) => ProtectionScheme::PROFILE_A,
+            Private::B(_) => ProtectionScheme::PROFILE_B,
         }
     }
 
@@ -133,12 +133,12 @@ impl HomeNetworkPublicKey {
         }
     }
 
-    /// The profile of the key: [`ProtectionScheme::ProfileA`] or
-    /// [`ProtectionScheme::ProfileB`].
+    /// The profile of the key: [`ProtectionScheme::PROFILE_A`] or
+    /// [`ProtectionScheme::PROFILE_B`].
     pub fn scheme(&self) -> ProtectionScheme {
         match self.0 {
-            Public::A(_) => ProtectionScheme::ProfileA,
-            Public::B(_) => ProtectionScheme::ProfileB,
+            Public::A(_) => ProtectionScheme::PROFILE_A,
+            Public::B(_) => ProtectionScheme::PROFILE_B,
         }
     }
 
@@ -404,11 +404,17 @@ pub(super) mod tests {
     #[test]
     fn a_private_key_shows_its_profile_alone() {
         let a = HomeNetworkPrivateKey::profile_a(&[0x42; 32]);
-        assert_eq!(format!("{a:?}"), "HomeNetworkPrivateKey(ProfileA, ..)");
-        assert_eq!(a.scheme(), ProtectionScheme::ProfileA);
-        assert_eq!(a.public_key().scheme(), ProtectionScheme::ProfileA);
+        assert_eq!(
+            format!("{a:?}"),
+            "HomeNetworkPrivateKey(ProtectionScheme(1: profile A), ..)"
+        );
+        assert_eq!(a.scheme(), ProtectionScheme::PROFILE_A);
+        assert_eq!(a.public_key().scheme(), ProtectionScheme::PROFILE_A);
         let b = HomeNetworkPrivateKey::profile_b(&[0x42; 32]).unwrap();
-        assert_eq!(format!("{b:?}"), "HomeNetworkPrivateKey(ProfileB, ..)");
+        assert_eq!(
+            format!("{b:?}"),
+            "HomeNetworkPrivateKey(ProtectionScheme(2: profile B), ..)"
+        );
         assert_eq!(b.public_key().to_octets().len(), 33);
         // Zero and the order of the curve are no private keys
         assert_eq!(

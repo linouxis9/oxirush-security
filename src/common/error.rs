@@ -33,10 +33,13 @@ pub enum SecurityError {
         /// Length of the slice that was passed, in octets.
         got: usize,
     },
-    /// A parameter that the operation cannot take, such as a string with a
-    /// character that its encoding does not have, or an identity with a
-    /// part that its format does not allow. The text says which.
+    /// A parameter that the operation cannot take, such as a length that
+    /// its field does not have. The text says which.
     InvalidParameter(&'static str),
+    /// An identity that is not one: a PLMN, a SUPI, a 5G-GUTI, a
+    /// 5G-S-TMSI or a TBCD string, with the member at fault and why. The
+    /// identities are the values of oxirush-utils, whose error it is.
+    Identity(oxirush_utils::identity::Error),
     /// A KDF parameter longer than its two-octet length field can express.
     InputTooLong {
         /// Longest parameter the length field can express, in octets.
@@ -78,6 +81,7 @@ impl core::fmt::Display for SecurityError {
                 write!(f, "invalid key length: expected {expected}, got {got}")
             }
             Self::InvalidParameter(reason) => write!(f, "invalid parameter: {reason}"),
+            Self::Identity(error) => write!(f, "invalid identity: {error}"),
             Self::InputTooLong { maximum, got } => {
                 write!(f, "input too long: maximum {maximum} octets, got {got}")
             }
@@ -100,7 +104,21 @@ impl core::fmt::Display for SecurityError {
     }
 }
 
-impl core::error::Error for SecurityError {}
+impl core::error::Error for SecurityError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Identity(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+/// An identity that oxirush-utils refuses, where the crate takes one.
+impl From<oxirush_utils::identity::Error> for SecurityError {
+    fn from(error: oxirush_utils::identity::Error) -> Self {
+        Self::Identity(error)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -118,8 +136,12 @@ mod tests {
                 "invalid key length: expected 32, got 31",
             ),
             (
-                SecurityError::InvalidParameter("MCC must be 3 decimal digits"),
-                "invalid parameter: MCC must be 3 decimal digits",
+                SecurityError::InvalidParameter("ABBA is 2 to 255 octets long"),
+                "invalid parameter: ABBA is 2 to 255 octets long",
+            ),
+            (
+                SecurityError::from(crate::Plmn::new("208", "9").unwrap_err()),
+                "invalid identity: `mnc` has 1 digit, and has 2 or 3",
             ),
             (
                 SecurityError::InputTooLong {
