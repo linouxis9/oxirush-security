@@ -53,7 +53,7 @@ use core::fmt;
 /// # Ok::<(), SecurityError>(())
 /// ```
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum IntegrityAlgorithm {
     /// NIA0 and EIA0, the null algorithm: the MAC is zero. It is for
@@ -116,6 +116,19 @@ impl fmt::Display for IntegrityAlgorithm {
     }
 }
 
+/// The variant and the names of both systems, such as `Aes (128-NIA2/128-EIA2)`.
+impl fmt::Debug for IntegrityAlgorithm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let variant = match self {
+            Self::Null => "Null",
+            Self::Snow3g => "Snow3g",
+            Self::Aes => "Aes",
+            Self::Zuc => "Zuc",
+        };
+        write!(f, "{variant} ({self})")
+    }
+}
+
 impl TryFrom<u8> for IntegrityAlgorithm {
     type Error = SecurityError;
 
@@ -147,7 +160,7 @@ impl From<IntegrityAlgorithm> for u8 {
 /// [`name_5gs`](Self::name_5gs) and [`name_eps`](Self::name_eps) give the
 /// name that a log of one system writes, and `{}` both.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum CipheringAlgorithm {
     /// NEA0 and EEA0, the null algorithm: the data is left as it is.
@@ -205,6 +218,19 @@ impl CipheringAlgorithm {
 impl fmt::Display for CipheringAlgorithm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.name_5gs(), self.name_eps())
+    }
+}
+
+/// The variant and the names of both systems, such as `Aes (128-NEA2/128-EEA2)`.
+impl fmt::Debug for CipheringAlgorithm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let variant = match self {
+            Self::Null => "Null",
+            Self::Snow3g => "Snow3g",
+            Self::Aes => "Aes",
+            Self::Zuc => "Zuc",
+        };
+        write!(f, "{variant} ({self})")
     }
 }
 

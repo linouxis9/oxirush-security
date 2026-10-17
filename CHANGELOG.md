@@ -77,7 +77,9 @@ cannot say is a `Result`. No public function panics on its arguments.
   | `Plmn` | An MCC of three digits and an MNC of two or three | `new("208", "93")`, `from_nas_octets([u8; 3])` |
 
   `u8::from` and `u32::from` give the number back. An algorithm prints as
-  `128-NIA2/128-EIA2`, and `name_5gs()` and `name_eps()` give one name.
+  `128-NIA2/128-EIA2` with `{}`, and with `{:?}` as its variant and those
+  names, `Aes (128-NIA2/128-EIA2)`, where it printed `Aes`; `name_5gs()`
+  and `name_eps()` give one name.
 
 - **NAS integrity and ciphering.** `nas_5gs::nas_mac`, `nas_cipher` and
   `nas_container_mac` take a `&KNasInt` or a `&KNasEnc`, a `NasCount`, a

@@ -588,10 +588,10 @@ println!("{} in 5GS, {} in EPS", selected.name_5gs(), selected.name_eps());
 ```
 
 ```text
-Some(Aes)
-Some(Aes)
-Some(Snow3g)
-Ok(Aes)
+Some(Aes (128-NEA2/128-EEA2))
+Some(Aes (128-NIA2/128-EIA2))
+Some(Snow3g (128-NIA1/128-EIA1))
+Ok(Aes (128-NEA2/128-EEA2))
 Err(UnsupportedAlgorithm(5))
 128-NIA2 in 5GS, 128-EIA2 in EPS
 ```

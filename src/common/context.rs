@@ -714,12 +714,12 @@ mod tests {
         let integrity = IntegrityContext::new(&key, IntegrityAlgorithm::NIA2);
         assert_eq!(
             format!("{integrity:?}"),
-            "IntegrityContext { algorithm: Aes, .. }"
+            "IntegrityContext { algorithm: Aes (128-NIA2/128-EIA2), .. }"
         );
         let ciphering = CipheringContext::new(&key, CipheringAlgorithm::NEA1);
         assert_eq!(
             format!("{ciphering:?}"),
-            "CipheringContext { algorithm: Snow3g, .. }"
+            "CipheringContext { algorithm: Snow3g (128-NEA1/128-EEA1), .. }"
         );
         // A context is shared between the threads of a server, and a copy
         // of it is a context of its own
