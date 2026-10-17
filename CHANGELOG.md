@@ -464,21 +464,23 @@ cannot say is a `Result`. No public function panics on its arguments.
 - Tests: MILENAGE on the six sets of TS 35.207 with their intermediate
   values and on the twenty of TS 35.208 (set 2 repeats set 1 there), its AES
   on the twenty Rijndael sets of TS 35.208 and the round keys of TS 35.207,
-  and every AUTN and AUTS with one bit changed refused; 128-EIA2 set 7 of
-  TS 33.401 Annex C.2.7, the six UEA2 design conformance sets of TS 35.218
-  for 128-EEA1, every TS 33.501 Annex C.4 data set of SUCI with its
-  intermediate values, and a 5G AKA key chain from the TS 35.208 test set 1
-  outputs through KAUSF, XRES\*, HXRES\*, KSEAF, KAMF, the NAS keys, KgNB
-  and NH, which `tests/five_g_aka_chain.py` derives with the HMAC-SHA-256 of
-  Python. KSEAF, KAMF, the 5GS NAS keys, NH and XRES\* had no test before.
-  The blocks of the README are compiled and run, and `tests/readme.rs`
-  compares what each prints with the text under it.
+  every AUTN and AUTS with one bit changed refused, and a comparison with
+  the `milenage` crate, Open5GS and free5GC on a million random subscribers
+  (`differential/`, in CI); 128-EIA2 set 7 of TS 33.401 Annex C.2.7, the six
+  UEA2 design conformance sets of TS 35.218 for 128-EEA1, every TS 33.501
+  Annex C.4 data set of SUCI with its intermediate values, and a 5G AKA key
+  chain from the TS 35.208 test set 1 outputs through KAUSF, XRES\*,
+  HXRES\*, KSEAF, KAMF, the NAS keys, KgNB and NH, which
+  `tests/five_g_aka_chain.py` derives with the HMAC-SHA-256 of Python.
+  KSEAF, KAMF, the 5GS NAS keys, NH and XRES\* had no test before. The
+  blocks of the README are compiled and run, and `tests/readme.rs` compares
+  what each prints with the text under it.
 
 - Four `cargo fuzz` targets under `fuzz/`, which CI runs for a minute each
   at a push and for half an hour each week; `benches/`, which times the
   algorithms, the derivations, MILENAGE and SUCI with criterion;
-  `leftovers/` and `emulated-aarch64/`; a `SECURITY.md`; an advisory check
-  in CI.
+  `leftovers/` and `emulated-aarch64/`; `differential/`; a `SECURITY.md`;
+  an advisory check in CI.
 
 ### Fixed
 

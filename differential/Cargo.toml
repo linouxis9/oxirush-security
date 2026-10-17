@@ -1,0 +1,21 @@
+# MILENAGE of oxirush-security beside three other implementations: the
+# `milenage` crate, Open5GS (C) and free5GC (Go). A package of its own,
+# which is not published: the crate depends on none of them.
+[package]
+name = "oxirush-security-differential"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+oxirush-security = { path = ".." }
+milenage = "=0.1.6"
+hex = "0.4.3"
+
+[build-dependencies]
+# Open5GS, from its source tree, when `OPEN5GS` names one
+cc = "1.2"
+
+# Not a member of a workspace that the crate may be in.
+[workspace]

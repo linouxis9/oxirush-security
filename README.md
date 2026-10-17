@@ -713,6 +713,9 @@ on every set of TS 35.207 and TS 35.208. TS 33.501 has none for its
 key derivations: the 5G AKA chain is compared with a second implementation,
 [`tests/five_g_aka_chain.py`](tests/five_g_aka_chain.py), and the other
 derivations with values that the tests calculate.
+[`differential/`](https://github.com/linouxis9/oxirush-security/tree/master/differential)
+compares MILENAGE and its authentication vectors, AUTN checks and AUTS with
+the `milenage` crate, Open5GS and free5GC on a million random subscribers.
 
 SNOW 3G, ZUC, AES and MILENAGE run on the AES, vector and carry-less
 multiplication instructions of an x86-64 or AArch64 processor that has

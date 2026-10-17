@@ -160,6 +160,37 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 tests/five_g_aka_chain.py
 
+  # MILENAGE beside the `milenage` crate, Open5GS and free5GC, on a million
+  # random subscribers: every value of the four must be the same
+  differential:
+    name: MILENAGE beside three other implementations
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: differential
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: differential/free5gc/go.mod
+          cache-dependency-path: differential/free5gc/go.sum
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: differential
+      - run: git clone --depth 1 --branch v2.8.0 https://github.com/open5gs/open5gs "$RUNNER_TEMP/open5gs"
+      - run: test -z "$(gofmt -l .)" && go vet . && go build -o "$RUNNER_TEMP/free5gc-milenage" .
+        working-directory: differential/free5gc
+      - run: cargo run --release -- 1000000
+        env:
+          OPEN5GS: ${{ runner.temp }}/open5gs
+          FREE5GC: ${{ runner.temp }}/free5gc-milenage
+      - run: cargo clippy --all-targets -- -D warnings
+        env:
+          OPEN5GS: ${{ runner.temp }}/open5gs
+
   # The advisories of RustSec against the versions that a new user of the
   # crate gets today
   advisories:
@@ -304,6 +335,7 @@ jobs:
       - run: cargo fmt --check
       - run: cargo fmt --check --manifest-path fuzz/Cargo.toml
       - run: cargo fmt --check --manifest-path benches/Cargo.toml
+      - run: cargo fmt --check --manifest-path differential/Cargo.toml
       - run: cargo fmt --check --manifest-path emulated-aarch64/guest/Cargo.toml
       - run: cargo fmt --check --manifest-path emulated-aarch64/host/Cargo.toml
       - run: cargo fmt --check --manifest-path leftovers/Cargo.toml
