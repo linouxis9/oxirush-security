@@ -46,7 +46,7 @@ The text under a block is what the block prints.
 > This page describes the unreleased 0.3.0. crates.io has 0.2.0, and the
 > [changelog](CHANGELOG.md) lists each change.
 
-## Install
+## Installation
 
 ```toml
 [dependencies]
@@ -54,8 +54,49 @@ oxirush-security = "0.3"
 hex = "0.4" # for the examples of this page
 ```
 
-Until 0.3.0 is on crates.io, the repository has it:
-`oxirush-security = { git = "https://github.com/linouxis9/oxirush-security" }`.
+| Feature | The crate has | Needs |
+|---------|---------------|-------|
+| none | the algorithms, the contexts and the batches, MILENAGE, the keys and their derivations, NAS integrity and ciphering, the selection of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone: no allocator |
+| `alloc` | and what returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | an allocator |
+| `std` | and, on an AArch64 system other than Linux, Android and Apple's, the choice of the code on the vector and AES instructions when the program runs | the standard library |
+| `suci` | and the SUCI of an IMSI, with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, and a source of random numbers that `getrandom` has for the target |
+| `nai` | and the SUCI in the NAI format and that of a SUPI that is a NAI, by the grammar of RFC 7542 | `suci` |
+| `idna` | and the realm and the username of a NAI are also checked as internationalized names: Unicode normalization and IDNA | `nai`; the Unicode tables of `idna` and `unicode-normalization` |
+
+`std`, `suci` and `nai` are the default, without IDNA. Without `std` the crate is
+`no_std`, and it still asks the processor what it has: by CPUID on x86-64,
+through the auxiliary vector on AArch64 Linux and Android. On a target
+without an operating system the code on the vector and AES instructions
+runs when the build enables them
+(`-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq`, or `+neon,+aes`).
+
+`oxirush_security::implementation()` says which code runs for each
+algorithm, scalar or on the instructions: log it when the program starts.
+
+```toml
+# no_std, without an allocator
+oxirush-security = { version = "0.3", default-features = false }
+```
+
+Until 0.3.0 is on crates.io, a program takes the crate from its
+repository, with oxirush-utils, which is not published either, at the
+revision that it is tested with:
+
+```toml
+[dependencies]
+oxirush-security = { git = "https://github.com/linouxis9/oxirush-security" }
+
+[patch.crates-io]
+oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "0617bcb831fec1e9a7a41f7c370a4f624868073e" }
+```
+
+A clone has that revision in `.cargo/config.toml`, and `cargo test` runs
+there as it is.
+
+The minimum supported Rust version is 1.88. A project that is built with it
+needs Cargo's resolver 3, the default of edition 2024, which keeps each
+dependency at a version that 1.88 builds.
+
 
 ## Run 5G AKA, from MILENAGE to KAMF
 
@@ -213,7 +254,9 @@ before it deciphers.
 
 ```rust
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, nas_cipher, nas_mac};
-use oxirush_security::{CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
+use oxirush_security::{
+    CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount, constant_time_eq,
+};
 
 let octets = |s: &str| hex::decode(s).unwrap();
 let k_nas_enc = KNasEnc::from_slice(&octets("f47ae570afde775373d1b313d2176f54")).unwrap();
@@ -222,7 +265,7 @@ let (nea2, nia2) = (CipheringAlgorithm::NEA2, IntegrityAlgorithm::NIA2);
 
 // What came after the security header: the MAC, the sequence number and
 // the ciphered message
-let (received_mac, sequence_number) = (0x83e4_d009, 0);
+let (received_mac, sequence_number) = (0x83e4_d009_u32, 0);
 let mut message = [0xb5, 0x7d, 0xd5];
 
 // The receiver keeps the lowest uplink NAS COUNT that it still accepts,
@@ -234,7 +277,9 @@ let (access, uplink) = (NasConnection::ThreeGpp, Direction::Uplink);
 
 let protected = [&[sequence_number][..], &message].concat();
 let mac = nas_mac(&k_nas_int, count, access, uplink, &protected, nia2);
-println!("MAC {mac:08x}, as received: {}", mac == received_mac);
+// In a time that does not tell how much of a forged MAC is right
+let right = constant_time_eq(&mac.to_be_bytes(), &received_mac.to_be_bytes());
+println!("MAC {mac:08x}, as received: {right}");
 
 // The MAC is right: the message is deciphered, and its NAS COUNT is not
 // accepted again
@@ -647,37 +692,7 @@ its octets where it was, so make a key where it stays and pass references.
 The clearing takes 10 to 33 ns for a message, and a batch pays it once.
 `RUSTFLAGS="--cfg oxirush_security_unwiped"` builds the crate without it.
 
-## Features
-
-| Feature | The crate has | Needs |
-|---------|---------------|-------|
-| none | the algorithms, the contexts and the batches, MILENAGE, the keys and their derivations, NAS integrity and ciphering, the selection of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone: no allocator |
-| `alloc` | and what returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | an allocator |
-| `std` | and, on an AArch64 system other than Linux, Android and Apple's, the choice of the code on the vector and AES instructions when the program runs | the standard library |
-| `suci` | and the SUCI of an IMSI, with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, and a source of random numbers that `getrandom` has for the target |
-| `nai` | and the SUCI in the NAI format and that of a SUPI that is a NAI, by the grammar of RFC 7542 | `suci` |
-| `idna` | and the realm and the username of a NAI are also checked as internationalized names: Unicode normalization and IDNA | `nai`; the Unicode tables of `idna` and `unicode-normalization` |
-
-`std`, `suci` and `nai` are the default, without IDNA. Without `std` the crate is
-`no_std`, and it still asks the processor what it has: by CPUID on x86-64,
-through the auxiliary vector on AArch64 Linux and Android. On a target
-without an operating system the code on the vector and AES instructions
-runs when the build enables them
-(`-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq`, or `+neon,+aes`).
-
-`oxirush_security::implementation()` says which code runs for each
-algorithm, scalar or on the instructions: log it when the program starts.
-
-```toml
-# no_std, without an allocator
-oxirush-security = { version = "0.3", default-features = false }
-```
-
-The minimum supported Rust version is 1.88. A project that is built with it
-needs Cargo's resolver 3, the default of edition 2024, which keeps each
-dependency at a version that 1.88 builds.
-
-## What it does not do
+## Limits
 
 - AKA: it has MILENAGE and not TUAK. Whether a SQN is fresh and whether
   an AMF has the separation bit are the caller's to decide.
@@ -691,73 +706,122 @@ dependency at a version that 1.88 builds.
 
 ## Performance
 
-On one core of an AMD Ryzen 7 5700G, a message of 1500 octets, alone and
-as one of sixteen in a call of `nea_cipher_batch` or `nia_mac_batch`:
+On one core of an AMD Ryzen 7 5700G, with a load of 4 to 6 from other
+work on the machine, a message of 1500 octets, alone and as one of sixteen
+in a call of `nea_cipher_batch` or `nia_mac_batch`:
 
 | | Cipher | MAC | Cipher, one of sixteen | MAC, one of sixteen |
 |---|---|---|---|---|
-| 128-NEA2, 128-NIA2 (AES) | 0.19 µs | 0.98 µs | 0.18 µs | 0.26 µs |
-| 128-NEA1, 128-NIA1 (SNOW 3G) | 2.3 µs | 0.41 µs | 0.65 µs | 0.24 µs |
-| 128-NEA3, 128-NIA3 (ZUC) | 3.2 µs | 3.6 µs | 0.87 µs | 1.2 µs |
+| 128-NEA2, 128-NIA2 (AES) | 0.19 µs | 1.00 µs | 0.18 µs | 0.26 µs |
+| 128-NEA1, 128-NIA1 (SNOW 3G) | 2.3 µs | 0.42 µs | 0.66 µs | 0.24 µs |
+| 128-NEA3, 128-NIA3 (ZUC) | 3.4 µs | 3.6 µs | 0.94 µs | 1.2 µs |
 
 MILENAGE makes an authentication vector in 0.13 µs, and in 0.06 µs as one
-of a thousand in a call of `authentication_vector_batch`, where the
-`milenage` crate 0.1.6 takes 0.26 µs. A key derivation takes 0.24 µs, and
-SUCI concealment 59 µs with Profile A and 286 µs with Profile B.
+of a thousand in a call of `authentication_vector_batch`. A key
+derivation takes 0.24 µs, and SUCI concealment 58 µs with Profile A and
+282 µs with Profile B.
 [`benches/`](https://github.com/linouxis9/oxirush-security/tree/master/benches)
 has the benchmarks, the other figures and how to profile.
 
+### Against other implementations
+
+The same inputs to each, a call for each operation, on core 9 of the same
+machine, with a load of 5 to 8. Times are the lowest of three runs;
+cycles and instructions are per operation, from `perf stat`, in user mode;
+peak memory is that of the whole program; the last column is the time of
+each against this crate's. cryptography-rs has the keystream generators,
+which the program runs with the IV of 128-NEA1 and 128-NEA3; its `Ct`
+types read no table at an index from the state, as this crate does.
+Open5GS is called through `ogs_nas_encrypt` and `ogs_nas_mac_calculate`,
+which its AMF and MME call.
+
+| Operation | | ns | Cycles | Instructions | Allocations | Octets allocated | Peak memory | Time against oxirush-security |
+|---|---|---|---|---|---|---|---|---|
+| MILENAGE, an authentication vector | oxirush-security | 134.4 | 565 | 1 037 | 0 | 0 | 2.9 MiB |  |
+|  | milenage 0.3.1 | 689.6 | 3 014 | 7 419 | 0 | 0 | 2.8 MiB | 5.13 |
+|  | milenage 0.1.6 | 263.7 | 1 217 | 2 914 | 0 | 0 | 2.8 MiB | 1.96 |
+|  | Open5GS v2.8.0 | 445.5 | 1 862 | 6 115 | 0 | 0 | 2.1 MiB | 3.31 |
+|  | free5GC util v1.3.2 | 590.7 | 2 398 | 8 716 | 19.00 | 1 248 | 7.5 MiB | 4.40 |
+| 128-NEA1 (SNOW 3G), 1500 octets | oxirush-security | 2 332 | 10 217 | 34 901 | 0 | 0 | 2.8 MiB |  |
+|  | cryptography-rs 0.8.0, Snow3g | 3 674 | 15 875 | 69 233 | 0 | 0 | 2.8 MiB | 1.58 |
+|  | cryptography-rs 0.8.0, Snow3gCt | 45 145 | 195 314 | 850 007 | 0 | 0 | 2.8 MiB | 19.36 |
+|  | Open5GS v2.8.0 | 2 954 | 12 386 | 42 136 | 0 | 0 | 2.2 MiB | 1.27 |
+|  | free5GC nas v1.2.3 | 463 680 | 2 173 686 | 5 359 324 | 3.00 | 3 152 | 4.9 MiB | 198.83 |
+| 128-NEA2 (AES-CTR), 1500 octets | oxirush-security | 225.2 | 952 | 3 677 | 0 | 0 | 2.8 MiB |  |
+|  | aes 0.8.4, ctr 0.9.2 | 203.6 | 872 | 2 980 | 0 | 0 | 2.7 MiB | 0.90 |
+|  | Open5GS v2.8.0 | 4 629 | 19 775 | 69 722 | 0 | 0 | 2.1 MiB | 20.55 |
+|  | free5GC nas v1.2.3 | 526.3 | 2 147 | 6 460 | 4.00 | 2 576 | 7.7 MiB | 2.34 |
+| 128-NEA3 (ZUC), 1500 octets | oxirush-security | 3 518 | 15 141 | 53 167 | 0 | 0 | 2.9 MiB |  |
+|  | zuc 0.4.1 | 3 628 | 15 573 | 58 520 | 0 | 0 | 2.8 MiB | 1.03 |
+|  | cryptography-rs 0.8.0, Zuc128 | 3 640 | 15 597 | 63 784 | 0 | 0 | 2.9 MiB | 1.03 |
+|  | cryptography-rs 0.8.0, Zuc128Ct | 43 143 | 186 931 | 792 637 | 0 | 0 | 2.8 MiB | 12.26 |
+|  | Open5GS v2.8.0 | 7 829 | 33 582 | 126 029 | 1.00 | 1 596 | 2.1 MiB | 2.23 |
+|  | free5GC nas v1.2.3 | 11 773 | 49 685 | 203 420 | 2.00 | 3 072 | 7.6 MiB | 3.35 |
+| 128-NIA1 (SNOW 3G), 1500 octets | oxirush-security | 415.2 | 1 786 | 5 156 | 0 | 0 | 2.8 MiB |  |
+|  | Open5GS v2.8.0 | 496 648 | 2 685 780 | 5 514 519 | 0 | 0 | 2.1 MiB | 1 196 |
+|  | free5GC nas v1.2.3 | 435 477 | 1 809 273 | 4 688 044 | 3.00 | 108 | 2.9 MiB | 1 049 |
+| 128-NIA2 (AES-CMAC), 1500 octets | oxirush-security | 1 002 | 4 316 | 2 613 | 0 | 0 | 2.9 MiB |  |
+|  | aes 0.8.4, cmac 0.7.2 | 1 003 | 4 326 | 2 649 | 0 | 0 | 2.8 MiB | 1.00 |
+|  | Open5GS v2.8.0 | 4 350 | 18 947 | 60 224 | 0 | 0 | 2.1 MiB | 4.34 |
+|  | free5GC nas v1.2.3 | 1 996 | 8 408 | 21 038 | 8.00 | 2 240 | 7.4 MiB | 1.99 |
+| 128-NIA3 (ZUC), 1500 octets | oxirush-security | 3 795 | 16 478 | 58 119 | 0 | 0 | 2.9 MiB |  |
+|  | zuc 0.4.1 | 5 906 | 25 710 | 120 257 | 0 | 0 | 2.7 MiB | 1.56 |
+|  | Open5GS v2.8.0 | 33 267 | 161 884 | 443 082 | 1.00 | 1 604 | 2.1 MiB | 8.77 |
+|  | free5GC nas v1.2.3 | 25 552 | 109 643 | 602 375 | 2.00 | 1 540 | 7.6 MiB | 6.73 |
+
+`benches/compare/compare.sh 3` runs every row on core 3. It fetches each
+implementation at the version that it pins, and builds Open5GS's libraries
+of NAS security; perf may need `PERF="sudo -n perf"`.
+
 ## Tests and fuzzing
 
+```bash
+cargo test --all-features
+python3 -I tests/five_g_aka_chain.py
+cargo +nightly fuzz run algorithms -- -max_total_time=60
+```
+
 The algorithms, MILENAGE and SUCI are tested on the 3GPP test data, MILENAGE
-on every set of TS 35.207 and TS 35.208. TS 33.501 has none for its
-key derivations: the 5G AKA chain is compared with a second implementation,
+on every set of TS 35.207 and TS 35.208. TS 33.501 has none for its key
+derivations: the 5G AKA chain is compared with a second implementation,
 [`tests/five_g_aka_chain.py`](tests/five_g_aka_chain.py), and the other
 derivations with values that the tests calculate.
 [`differential/`](https://github.com/linouxis9/oxirush-security/tree/master/differential)
-compares MILENAGE and its authentication vectors, AUTN checks and AUTS with
-the `milenage` crate, Open5GS and free5GC on a million random subscribers.
+compares MILENAGE with the `milenage` crate, Open5GS and free5GC on a
+million random subscribers. The tests compare the code on the vector and
+AES instructions with the scalar code, and a batch with its messages one by
+one; CI runs them on x86-64, AArch64 and 32-bit x86, the AArch64 code on an
+emulated processor too
+([`emulated-aarch64/`](https://github.com/linouxis9/oxirush-security/tree/master/emulated-aarch64)),
+and fuzzes the four targets of
+[`fuzz/`](https://github.com/linouxis9/oxirush-security/tree/master/fuzz).
+The only `unsafe` code is the calls of the vector code and the instructions
+that clear the stack and the registers.
 
-SNOW 3G, ZUC, AES and MILENAGE run on the AES, vector and carry-less
-multiplication instructions of an x86-64 or AArch64 processor that has
-them, and on scalar code elsewhere. The source has no index into memory and no branch that
-depends on a secret, and the compiled code of one x86-64 build was read
-for it; no timing was measured. The tests compare the two forms, and a
-batch with its messages one by one. CI runs them on x86-64, AArch64 and
-32-bit x86, builds each set of features for two targets without the
-standard library, and runs the AArch64 code on an emulated processor
-([`emulated-aarch64/`](https://github.com/linouxis9/oxirush-security/tree/master/emulated-aarch64)).
-The crate's only `unsafe` code is the calls of the vector code and the
-instructions that clear the stack and the registers.
+A pull request comes with a test for what it changes; the Rust blocks of
+this page are checked with what they print
+([`tests/readme.rs`](tests/readme.rs) says how). Sign off your commits
+(`git commit -s`): by contributing you agree to the
+[Developer Certificate of Origin](https://developercertificate.org/).
+[SECURITY.md](SECURITY.md) says how to report a vulnerability.
 
-CI fuzzes the four `cargo fuzz` targets of
-[`fuzz/`](https://github.com/linouxis9/oxirush-security/tree/master/fuzz) for a minute at each
-push and for half an hour each week.
-
-[The documentation](https://docs.rs/oxirush-security) has the terms, and
-each function with its clause and the values that it is tested against. It
-also has the types of the inputs with their errors, what an operation
-leaves, and how the timing was checked. Until the release,
-`cargo doc --open` in a clone builds it.
+[The documentation](https://docs.rs/oxirush-security) has the terms, each
+function with its clause and the values that it is tested against, what an
+operation leaves, and how the code was checked for a time that does not
+depend on a secret; `cargo doc --open` in a clone builds it.
 
 ## The OxiRush family
 
-[oxirush-nas](https://github.com/linouxis9/oxirush-nas) (NAS messages),
-[oxirush-ngap](https://github.com/linouxis9/oxirush-ngap) (NGAP),
-[oxirush-s1ap](https://github.com/linouxis9/oxirush-s1ap) (S1AP),
-[oxirush-gtp-u](https://github.com/linouxis9/oxirush-gtp-u) (GTP-U) and
-[oxirush-sctp](https://github.com/linouxis9/oxirush-sctp) (SCTP).
-
-## Contributing
-
-Open a pull request with a test for what it changes. A Rust block of this
-page is checked with what it prints: [`tests/readme.rs`](tests/readme.rs)
-says how. Sign off your commits (`git commit -s`): by contributing you
-agree to the [Developer Certificate of Origin](https://developercertificate.org/).
-[SECURITY.md](SECURITY.md) says how to report a vulnerability.
+- [oxirush-utils](https://github.com/linouxis9/oxirush-utils): the 3GPP identities, and the JSON tree with its paths that the others share.
+- [oxirush-aper](https://github.com/linouxis9/oxirush-aper): aligned PER, the runtime of the NGAP and S1AP codecs.
+- [oxirush-nas](https://github.com/linouxis9/oxirush-nas): the NAS messages of 5GS and EPS.
+- [oxirush-security](https://github.com/linouxis9/oxirush-security): NAS security, AKA and the derivation of keys.
+- [oxirush-ngap](https://github.com/linouxis9/oxirush-ngap): NGAP, between a gNB and an AMF.
+- [oxirush-s1ap](https://github.com/linouxis9/oxirush-s1ap): S1AP, between an eNB and an MME.
+- [oxirush-gtp-u](https://github.com/linouxis9/oxirush-gtp-u): GTP-U tunnels, with a test UPF.
+- [oxirush-sctp](https://github.com/linouxis9/oxirush-sctp): SCTP sockets, which carry NGAP and S1AP.
 
 ## License
 
-Copyright 2025-2026 Valentin D'Emmanuele
-
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+Copyright 2025-2026 Valentin D'Emmanuele. Licensed under the Apache License,
+Version 2.0: see [LICENSE](LICENSE).

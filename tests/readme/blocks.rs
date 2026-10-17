@@ -187,7 +187,9 @@ fn block_4() {
 /// The Rust block 5 of README.md.
 fn block_5() {
     use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, nas_cipher, nas_mac};
-    use oxirush_security::{CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
+    use oxirush_security::{
+        CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount, constant_time_eq,
+    };
 
     let octets = |s: &str| hex::decode(s).unwrap();
     let k_nas_enc = KNasEnc::from_slice(&octets("f47ae570afde775373d1b313d2176f54")).unwrap();
@@ -196,7 +198,7 @@ fn block_5() {
 
     // What came after the security header: the MAC, the sequence number and
     // the ciphered message
-    let (received_mac, sequence_number) = (0x83e4_d009, 0);
+    let (received_mac, sequence_number) = (0x83e4_d009_u32, 0);
     let mut message = [0xb5, 0x7d, 0xd5];
 
     // The receiver keeps the lowest uplink NAS COUNT that it still accepts,
@@ -208,7 +210,9 @@ fn block_5() {
 
     let protected = [&[sequence_number][..], &message].concat();
     let mac = nas_mac(&k_nas_int, count, access, uplink, &protected, nia2);
-    println!("MAC {mac:08x}, as received: {}", mac == received_mac);
+    // In a time that does not tell how much of a forged MAC is right
+    let right = constant_time_eq(&mac.to_be_bytes(), &received_mac.to_be_bytes());
+    println!("MAC {mac:08x}, as received: {right}");
 
     // The MAC is right: the message is deciphered, and its NAS COUNT is not
     // accepted again

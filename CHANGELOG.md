@@ -488,6 +488,14 @@ cannot say is a `Result`. No public function panics on its arguments.
   `leftovers/` and `emulated-aarch64/`; `differential/`; a `SECURITY.md`;
   an advisory check in CI.
 
+- `benches/compare/compare.sh`, which times MILENAGE and the six NAS
+  algorithms beside the `milenage` crate 0.3.1 and 0.1.6, `zuc` 0.4.1,
+  cryptography-rs 0.8.0, the RustCrypto `aes`, `ctr` and `cmac`, Open5GS
+  v2.8.0 and free5GC, fetching each at the version that it pins: time,
+  cycles, instructions, allocations and peak memory. The README has its
+  table, and the sections of the other OxiRush crates; its receiver
+  compares a MAC with `constant_time_eq`.
+
 ### Fixed
 
 - The algorithms count octets, not bits. On a 32-bit target the length of

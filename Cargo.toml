@@ -2,13 +2,13 @@
 name = "oxirush-security"
 version = "0.3.0"
 edition = "2024"
-description = "5GS and EPS security algorithms, key derivation, NAS ciphering, integrity, and SUCI"
+description = "The security functions of 5GS and EPS, per 3GPP TS 35.206, TS 33.102, TS 33.501 and TS 33.401: MILENAGE, key derivation, NAS integrity and ciphering, and SUCI concealment"
 license = "Apache-2.0"
 repository = "https://github.com/linouxis9/oxirush-security"
 authors = ["Valentin D'Emmanuele"]
 rust-version = "1.88"
-keywords = ["5g", "lte", "eps", "nas", "security"]
-categories = ["cryptography", "network-programming"]
+keywords = ["5g", "lte", "3gpp", "milenage", "suci"]
+categories = ["cryptography", "network-programming", "no-std"]
 readme = "README.md"
 exclude = [".cargo/", ".github/", ".gitignore", "benches/", "differential/", "emulated-aarch64/", "fuzz/", "leftovers/"]
 
