@@ -64,6 +64,7 @@ macro_rules! octets_type {
                 match octets.try_into() {
                     Ok(octets) => Ok(Self(octets)),
                     Err(_) => Err($crate::common::error::SecurityError::InvalidKeyLength {
+                        name: stringify!($name),
                         expected: $octets,
                         got: octets.len(),
                     }),
@@ -237,6 +238,7 @@ mod tests {
         assert_eq!(
             Ik::from_slice(&[0x22; 15]),
             Err(SecurityError::InvalidKeyLength {
+                name: "Ik",
                 expected: 16,
                 got: 15
             })
@@ -267,6 +269,7 @@ mod tests {
         assert_eq!(
             Autn::from_slice(&[0; 15]),
             Err(SecurityError::InvalidKeyLength {
+                name: "Autn",
                 expected: 16,
                 got: 15
             })

@@ -28,6 +28,8 @@ pub enum SecurityError {
     /// A key, or a value of an authentication, that does not have the
     /// length of its type.
     InvalidKeyLength {
+        /// The type, by its name in this crate: `K`, `KAmf`, `Rand`.
+        name: &'static str,
         /// Length of a value of the type, in octets.
         expected: usize,
         /// Length of the slice that was passed, in octets.
@@ -82,9 +84,14 @@ pub enum SecurityError {
 impl core::fmt::Display for SecurityError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::InvalidKeyLength { expected, got } => {
-                write!(f, "invalid key length: expected {expected}, got {got}")
-            }
+            Self::InvalidKeyLength {
+                name,
+                expected,
+                got,
+            } => write!(
+                f,
+                "invalid length of `{name}`: expected {expected} octets, got {got}"
+            ),
             Self::InvalidParameter(reason) => write!(f, "invalid parameter: {reason}"),
             Self::Identity(error) => write!(f, "invalid identity: {error}"),
             Self::InputTooLong { maximum, got } => {
@@ -136,10 +143,11 @@ mod tests {
         for (error, text) in [
             (
                 SecurityError::InvalidKeyLength {
+                    name: "KAmf",
                     expected: 32,
                     got: 31,
                 },
-                "invalid key length: expected 32, got 31",
+                "invalid length of `KAmf`: expected 32 octets, got 31",
             ),
             (
                 SecurityError::InvalidParameter("ABBA is 2 to 255 octets long"),

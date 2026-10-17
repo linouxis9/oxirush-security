@@ -371,6 +371,9 @@ cannot say is a `Result`. No public function panics on its arguments.
 - The crate warns on a public item without documentation: the 35 that had
   none are documented.
 
+- `SecurityError::InvalidKeyLength` names the type whose octets are
+  refused: "invalid length of `K`: expected 16 octets, got 15".
+
 ### Added
 
 - **MILENAGE** (TS 35.205 to TS 35.208), and the authentication of
