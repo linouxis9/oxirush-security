@@ -38,6 +38,12 @@ use std::sync::Arc;
 pub struct Case {
     pub name: String,
     pub secrets: Vec<Secret>,
+    /// What the operation returns in a register, which is the program's,
+    /// and which nothing of the crate may keep a copy of on the stack. It
+    /// is looked for on the stack alone, and where the crate is optimized:
+    /// an unoptimized build keeps such a value in the frames that it goes
+    /// through, as the documentation of the crate says.
+    pub returned: Vec<Secret>,
     /// Whether the operation has a form for each kind of instructions. A
     /// derivation and a SUCI have one form.
     pub forms: usize,
@@ -96,9 +102,22 @@ impl Cases {
         secrets: Vec<Secret>,
         run: impl Fn() + Send + Sync + 'static,
     ) {
+        self.add_returning(name, forms, secrets, Vec::new(), run);
+    }
+
+    /// A case whose operation returns `returned` in a register.
+    fn add_returning(
+        &mut self,
+        name: impl Into<String>,
+        forms: usize,
+        secrets: Vec<Secret>,
+        returned: Vec<Secret>,
+        run: impl Fn() + Send + Sync + 'static,
+    ) {
         self.0.push(Case {
             name: name.into(),
             secrets,
+            returned,
             forms,
             run: Arc::new(run),
         });
@@ -622,7 +641,8 @@ fn generators(cases: &mut Cases) {
         crate::here();
         generator.fill(black_box(&mut keystream));
     });
-    cases.add("Snow3G::next_word", 3, secrets, move || {
+    let returned = returned_words(&expected[..4]);
+    cases.add_returning("Snow3G::next_word", 3, secrets, returned, move || {
         let mut generator = prepared(|| Snow3G::from_bytes(black_box(key), black_box(iv)));
         let mut keystream = spare(vec![0u32; 4]);
         crate::here();
@@ -649,7 +669,8 @@ fn generators(cases: &mut Cases) {
         crate::here();
         generator.fill(black_box(&mut keystream));
     });
-    cases.add("Zuc::next_word", 3, secrets, move || {
+    let returned = returned_words(&expected[..4]);
+    cases.add_returning("Zuc::next_word", 3, secrets, returned, move || {
         let mut generator = prepared(|| Zuc::new(black_box(key), black_box(iv)));
         let mut keystream = spare(vec![0u32; 4]);
         crate::here();
@@ -657,6 +678,14 @@ fn generators(cases: &mut Cases) {
             *word = generator.next_word();
         }
     });
+}
+
+/// The keystream words that `next_word` returns, one at a time in a
+/// register.
+fn returned_words(words: &[u32]) -> Vec<Secret> {
+    (words.iter().enumerate())
+        .map(|(at, word)| secret(&format!("keystream word {at}"), &word.to_le_bytes()))
+        .collect()
 }
 
 /// A derivation, with the key of its HMAC and the string S that it hashes

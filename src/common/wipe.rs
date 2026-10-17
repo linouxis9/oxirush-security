@@ -140,17 +140,34 @@ pub(crate) fn suci<R>(work: impl FnOnce() -> R) -> R {
 /// `DEPTH` octets of the stack below the caller.
 ///
 /// A function calls this last, so that the value of `work` goes from its
-/// frame to where the program wants it and nowhere between: the clearing
-/// is what a value does when it is dropped, after the result is in its
-/// place, and the function that returns holds no copy of it.
+/// frame to where the program wants it and nowhere between, and the
+/// function that returns holds no copy of it:
+///
+/// - a value of one word or less, which is returned in a general register,
+///   is kept in a register that the clearing does not write while it
+///   clears. The clearing then runs here, without a call: the compiler may
+///   make the drop of a value a function of its own, which saves on the
+///   stack what a register held, the result of the work, above what it
+///   clears;
+/// - a larger value is written where the program wants it by `work`
+///   itself, and the clearing is what a value does when it is dropped,
+///   after the result is in its place. Holding it across the clearing
+///   would take vector registers, which the clearing writes, or the stack.
 #[inline(always)]
 fn after<const DEPTH: usize, R>(work: impl FnOnce() -> R) -> R {
     #[cfg(oxirush_security_unwiped)]
     return work();
     #[cfg(not(oxirush_security_unwiped))]
     {
-        let _clear = Clear::<DEPTH>;
-        below(work)
+        let clear = Clear::<DEPTH>;
+        if size_of::<R>() <= size_of::<usize>() {
+            let result = below(work);
+            clear.now();
+            result
+        } else {
+            let _clear = clear;
+            below(work)
+        }
     }
 }
 
@@ -163,9 +180,19 @@ fn below<R>(work: impl FnOnce() -> R) -> R {
 }
 
 /// The clearing of the registers and of `DEPTH` octets of stack, when it
-/// is dropped.
+/// is dropped or when [`now`](Self::now) says so.
 #[cfg(not(oxirush_security_unwiped))]
 struct Clear<const DEPTH: usize>;
+
+#[cfg(not(oxirush_security_unwiped))]
+impl<const DEPTH: usize> Clear<DEPTH> {
+    /// Clear now, in the function that calls this, and not when the value
+    /// is dropped.
+    #[inline(always)]
+    fn now(self) {
+        core::mem::ManuallyDrop::new(self).clear();
+    }
+}
 
 /// What is cleared in a build with debug assertions, whatever the work:
 /// code that is not optimized goes several times deeper, and this is
@@ -177,6 +204,14 @@ const UNOPTIMIZED: usize = 49152;
 impl<const DEPTH: usize> Drop for Clear<DEPTH> {
     #[inline(always)]
     fn drop(&mut self) {
+        self.clear();
+    }
+}
+
+#[cfg(not(oxirush_security_unwiped))]
+impl<const DEPTH: usize> Clear<DEPTH> {
+    #[inline(always)]
+    fn clear(&self) {
         // On x86-64 and on AArch64, instructions clear the stack below
         // this function and the registers, without a call
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

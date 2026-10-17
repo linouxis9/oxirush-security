@@ -61,6 +61,10 @@ const PATTERN: u8 = 0xa5;
 /// Octets at the deep end of a cleared area that are not looked at.
 const SLACK: usize = 64;
 
+/// What the crate clears after any work when it is built with debug
+/// assertions.
+const UNOPTIMIZED: usize = 49152;
+
 /// Whether a piece of work that went `depth` octets deep used more than
 /// three quarters of the `cleared` octets.
 ///
@@ -337,8 +341,9 @@ impl Left {
         &self.stack[top - to..top - from]
     }
 
-    /// Where the secrets are found, in words for a reader.
-    fn findings(&self, secrets: &[values::Secret]) -> Vec<String> {
+    /// Where the secrets are found, in words for a reader: on the stack,
+    /// and in the registers unless `registers` is false.
+    fn findings(&self, secrets: &[values::Secret], registers: bool) -> Vec<String> {
         let mut findings = Vec::new();
         for (name, secret) in secrets {
             // A secret of sixteen octets or more may survive in part: each
@@ -383,7 +388,7 @@ impl Left {
             // A register holds eight octets, or thirty-two: any eight
             // octets in a row of the secret, where it has as many
             let piece = secret.len().min(8);
-            if piece < 4 {
+            if piece < 4 || !registers {
                 continue;
             }
             let held = |register: &[u8]| {
@@ -482,7 +487,7 @@ fn main() -> ExitCode {
             // is measured against the deepest of them.
             let run = case.run.clone();
             let bare = in_form(form, || unwiped(|| observe(move || run())));
-            let seen = bare.findings(&case.secrets);
+            let seen = bare.findings(&case.secrets, true);
             seen_unwiped += seen.len();
             let (areas, noted) = cleared();
             let deepest = noted[..areas.min(noted.len())]
@@ -515,7 +520,13 @@ fn main() -> ExitCode {
             let run = case.run.clone();
             let left = in_form(form, || observe(move || run()));
             let (areas, noted) = cleared();
-            wrong.extend(left.findings(&case.secrets));
+            wrong.extend(left.findings(&case.secrets, true));
+            // What the operation returns in a register, on the stack, where
+            // the crate is optimized: one built with debug assertions clears
+            // 49152 octets after any work
+            if of != UNOPTIMIZED {
+                wrong.extend(left.findings(&case.returned, false));
+            }
             if areas > noted.len() {
                 wrong.push(format!(
                     "{areas} areas are cleared, more than the scan follows"

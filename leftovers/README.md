@@ -49,6 +49,10 @@ Without the clearing that follows its work (`hooks::unwiped`):
 As a program has it, the run fails when:
 
 - one of those values is on the stack or in a register;
+- what the operation returns in a register, a keystream word of
+  `next_word` for instance, is on the stack, where the crate is optimized:
+  an unoptimized build keeps such a value in the frames that it goes
+  through, which the documentation of the crate says;
 - an area that the crate cleared is not zero. There are `areas` of them, the
   deepest of `cleared` octets;
 - a vector register is not zero;
