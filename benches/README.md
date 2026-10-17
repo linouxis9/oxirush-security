@@ -9,6 +9,7 @@ algorithms, the key derivations and SUCI with
 cargo bench --bench algorithms                # every benchmark of one message
 cargo bench --bench algorithms -- 128-EEA2    # those whose name has it
 cargo bench --bench batch -- 16x64            # sixteen messages of 64 octets
+cargo bench --bench milenage                  # MILENAGE, beside the milenage crate
 
 # Ten seconds of one benchmark under the profiler, then where the time went
 cargo bench --bench algorithms -- --profile-time 10 cipher/128-EEA1/1500
@@ -199,3 +200,59 @@ the S-box SQ of SNOW 3G read by permutations of 64 octets where AVX-512
 VBMI is; the S-box S1 of ZUC as GFNI instructions, in place of the AES
 instruction and the shuffles around it; and AES on VAES, two or four blocks
 to an instruction.
+
+## MILENAGE
+
+`milenage` times MILENAGE for one subscriber, from its K and its OPc at
+each call, beside the [`milenage`](https://crates.io/crates/milenage) crate
+0.1.6, whose AES is that of the `aes` crate 0.8 and finds the AES
+instructions itself. The time of one call in nanoseconds, the lowest median
+of three runs on 2026-10-17, on one core of the AMD Ryzen 7 5700G whose
+hyper-thread was 0 to 38 % busy, while two other programs compiled on
+other cores (load average 2.3 to 7.4):
+
+| | This crate | Without the clearing | `milenage` 0.1.6 | This crate, `aes` crate | This crate, bitsliced AES | `milenage` 0.1.6, bitsliced AES |
+|---|---:|---:|---:|---:|---:|---:|
+| OPc from OP | 79 | 61 | 50 | 213 | 831 | 605 |
+| f1 | 91 | 73 | 85 | 233 | 1105 | 1198 |
+| f2345 | 122 | 110 | 175 | 254 | 1146 | 2409 |
+| An authentication vector | 130 | 106 | 260 | 266 | 1140 | 3576 |
+| The check of an AUTN | 147 | 146 | | 292 | 1440 | |
+| An AUTS | 105 | 77 | 169 | 243 | 1127 | 2402 |
+| The reading of an AUTS | 123 | 120 | | 270 | 1403 | |
+
+The first three columns run on the AES instructions. The fourth is the
+code of a processor without the instructions of the vector code, with the
+hooks of the crate and `FORM=scalar`: the `aes` crate 0.9, which finds AES-NI
+itself here. The last two are this crate and the `milenage` crate with the
+bitsliced AES of their `aes` crates, built with
+`--cfg aes_backend="soft" --cfg aes_force_soft`. The `milenage` crate has
+no function for the vector, the AUTS or their checks: the benchmark builds
+the first two from its functions as its users do.
+
+A vector is the key expansion, TEMP, then OUT1 to OUT4 side by side; the
+`milenage` crate expands the key for each of its five encryptions. Its OPc
+and its f1 are faster on the AES instructions by what the clearing costs,
+16 to 18 ns, and on the `aes` crate 0.9 by that clearing and the wiping of
+the 704 octets of a key of that crate, which the `milenage` crate does not
+wipe. With the bitsliced AES the encryptions of one key run four at a time;
+one after the other, a vector took 1920 ns and f2345 1648 ns.
+
+`milenage/N/function/form` times N subscribers, each with its K: a call for
+each, or one call of `authentication_vector_batch` or `check_autn_batch`.
+The time for the N, in microseconds, the lowest median of two to four runs
+as above, the last two at 06:45 with a load average of 5.7 to 8.0:
+
+| | 1 | 4 | 8 | 64 | 1024 |
+|---|---:|---:|---:|---:|---:|
+| Vectors, a call for each | 0.119 | 0.48 | 0.95 | 7.6 | 121 |
+| Vectors, one batch | 0.29 | 0.44 | 0.62 | 3.8 | 59 |
+| Checks of an AUTN, a call for each | 0.147 | 0.56 | 1.15 | 8.9 | 143 |
+| Checks of an AUTN, one batch | 0.32 | 0.51 | 0.76 | 5.0 | 79 |
+
+A batch runs the key expansions and the encryptions of eight subscribers
+side by side, and clears the stack once over 18432 octets, which takes
+longer than a vector: for one or two subscribers, a call for each is
+faster. On the `aes` crate a batch of a thousand vectors takes 206 µs,
+where a call for each takes 262 µs: the jobs run one after the other, and
+the stack is cleared once.

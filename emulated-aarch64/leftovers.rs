@@ -26,11 +26,14 @@
 //! messages are in a [`Prepared`] that the guest keeps.
 
 use core::mem::ManuallyDrop;
+use oxirush_security::milenage::{
+    Amf, K, Milenage, Opc, Sqn, VectorJob, authentication_vector_batch,
+};
 use oxirush_security::nas_5gs::{KAmf, KNasEnc, KNasInt, derive_knas_int};
 use oxirush_security::{
-    Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
-    IntegrityContext, MacJob, Snow3G, Zuc, constant_time_eq, nea_cipher, nea_cipher_batch, nia_mac,
-    nia_mac_batch,
+    Autn, Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
+    IntegrityContext, MacJob, Rand, Snow3G, Zuc, constant_time_eq, nea_cipher, nea_cipher_batch,
+    nia_mac, nia_mac_batch,
 };
 
 /// The key of the examples of FIPS 197, whose round keys are known.
@@ -65,6 +68,24 @@ pub const KAMF: [u8; 32] = {
     }
     key
 };
+
+/// The subscriber of MILENAGE of test set 1 of TS 35.208, and the RAND,
+/// the SQN and the AMF of its challenge.
+pub const MILENAGE_K: [u8; 16] = [
+    0x46, 0x5b, 0x5c, 0xe8, 0xb1, 0x99, 0xb4, 0x9f, 0xaa, 0x5f, 0x0a, 0x2e, 0xe2, 0x38, 0xa6, 0xbc,
+];
+pub const MILENAGE_OPC: [u8; 16] = [
+    0xcd, 0x63, 0xcb, 0x71, 0x95, 0x4a, 0x9f, 0x4e, 0x48, 0xa5, 0x99, 0x4e, 0x37, 0xa0, 0x2b, 0xaf,
+];
+pub const MILENAGE_RAND: [u8; 16] = [
+    0x23, 0x55, 0x3c, 0xbe, 0x96, 0x37, 0xa8, 0x9d, 0x21, 0x8a, 0xe6, 0x4d, 0xae, 0x47, 0xbf, 0x35,
+];
+pub const MILENAGE_SQN: [u8; 6] = [0xff, 0x9b, 0xb4, 0xd0, 0xb6, 0x07];
+pub const MILENAGE_AMF: [u8; 2] = [0xb9, 0xb9];
+
+static MILENAGE_RAND_: Rand = Rand::new(&MILENAGE_RAND);
+static MILENAGE_SQN_: Sqn = Sqn::new(&MILENAGE_SQN);
+static MILENAGE_AMF_: Amf = Amf::new(&MILENAGE_AMF);
 
 static ENC: KNasEnc = KNasEnc::new(&KEY);
 static INT: KNasInt = KNasInt::new(&KEY);
@@ -117,10 +138,16 @@ pub enum Kind {
     Derivation,
     /// A comparison of [`KEY`] with itself.
     Comparison,
+    /// MILENAGE with [`MILENAGE_K`] and [`MILENAGE_OPC`] for
+    /// [`MILENAGE_RAND`], with the AMF of the challenge or, for an AUTS,
+    /// zeros.
+    Milenage {
+        auts: bool,
+    },
 }
 
 /// The operations: their names, and what they are.
-pub const CASES: [(&str, Kind); 22] = [
+pub const CASES: [(&str, Kind); 26] = [
     ("nea_cipher 128-EEA1, 64 octets", Kind::Ciphering(0)),
     ("nea_cipher 128-EEA2, 64 octets", Kind::Ciphering(1)),
     ("nea_cipher 128-EEA3, 64 octets", Kind::Ciphering(2)),
@@ -158,11 +185,24 @@ pub const CASES: [(&str, Kind); 22] = [
     ("Zuc::fill", Kind::Generator(false)),
     ("nas_5gs::derive_knas_int", Kind::Derivation),
     ("constant_time_eq", Kind::Comparison),
+    (
+        "Milenage::authentication_vector",
+        Kind::Milenage { auts: false },
+    ),
+    ("Milenage::check_autn", Kind::Milenage { auts: false }),
+    ("Milenage::verify_auts", Kind::Milenage { auts: true }),
+    (
+        "authentication_vector_batch of 9",
+        Kind::Milenage { auts: false },
+    ),
 ];
 
 /// What the operations take, and where their values go: in the memory of
 /// the program, off its stack.
 pub struct Prepared {
+    milenage: Option<(Milenage, Rand, Autn, oxirush_security::milenage::Auts)>,
+    /// Nine subscribers, the first of them that of [`MILENAGE_K`].
+    subscribers: Option<[Milenage; MESSAGES]>,
     ciphering: Option<CipheringContext>,
     integrity: Option<IntegrityContext>,
     integrity_of: [Option<IntegrityContext>; MESSAGES],
@@ -185,6 +225,8 @@ impl Default for Prepared {
 impl Prepared {
     pub const fn new() -> Self {
         Self {
+            milenage: None,
+            subscribers: None,
             ciphering: None,
             integrity: None,
             integrity_of: [const { None }; MESSAGES],
@@ -209,6 +251,22 @@ impl Prepared {
             }
             17 => self.snow3g = Some(Snow3G::from_bytes(&KEY, &IV)),
             19 => self.zuc = Some(Zuc::new(&KEY, &IV)),
+            22..=24 => {
+                let subscriber = Milenage::new(&K::new(&MILENAGE_K), &Opc::new(&MILENAGE_OPC));
+                let rand = Rand::new(&MILENAGE_RAND);
+                let sqn = Sqn::new(&MILENAGE_SQN);
+                let vector =
+                    subscriber.authentication_vector(&rand, &sqn, &Amf::new(&MILENAGE_AMF));
+                let auts = subscriber.auts(&rand, &sqn);
+                self.milenage = Some((subscriber, rand, vector.autn().clone(), auts));
+            }
+            25 => {
+                self.subscribers = Some(core::array::from_fn(|index| {
+                    let mut k = MILENAGE_K;
+                    k[0] ^= index as u8;
+                    Milenage::new(&K::new(&k), &Opc::new(&MILENAGE_OPC))
+                }));
+            }
             _ => {}
         }
     }
@@ -313,6 +371,37 @@ impl Prepared {
                 self.keep(&ManuallyDrop::new(key))
             }
             21 => constant_time_eq(&KEY, ENC.as_octets()).into(),
+            22..=24 => match &self.milenage {
+                Some((subscriber, rand, autn, auts)) => match case {
+                    22 => {
+                        let (sqn, amf) = (Sqn::new(&MILENAGE_SQN), Amf::new(&MILENAGE_AMF));
+                        let vector = subscriber.authentication_vector(rand, &sqn, &amf);
+                        self.keep(&ManuallyDrop::new(vector))
+                    }
+                    23 => {
+                        let response = subscriber.check_autn(rand, autn);
+                        self.keep(&ManuallyDrop::new(response))
+                    }
+                    _ => {
+                        let sqn_ms = subscriber.verify_auts(rand, auts);
+                        self.keep(&ManuallyDrop::new(sqn_ms))
+                    }
+                },
+                None => u64::MAX,
+            },
+            25 => match &self.subscribers {
+                Some(subscribers) => {
+                    let (rand, sqn, amf) = (&MILENAGE_RAND_, &MILENAGE_SQN_, &MILENAGE_AMF_);
+                    let job = |subscriber| VectorJob::new(subscriber, rand, sqn, amf);
+                    let mut jobs = ManuallyDrop::new(subscribers.each_ref().map(job));
+                    authentication_vector_batch(&mut *jobs);
+                    // The vectors are the program's
+                    let from = core::ptr::from_ref(&jobs) as u64;
+                    self.owned = [from, from + size_of_val(&jobs) as u64];
+                    0
+                }
+                None => u64::MAX,
+            },
             _ => u64::MAX,
         }
     }

@@ -22,26 +22,32 @@
 //! The cases reach every function of the vector code: the SNOW 3G and ZUC
 //! generators of one message and of four, the key expansion of AES, its
 //! counter mode and its CBC-MAC for one message and for several, with the
-//! key of each message or with the round keys of a context, and the
-//! carry-less products of 128-EIA1 and 128-EIA3.
+//! key of each message or with the round keys of a context, the
+//! carry-less products of 128-EIA1 and 128-EIA3, and the AES of
+//! MILENAGE, several blocks of one key at a time.
 
+use oxirush_security::milenage::{
+    Amf, AutnJob, K, Milenage, Op, Opc, Sqn, VectorJob, authentication_vector_batch,
+    check_autn_batch,
+};
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt};
 use oxirush_security::{
-    Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, Implementation,
-    IntegrityAlgorithm, IntegrityContext, MacJob, Snow3G, Zuc, implementation, nea_cipher,
+    Autn, Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, Implementation,
+    IntegrityAlgorithm, IntegrityContext, MacJob, Rand, Snow3G, Zuc, implementation, nea_cipher,
     nea_cipher_batch, nea_cipher_bits, nia_mac, nia_mac_batch, nia_mac_bits,
 };
 
 /// The cases, by their names.
-pub const CASES: [&str; 8] = [
+pub const CASES: [&str; 9] = [
     "the implementation that runs",
-    "known answers of the six algorithms (3GPP test sets)",
+    "known answers of the six algorithms and of MILENAGE (3GPP test sets)",
     "SNOW 3G keystream, 200 keys",
     "ZUC keystream, 200 keys",
     "128-EEA1, 128-EEA2 and 128-EEA3 at 170 lengths, in octets and in bits",
     "128-EIA1, 128-EIA2 and 128-EIA3 at 170 lengths, in octets and in bits",
     "batches of 1 to 9 messages of mixed algorithms and lengths",
     "keyed contexts at 170 lengths, alone and in batches",
+    "MILENAGE for 100 subscribers: OPc, the seven functions, a vector, its check and an AUTS, and batches of 1 to 9",
 ];
 
 /// What case 0 gives for each implementation.
@@ -66,6 +72,7 @@ pub fn run(case: u64) -> u64 {
         5 => macs(),
         6 => batches(),
         7 => contexts(),
+        8 => milenage(),
         _ => 0,
     }
 }
@@ -518,6 +525,86 @@ const MAC_SETS: [MacSet; 3] = [
     ),
 ];
 
+/// OPc and the outputs of MILENAGE for random subscribers: each function
+/// alone, then a vector, the check of its AUTN, and an AUTS read back.
+fn milenage() -> u64 {
+    let (mut random, mut digest) = (Random(0x6a09_e667_f3bc_c908), Digest::new());
+    for _ in 0..100 {
+        let k = K::new(&random.octets());
+        let opc = Opc::from_op(&k, &Op::new(&random.octets()));
+        digest.octets(opc.as_octets());
+        let subscriber = Milenage::new(&k, &opc);
+        let (rand, sqn, amf) = (
+            Rand::new(&random.octets()),
+            Sqn::new(&random.octets()),
+            Amf::new(&random.octets()),
+        );
+        digest.octets(subscriber.f1(&rand, &sqn, &amf).as_octets());
+        digest.octets(subscriber.f1_star(&rand, &sqn, &amf).as_octets());
+        let (res, ck, ik, ak) = subscriber.f2345(&rand);
+        digest.octets(res.as_octets());
+        digest.octets(ck.as_octets());
+        digest.octets(ik.as_octets());
+        digest.octets(ak.as_octets());
+        digest.octets(subscriber.f5_star(&rand).as_octets());
+
+        let vector = subscriber.authentication_vector(&rand, &sqn, &amf);
+        digest.octets(vector.autn().as_octets());
+        match subscriber.check_autn(&rand, vector.autn()) {
+            Ok(response) => digest.octets(response.sqn().as_octets()),
+            Err(_) => digest.word(0xdead),
+        }
+        let auts = subscriber.auts(&rand, &sqn);
+        digest.octets(auts.as_octets());
+        match subscriber.verify_auts(&rand, &auts) {
+            Ok(sqn_ms) => digest.octets(sqn_ms.as_octets()),
+            Err(_) => digest.word(0xdead),
+        }
+    }
+
+    // Batches of 1 to 9 subscribers, side by side from three on, with an
+    // AUTN in two refused
+    let subscribers: [Milenage; 9] = core::array::from_fn(|_| {
+        Milenage::new(&K::new(&random.octets()), &Opc::new(&random.octets()))
+    });
+    let rands: [Rand; 9] = core::array::from_fn(|_| Rand::new(&random.octets()));
+    let (sqn, amf) = (Sqn::new(&random.octets()), Amf::new(&random.octets()));
+    for count in 1..=9 {
+        let mut at = 0;
+        let mut jobs = subscribers.each_ref().map(|subscriber| {
+            at += 1;
+            VectorJob::new(subscriber, &rands[at - 1], &sqn, &amf)
+        });
+        authentication_vector_batch(&mut jobs[..count]);
+        let autns: [Autn; 9] = core::array::from_fn(|at| match jobs[at].vector() {
+            Some(vector) => {
+                let mut autn = *vector.autn().as_octets();
+                autn[15] ^= (at % 2) as u8;
+                Autn::new(&autn)
+            }
+            None => Autn::new(&[0; 16]),
+        });
+        let mut at = 0;
+        let mut checks = subscribers.each_ref().map(|subscriber| {
+            at += 1;
+            AutnJob::new(subscriber, &rands[at - 1], &autns[at - 1])
+        });
+        check_autn_batch(&mut checks[..count]);
+        for (job, check) in jobs.iter().zip(&checks).take(count) {
+            match job.vector() {
+                Some(vector) => digest.octets(vector.autn().as_octets()),
+                None => digest.word(0xdead),
+            }
+            match check.response() {
+                Some(Ok(response)) => digest.octets(response.res().as_octets()),
+                Some(Err(_)) => digest.word(0xbad),
+                None => digest.word(0xdead),
+            }
+        }
+    }
+    digest.0
+}
+
 fn known_answers() -> u64 {
     let mut number = 0;
     for (algorithm, key, count, bearer, direction, bits, plaintext, ciphertext) in CIPHER_SETS {
@@ -543,6 +630,30 @@ fn known_answers() -> u64 {
         if nia_mac_bits(&key, count, bearer, direction, message, bits, algorithm) != Ok(mac) {
             return number;
         }
+    }
+    // MILENAGE: TS 35.208 test set 1, OPc from OP, MAC-A and RES
+    number += 1;
+    let k = K::new(&[
+        0x46, 0x5b, 0x5c, 0xe8, 0xb1, 0x99, 0xb4, 0x9f, 0xaa, 0x5f, 0x0a, 0x2e, 0xe2, 0x38, 0xa6,
+        0xbc,
+    ]);
+    let op = Op::new(&[
+        0xcd, 0xc2, 0x02, 0xd5, 0x12, 0x3e, 0x20, 0xf6, 0x2b, 0x6d, 0x67, 0x6a, 0xc7, 0x2c, 0xb3,
+        0x18,
+    ]);
+    let rand = Rand::new(&[
+        0x23, 0x55, 0x3c, 0xbe, 0x96, 0x37, 0xa8, 0x9d, 0x21, 0x8a, 0xe6, 0x4d, 0xae, 0x47, 0xbf,
+        0x35,
+    ]);
+    let (sqn, amf) = (
+        Sqn::new(&[0xff, 0x9b, 0xb4, 0xd0, 0xb6, 0x07]),
+        Amf::new(&[0xb9, 0xb9]),
+    );
+    let subscriber = Milenage::new(&k, &Opc::from_op(&k, &op));
+    let mac_a = [0x4a, 0x9f, 0xfa, 0xc3, 0x54, 0xdf, 0xaf, 0xb3];
+    let res = [0xa5, 0x42, 0x11, 0xd5, 0xe3, 0xba, 0x50, 0xbf];
+    if subscriber.f1(&rand, &sqn, &amf) != mac_a || subscriber.f2(&rand) != res {
+        return number;
     }
     0
 }

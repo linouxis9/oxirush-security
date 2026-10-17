@@ -19,7 +19,7 @@
 //! clear whole, and no octet of a key.
 
 use oxirush_security::nas_5gs::{Guti, KAmf, KNasInt, ResStar, STmsi, Supi, XresStar};
-use oxirush_security::{Autn, Ck, Ik, Plmn, Rand};
+use oxirush_security::{Autn, Ck, Ik, Plmn, Rand, milenage};
 
 #[test]
 fn an_identity_is_printed_whole() {
@@ -95,6 +95,30 @@ fn rand_and_autn_are_printed_whole() {
 }
 
 #[test]
+fn the_values_of_milenage_that_travel_are_printed_whole() {
+    use milenage::{Amf, Auts, MacA, MacS, Res, Sqn};
+    let octets = [0x4a, 0x9f, 0xfa, 0xc3, 0x54, 0xdf, 0xaf, 0xb3];
+    assert_eq!(
+        format!("{:?}", Sqn::try_from(0xff9b_b4d0_b607).unwrap()),
+        "Sqn(ff9bb4d0b607)"
+    );
+    assert_eq!(format!("{:?}", Amf::new(&[0x80, 0x00])), "Amf(8000)");
+    assert_eq!(
+        format!("{:?}", MacA::new(&octets)),
+        "MacA(4a9ffac354dfafb3)"
+    );
+    assert_eq!(
+        format!("{:?}", MacS::new(&octets)),
+        "MacS(4a9ffac354dfafb3)"
+    );
+    assert_eq!(format!("{:?}", Res::new(&octets)), "Res(4a9ffac354dfafb3)");
+    assert_eq!(
+        format!("{:?}", Auts::new(&[0x01; 14])),
+        "Auts(0101010101010101010101010101)"
+    );
+}
+
+#[test]
 fn a_key_is_not_printed() {
     let (short, long) = ([0x5a; 16], [0x5a; 32]);
     let printed = [
@@ -104,6 +128,12 @@ fn a_key_is_not_printed() {
         format!("{:?}", KNasInt::new(&short)),
         format!("{:?}", ResStar::new(&short)),
         format!("{:?}", XresStar::new(&short)),
+        format!("{:?}", milenage::K::new(&short)),
+        format!("{:?}", milenage::Op::new(&short)),
+        format!("{:?}", milenage::Opc::new(&short)),
+        format!("{:?}", milenage::Ak::new(&[0x5a; 6])),
+        format!("{:?}", milenage::AkStar::new(&[0x5a; 6])),
+        format!("{:?}", milenage::Xres::new(&[0x5a; 8])),
     ];
     assert_eq!(
         printed,
@@ -113,7 +143,13 @@ fn a_key_is_not_printed() {
             "KAmf(..)",
             "KNasInt(..)",
             "ResStar(..)",
-            "XresStar(..)"
+            "XresStar(..)",
+            "K(..)",
+            "Op(..)",
+            "Opc(..)",
+            "Ak(..)",
+            "AkStar(..)",
+            "Xres(..)"
         ]
     );
     assert!(printed.iter().all(|text| !text.contains("5a")));

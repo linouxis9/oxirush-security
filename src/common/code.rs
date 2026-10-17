@@ -44,7 +44,8 @@ pub enum Implementation {
     /// SNOW 3G, ZUC and AES on the vector, AES and carry-less
     /// multiplication instructions of 128 bits: SSSE3, SSE4.1, AES-NI and
     /// PCLMULQDQ on x86-64, NEON and AES on AArch64. In a batch, four
-    /// SNOW 3G or ZUC generators and eight CBC-MAC chains run side by side.
+    /// SNOW 3G or ZUC generators, eight CBC-MAC chains and the MILENAGE of
+    /// eight subscribers run side by side.
     Vector128,
     /// [`Vector128`](Self::Vector128), and in a batch of more than four
     /// messages eight SNOW 3G or ZUC generators side by side, on AVX2.
@@ -110,6 +111,25 @@ impl Implementation {
             (IntegrityAlgorithm::Snow3g | IntegrityAlgorithm::Zuc, _) => self.generators(),
             (IntegrityAlgorithm::Aes, Self::Vector128 | Self::Vector256) => 8,
             _ => 1,
+        }
+    }
+
+    /// The code of the AES of MILENAGE for one subscriber.
+    pub fn milenage(self) -> Code {
+        match self {
+            Self::Scalar => Code::AesCrate,
+            Self::Vector128 | Self::Vector256 => Code::AesInstructions,
+        }
+    }
+
+    /// How many subscribers
+    /// [`milenage::authentication_vector_batch`](crate::milenage::authentication_vector_batch)
+    /// and [`milenage::check_autn_batch`](crate::milenage::check_autn_batch)
+    /// work on side by side: 1 or 8.
+    pub fn milenage_side_by_side(self) -> usize {
+        match self {
+            Self::Scalar => 1,
+            Self::Vector128 | Self::Vector256 => 8,
         }
     }
 
@@ -218,5 +238,9 @@ mod tests {
             Implementation::Vector256.ciphering(CipheringAlgorithm::NEA3),
             Code::Vector
         );
+        assert_eq!(Implementation::Scalar.milenage(), Code::AesCrate);
+        assert_eq!(Implementation::Vector128.milenage(), Code::AesInstructions);
+        assert_eq!(Implementation::Scalar.milenage_side_by_side(), 1);
+        assert_eq!(Implementation::Vector256.milenage_side_by_side(), 8);
     }
 }

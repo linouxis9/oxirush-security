@@ -66,22 +66,25 @@ at least twice what the deepest work of the kind used wherever it was run.
 | Work | Cleared | Deepest on x86-64 | Deepest on emulated AArch64 |
 |------|--------:|------------------:|----------------------------:|
 | AES on its instructions, one message with a keyed context | 1792 | 848 | 688 |
-| AES on its instructions, from a key | 2304 | 992 | 1088 |
+| AES on its instructions, from a key, and MILENAGE on them | 2304 | 992 | 1088 |
 | One message of SNOW 3G or ZUC, a new generator | 4096 | 1872 | 1928 |
 | A derivation | 4096 | 1572 | 1336 |
-| What goes through the `aes` crate: AES without its instructions, a new keyed context, the messages of a batch one after the other | 8192 on x86, 6144 elsewhere | 2992, and 3968 by the frames of the code for AVX-512F | 1760 |
+| What goes through the `aes` crate: AES without its instructions, a new keyed context, the messages of a batch one after the other, MILENAGE without the AES instructions | 8192 on x86, 6144 elsewhere | 2992, and 3968 by the frames of the code for AVX-512F | 1760 |
 | Words of a generator, a comparison | 1536 | 736 | 400 |
 | SUCI | 12288 | 5337 | not in the program |
-| Several messages side by side | 18432 | 8000 | 8304 |
+| Several messages side by side, the MILENAGE of several subscribers side by side | 18432 | 8000 | 8304 |
 
 On x86-64 the figure is the deepest of the 521 cases in eighteen builds on
 an AMD Ryzen 7 5700G: the release profile, AES and SHA-256 without their
 instructions (`--cfg aes_backend="soft" --cfg sha2_backend="soft"`),
 link-time optimization with one codegen unit, `opt-level = "s"`, one
 codegen unit, `opt-level = 2` and `-C target-cpu=native`, each with
-Rust 1.99 and with Rust 1.98, and the first four with Rust 1.88. On AArch64
-it is that of the 22 operations of [`emulated-aarch64/`](../emulated-aarch64),
-built at `opt-level = 2` for a processor with NEON and AES.
+Rust 1.99 and with Rust 1.98, and the first four with Rust 1.88, and of
+the 78 cases of MILENAGE in the six builds of CI on the same processor,
+where they go 952, 2424 and 5968 octets deep at most in the rows of AES,
+of the `aes` crate and of the work side by side. On AArch64 it is that of
+the 26 operations of [`emulated-aarch64/`](../emulated-aarch64), built at
+`opt-level = 2` for a processor with NEON and AES.
 
 The scan fails at three quarters of what is cleared, and not at its end.
 What is cleared is twice the deepest work that was seen: a processor, a

@@ -397,6 +397,20 @@ fn secrets_of(kind: Kind) -> Vec<Secret> {
             values::hmac_secrets("KAMF", &leftovers::KAMF, &s)
         }
         Kind::Comparison => vec![values::secret("the key", &key)],
+        Kind::Milenage { auts } => {
+            let amf = if auts {
+                [0; 2]
+            } else {
+                leftovers::MILENAGE_AMF
+            };
+            values::milenage_secrets(
+                &leftovers::MILENAGE_K,
+                &leftovers::MILENAGE_OPC,
+                &leftovers::MILENAGE_RAND,
+                &leftovers::MILENAGE_SQN,
+                &amf,
+            )
+        }
     }
 }
 

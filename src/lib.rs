@@ -15,8 +15,9 @@
    limitations under the License.
 */
 
-//! The security functions of 5GS and EPS: key derivation, NAS integrity and
-//! ciphering, and SUCI concealment, per 3GPP TS 33.501 and TS 33.401.
+//! The security functions of 5GS and EPS: MILENAGE, key derivation, NAS
+//! integrity and ciphering, and SUCI concealment, per 3GPP TS 35.206,
+//! TS 33.102, TS 33.501 and TS 33.401.
 //!
 //! ```rust
 //! use oxirush_security::nas_5gs::{
@@ -59,9 +60,9 @@
 //! (TS 24.501 §4.4.3). No function panics on its arguments.
 //!
 //! The [README](https://github.com/linouxis9/oxirush-security#readme) has
-//! an example for each task: the keys of a 5G AKA run and of a handover,
-//! NAS protection in EPS, SUCI concealment, the algorithms on the 3GPP test
-//! sets.
+//! an example for each task: a 5G AKA run from MILENAGE to KAMF, a
+//! re-synchronisation, the keys of a handover, NAS protection in EPS, SUCI
+//! concealment, the algorithms on the 3GPP test sets.
 //!
 //! # Where things are
 //!
@@ -70,6 +71,7 @@
 //! | The crate root | What 5GS and EPS share: the algorithms, their inputs, the keyed contexts, the batches, CK, IK, RAND and AUTN, the PLMN and TBCD |
 //! | [`nas_5gs`] | TS 33.501: the keys and their derivations, NAS integrity and ciphering, the SUPI, the SUCI and the 5G-GUTI |
 //! | [`nas_eps`] | TS 33.401: the keys and their derivations, NAS integrity and ciphering, the short MAC of a SERVICE REQUEST, HASHMME |
+//! | [`milenage`] | TS 35.206 and TS 33.102: MILENAGE, its keys and values, the authentication vector of a home network, the check of AUTN in a USIM and the AUTS of a re-synchronisation, for one subscriber or for many |
 //! | [`kdf`] | The KDF of TS 33.220, for a derivation that the crate does not have |
 //!
 //! An item has one path. The two systems have keys and functions of the
@@ -91,6 +93,8 @@
 //! | A key kept between messages | [`CipheringContext`], [`IntegrityContext`] | The same | 3GPP |
 //! | Several messages at once | [`nea_cipher_batch`], [`nia_mac_batch`] on a [`CipherJob`] or a [`MacJob`] for each message | The same | 3GPP |
 //! | Keystream generators | [`Snow3G`], [`Zuc`] | TS 35.216, TS 35.222 | 3GPP |
+//! | MILENAGE | `milenage::Milenage`: f1, f1\*, f2 to f5, f5\*; `milenage::Opc::from_op` | TS 35.206 §4.1 | 3GPP |
+//! | Authentication | `authentication_vector`, `check_autn`, `auts`, `verify_auts` of `milenage::Milenage`, and their batches | TS 33.102 §6.3.2, §6.3.3 and §6.3.5 | calculated |
 //! | 5G AKA | `derive_kausf`, `compute_res_star`, `compute_xres_star`, `compute_hres_star`, `compute_hxres_star`, `derive_kseaf`, `derive_kamf`, `derive_knas_enc`, `derive_knas_int`, `derive_kgnb`, `derive_nh` | TS 33.501 Annex A.2 and A.4 to A.10 | other implementations |
 //! | Other 5GS derivations | KAMF', KN3IWF, KNG-RAN\*, KSN, the RRC and UP keys, the SoR and UPU MACs, the TNAP usage keys, KIAB | TS 33.501 Annex A | calculated |
 //! | EPS derivations | KASME, KNASint and KNASenc, KeNB, NH, KeNB\*, the AS keys, the NAS token, the CK'/IK' mapping, SRVCC, S-KeNB, S-KgNB, LWIP-PSK, S-KWT, K_n | TS 33.401 Annex A | calculated |
@@ -124,8 +128,10 @@
 //!
 //! | Input | Type or check |
 //! |-------|---------------|
-//! | Key, RES\*, XRES\* | A type for each, such as [`nas_5gs::KAmf`] or [`Ck`]: `new` takes the octets, `from_slice` a slice, `as_octets` gives them back. Wiped on drop, not `Copy`, and never printed: `{:?}` shows the name alone |
+//! | Key, RES\*, XRES\*, XRES | A type for each, such as [`nas_5gs::KAmf`], [`Ck`] or [`milenage::K`]: `new` takes the octets, `from_slice` a slice, `as_octets` gives them back. Wiped on drop, not `Copy`, and never printed: `{:?}` shows the name alone |
 //! | RAND, AUTN | [`Rand`] and [`Autn`], built and viewed as a key is. They travel in clear: `{:?}` prints their octets, as it prints an identity whole |
+//! | SQN, AMF, MAC-A, MAC-S, RES, AUTS | The public values of [`milenage`], built, viewed and printed as RAND is. [`milenage::Sqn`] takes a number with `try_from`, which refuses one above 2^48 - 1 |
+//! | The MAC of an AUTN or an AUTS | `Err(MacFailure)` when it is not the one that K gives |
 //! | Algorithm | [`IntegrityAlgorithm`] and [`CipheringAlgorithm`], under both names (`NIA2` and `EIA2`). `try_from(u8)` refuses 4 and above |
 //! | NAS COUNT | [`NasCount`], 24 bits. `next` and `estimate` refuse to wrap around |
 //! | COUNT of the KgNB and KeNB derivations | A `NasCount`, or [`AccessKeyCount::Handover`] for the 2^32 - 1 of a handover |
@@ -145,7 +151,7 @@
 //!
 //! An operation that computes with a key clears what it used when it
 //! returns: an algorithm, a keyed context, a batch, a generator, a
-//! derivation, a comparison, a SUCI.
+//! derivation, a comparison, a SUCI, MILENAGE.
 //!
 //! | What | How |
 //! |------|-----|
@@ -156,7 +162,7 @@
 //! | Target | Registers that are cleared | Checked by |
 //! |--------|----------------------------|------------|
 //! | x86-64 | RAX, RCX, RDX, RSI, RDI, R8 to R11, and the vector registers 0 to 15, whole | `leftovers/` in the repository, for every operation in each form of the code, in eighteen optimized builds with Rust 1.88, 1.98 and 1.99 here, and in those of CI on its runners |
-//! | AArch64 | X0 to X17, and V0 to V31 | `emulated-aarch64/`, for 22 operations on an emulated processor |
+//! | AArch64 | X0 to X17, and V0 to V31 | `emulated-aarch64/`, for 26 operations on an emulated processor |
 //! | Another target | None. The stack is cleared by a function whose frame is where the work was | Nothing |
 //!
 //! Both programs run an operation, then look for its key, its round keys,
@@ -169,12 +175,12 @@
 //! | Work | Stack cleared after it, in octets |
 //! |------|-----------------------------------|
 //! | AES on its instructions, one message with a keyed context | 1792 |
-//! | AES on its instructions, from a key | 2304 |
+//! | AES on its instructions, from a key; MILENAGE on them | 2304 |
 //! | One message of SNOW 3G or ZUC, a derivation, a new generator | 4096 |
-//! | What goes through the `aes` crate: AES without its instructions, a new keyed context, the messages of a batch one after the other | 8192 on x86 and x86-64, 6144 elsewhere |
+//! | What goes through the `aes` crate: AES without its instructions, a new keyed context, the messages of a batch one after the other, MILENAGE without the AES instructions | 8192 on x86 and x86-64, 6144 elsewhere |
 //! | Words of a generator, a comparison | 1536 |
 //! | SUCI | 12288 |
-//! | Several messages side by side | 18432 |
+//! | Several messages side by side, the MILENAGE of several subscribers side by side | 18432 |
 //! | Any, in a build with debug assertions | 49152 |
 //!
 //! An operation needs that much stack. Each figure is at least twice what
@@ -220,9 +226,9 @@
 //!
 //! ## Timing
 //!
-//! SNOW 3G, ZUC, AES, 128-EIA1, 128-EIA3 and AES-CMAC neither index
-//! memory nor branch on a secret value, in any of their forms, for one
-//! message or for several. [`implementation`] says which form runs: the
+//! SNOW 3G, ZUC, AES, 128-EIA1, 128-EIA3, AES-CMAC and MILENAGE neither
+//! index memory nor branch on a secret value, in any of their forms, for
+//! one message or for several. [`implementation`] says which form runs: the
 //! vector code on an x86-64 processor with SSSE3, SSE4.1, AES-NI and
 //! PCLMULQDQ or an AArch64 one with AES, and the scalar code elsewhere.
 //!
@@ -233,6 +239,7 @@
 //! | AES | The key expansion and the rounds are the AES instruction. Without it, AES is the bitsliced code of the `aes` crate. |
 //! | Several messages | What a generator or a chain does at a step depends on the lengths of the messages: the time of a message depends on no octet or key of another. |
 //! | SNOW 3G and ZUC in scalar code | The S-box SQ is read whole and narrowed down through masks. S0 of ZUC is three four-bit S-boxes, each a word that is shifted. MULα, DIVα and the products of the MACs are carry-less products, made with shifts and multiplications. |
+//! | MILENAGE | AES with K, and sums and rotations of OPc and TEMP by amounts that the constants of the framework give. A MAC-A or a MAC-S is compared through `subtle`. |
 //! | A comparison | [`constant_time_eq`] goes through `subtle`: its time depends on the lengths, and not on where the values differ. |
 //!
 //! What was checked, and what was not:
@@ -242,7 +249,10 @@
 //!   algorithms and the two functions of several messages. Their
 //!   conditional jumps test a length, a loop counter, a place in a buffer,
 //!   a feature of the processor, whether a generator has started or which
-//!   message it works for. None tests a secret.
+//!   message it works for. None tests a secret. Those of MILENAGE, alone
+//!   and in a batch, test the form of the code, the number of jobs,
+//!   whether a job has its result, and the outcome of the comparison of a
+//!   MAC, which the caller is told.
 //! - That reading found one: the compiler had turned the masked selection
 //!   of SQ in the scalar code into jumps on bits of the state. A mask that
 //!   a secret bit gives now goes through `core::hint::black_box`.
@@ -270,10 +280,10 @@
 //!
 //! | Kind | What is tested against it |
 //! |------|---------------------------|
-//! | **3GPP** test data | 128-EEA1/2/3 and 128-EIA1/2/3 on the TS 33.401 Annex C, TS 35.217, TS 35.218 and TS 35.223 sets, including non-byte-aligned EEA1, EEA2, EEA3, EIA1, EIA2 and EIA3 inputs; the SNOW 3G and ZUC keystreams; SUCI on every TS 33.501 Annex C.4 data set. |
+//! | **3GPP** test data | 128-EEA1/2/3 and 128-EIA1/2/3 on the TS 33.401 Annex C, TS 35.217, TS 35.218 and TS 35.223 sets, including non-byte-aligned EEA1, EEA2, EEA3, EIA1, EIA2 and EIA3 inputs; the SNOW 3G and ZUC keystreams; SUCI on every TS 33.501 Annex C.4 data set; MILENAGE on the six sets of TS 35.207 with their intermediate values and on the twenty of TS 35.208, of which set 2 repeats set 1, and its AES on the twenty Rijndael sets of TS 35.208 and the round keys of TS 35.207. |
 //! | **RFC and FIPS** test data | HMAC-SHA-256, which is this crate's over the SHA-256 of `sha2`, on test cases 1, 2, 3, 6 and 7 of RFC 4231; SHA-256 on the examples of FIPS 180-4; the subkeys of AES-CMAC on the example of RFC 4493; the key expansion and the cipher of AES on its instructions on the examples of FIPS 197. |
 //! | Values of **other implementations** | The 5G AKA chain from the TS 35.208 test set 1 MILENAGE outputs through KAUSF, XRES\*, HXRES\*, KSEAF, KAMF, the NAS keys, KgNB and NH, which `tests/five_g_aka_chain.py` derives with the HMAC-SHA-256 of Python's standard library over the inputs that TS 33.501 Annex A lays out; HASHMME on ATTACH REQUESTs and the values a network returned for them. |
-//! | Values **calculated** in the tests | The other 5GS KDFs, the EPS and interworking KDFs, and the NAS container, short and re-establishment MACs are compared with HMAC-SHA-256 or the MAC over the parameter layout as the test writes it. The identity encodings and the algorithm selection are compared with what the test writes too. These tests keep a layout from changing unnoticed; they are not independent vectors. |
+//! | Values **calculated** in the tests | The other 5GS KDFs, the EPS and interworking KDFs, and the NAS container, short and re-establishment MACs are compared with HMAC-SHA-256 or the MAC over the parameter layout as the test writes it. The identity encodings and the algorithm selection are compared with what the test writes too. MILENAGE with the constants of an operator, which no test data has, is compared with the framework of TS 35.206 §4.1 written bit by bit over the AES of the `aes` crate. These tests keep a layout from changing unnoticed; they are not independent vectors. |
 //!
 //! The two forms of SNOW 3G and ZUC, on vector instructions and in scalar
 //! code, are compared with each other: the keystream words of 400 keys and
@@ -290,7 +300,11 @@
 //! algorithms and lengths, in whole octets and in bits, with eight
 //! generators side by side, with four and in scalar code. The 3GPP test
 //! sets of the three ciphering algorithms, of 128-EIA1 and of 128-EIA3, and
-//! set 7 of 128-EIA2, also go through them in one batch.
+//! set 7 of 128-EIA2, also go through them in one batch. The batches of
+//! MILENAGE are compared with the functions of one subscriber on 0 to 40
+//! subscribers, with the constants of TS 35.206 and with others, and AUTNs
+//! that are accepted and refused; every test of MILENAGE runs on the AES
+//! instructions and on the `aes` crate.
 //!
 //! CI also fuzzes what takes octets from a peer, with the four
 //! `cargo fuzz` targets under `fuzz/`, for a minute each at a push and for
@@ -308,8 +322,8 @@
 //! | Subject | Limit |
 //! |---------|-------|
 //! | Audit | The crate has not had a security audit. Its timing has been read in the source and in one compiled build, not measured. |
-//! | State | It stores no keys, and it keeps neither the NAS COUNT nor replay state: those belong to the caller. |
-//! | AKA | It has no MILENAGE or TUAK: CK, IK, RES and SQN xor AK come from the caller. |
+//! | State | It stores no keys, and it keeps neither the NAS COUNT, nor replay state, nor a SQN: those belong to the caller. |
+//! | AKA | It has MILENAGE and not TUAK (TS 35.231). Whether a SQN is fresh and whether an AMF has the separation bit are the caller's to decide. |
 //! | NAS messages | It protects octets. It does not encode a NAS message or its security header. |
 //! | Re-establishment MAC | The 28-bit reading of the target Cell-ID is this crate's: no test data or other implementation exists to check it against. |
 //!
@@ -320,6 +334,8 @@
 //! | UE, AMF, MME | The device (User Equipment), and the function of the core network that it talks NAS to: the AMF in 5GS, the MME in EPS |
 //! | gNB, eNB | The base station of 5GS and of EPS |
 //! | AKA | Authentication and Key Agreement. It gives the ciphering key CK, the integrity key IK, the response RES, and the sequence number SQN hidden under the anonymity key AK |
+//! | MILENAGE | The example algorithm set of 3GPP for the functions of AKA, f1 to f5\*: AES with the key K of the subscriber, around OPc, which an operator derives from its OP |
+//! | AUTN, AUTS | The authentication token that a network sends with RAND: SQN ⊕ AK, the AMF and MAC-A; and what a USIM answers when the SQN is out of range: SQNMS ⊕ AK\* and MAC-S |
 //! | KAUSF, KSEAF, KAMF | The keys of the 5GS hierarchy, each derived from the one before: of the AUSF in the home network, of the SEAF in the serving network, of the AMF |
 //! | KNASenc, KNASint | The keys that cipher and authenticate NAS messages, derived from KAMF in 5GS and from KASME in EPS |
 //! | KASME | The key of EPS that CK and IK give, at the place of KAMF |
@@ -343,7 +359,7 @@
 //!
 //! | Feature | Adds | Needs |
 //! |---------|------|-------|
-//! | none | The algorithms, the keyed contexts and the batches, the keys and every derivation, NAS integrity and ciphering, the selection of the algorithms, the types of the inputs, the SUPI, the 5G-GUTI and the PLMN | `core` alone: no allocator. 15 crates in its tree, oxirush-utils one of them, and no procedural macro |
+//! | none | The algorithms, the keyed contexts and the batches, MILENAGE, the keys and every derivation, NAS integrity and ciphering, the selection of the algorithms, the types of the inputs, the SUPI, the 5G-GUTI and the PLMN | `core` alone: no allocator. 15 crates in its tree, oxirush-utils one of them, and no procedural macro |
 //! | `alloc` | What returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | An allocator |
 //! | `std` | On an AArch64 system other than Linux, Android and Apple's: the choice of the code on the vector and AES instructions when the program runs. Nothing else | The standard library. It brings `alloc` |
 //! | `suci` | `nas_5gs::Suci`: the SUCI of an IMSI in a mobile identity, concealed and de-concealed with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, which it brings, and a source of random numbers that `getrandom` has for the target: concealment draws a key. 42 crates |
@@ -374,6 +390,8 @@
 //! |---------------|-----|
 //! | TS 33.501 | 5G security architecture: key derivation, algorithm IDs, SUCI |
 //! | TS 33.401 | EPS security architecture: key derivation, NAS COUNT, EIA/EEA |
+//! | TS 33.102 | 3G security: authentication vectors, AUTN, AUTS, re-synchronisation |
+//! | TS 35.205, 35.206, 35.207, 35.208 | MILENAGE: general, algorithm, implementers' test data, conformance test data |
 //! | TS 35.215, 35.216, 35.217, 35.218 | SNOW 3G modes, core, and test data |
 //! | TS 35.221, 35.222, 35.223 | ZUC modes, core, and test data |
 
@@ -390,6 +408,7 @@ extern crate alloc;
 extern crate std;
 
 mod common;
+pub mod milenage;
 pub mod nas_5gs;
 pub mod nas_eps;
 

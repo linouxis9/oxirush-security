@@ -130,6 +130,48 @@ impl Aes128 {
     pub(crate) fn ctr(&self, prefix: [u8; 8], data: &mut [u8]) {
         self.0.encrypt_with_backend(Counter { prefix, data });
     }
+
+    /// Encrypt each block where it is: as many side by side as the code
+    /// without instructions works on at once, and one after the other on
+    /// the AES instructions, as the counter mode does.
+    pub(crate) fn encrypt_blocks(&self, blocks: &mut [[u8; 16]]) {
+        self.0.encrypt_with_backend(Blocks(blocks));
+    }
+}
+
+/// Blocks of one key, for the code that the `aes` crate has chosen for the
+/// processor: [`Counter`] says why its code for more than [`BITSLICED`]
+/// blocks is not called.
+struct Blocks<'a>(&'a mut [[u8; 16]]);
+
+impl BlockSizeUser for Blocks<'_> {
+    type BlockSize = U16;
+}
+
+impl BlockCipherEncClosure for Blocks<'_> {
+    #[inline(always)]
+    fn call<B: BlockCipherEncBackend<BlockSize = U16>>(self, backend: &B) {
+        let side_by_side = B::ParBlocksSize::USIZE;
+        if side_by_side > 1 && side_by_side <= BITSLICED {
+            let mut together = ParBlocks::<B>::default();
+            for group in self.0.chunks_mut(side_by_side) {
+                for (block, octets) in together.iter_mut().zip(group.iter()) {
+                    block.copy_from_slice(octets);
+                }
+                backend.encrypt_par_blocks_inplace(&mut together);
+                for (octets, block) in group.iter_mut().zip(together.iter()) {
+                    octets.copy_from_slice(block);
+                }
+            }
+            for block in together.iter_mut() {
+                block.as_mut_slice().zeroize();
+            }
+        } else {
+            for octets in self.0.iter_mut() {
+                backend.encrypt_block_inplace(octets.into());
+            }
+        }
+    }
 }
 
 /// The most blocks that the code of the `aes` crate without instructions
@@ -299,6 +341,34 @@ mod tests {
             let mut data = text;
             aes.ctr(prefix, &mut data[..length]);
             assert_eq!(data, expected, "{length} octets");
+        }
+    }
+
+    /// Blocks of one key are those that each gives alone, whatever the
+    /// number of blocks that the code of the `aes` crate takes side by
+    /// side.
+    #[test]
+    fn blocks_of_one_key_are_each_encrypted_as_alone() {
+        let key: [u8; 16] = core::array::from_fn(|at| 0x5c ^ (at as u8).wrapping_mul(13));
+        let aes = Aes128::new(&key);
+        let blocks: [[u8; 16]; 11] =
+            core::array::from_fn(|n| core::array::from_fn(|at| (n * 16 + at) as u8));
+        for count in 0..=blocks.len() {
+            let mut expected = blocks;
+            for block in &mut expected[..count] {
+                aes.encrypt_in_place(block);
+            }
+            fn with<Blocks: ArraySize>(aes: &Aes128, blocks: &mut [[u8; 16]]) {
+                super::Blocks(blocks).call(&Code::<Blocks>(aes, PhantomData));
+            }
+            for code in [with::<U2>, with::<U4>, with::<U8>, with::<U30>] {
+                let mut encrypted = blocks;
+                code(&aes, &mut encrypted[..count]);
+                assert_eq!(encrypted, expected, "{count} blocks");
+            }
+            let mut encrypted = blocks;
+            aes.encrypt_blocks(&mut encrypted[..count]);
+            assert_eq!(encrypted, expected, "{count} blocks");
         }
     }
 }

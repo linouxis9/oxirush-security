@@ -42,6 +42,8 @@ pub const BLOCKS: &[fn()] = &[
     block_11,
     block_12,
     block_13,
+    block_14,
+    block_15,
 ];
 
 /// The Rust block 1 of README.md.
@@ -74,29 +76,30 @@ fn block_1() {
 
 /// The Rust block 2 of README.md.
 fn block_2() {
+    use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
     use oxirush_security::nas_5gs::{
-        Supi, compute_hxres_star, compute_res_star, compute_xres_star, derive_kamf, derive_kausf,
-        derive_kseaf,
+        Supi, compute_hxres_star, derive_kamf, derive_kausf, derive_kseaf,
     };
-    use oxirush_security::{Autn, Ck, Ik, Rand};
+    use oxirush_security::Rand;
 
     let octets = |s: &str| hex::decode(s).unwrap();
-    let ck = Ck::from_slice(&octets("b40ba9a3c58b2a05bbf0d987b21bf8cb")).unwrap();
-    let ik = Ik::from_slice(&octets("f769bcd751044604127672711c6d3441")).unwrap();
+    let k = K::from_slice(&octets("465b5ce8b199b49faa5f0a2ee238a6bc")).unwrap();
+    let opc = Opc::from_slice(&octets("cd63cb71954a9f4e48a5994e37a02baf")).unwrap();
+    let subscriber = Milenage::new(&k, &opc);
     let rand = Rand::from_slice(&octets("23553cbe9637a89d218ae64dae47bf35")).unwrap();
-    // SQN xor AK, the AMF field and MAC-A
-    let autn = Autn::from_slice(&octets("55f328b43577b9b94a9ffac354dfafb3")).unwrap();
-    let res = octets("a54211d5e3ba50bf");
+    let (sqn, amf) = (Sqn::try_from(0xff9b_b4d0_b607).unwrap(), Amf::new(&[0xb9, 0xb9]));
     let sn_name = b"5G:mnc093.mcc208.3gppnetwork.org";
 
-    // UDM: KAUSF and XRES*
-    let k_ausf = derive_kausf(&ck, &ik, sn_name, &autn).unwrap();
-    let xres_star = compute_xres_star(&ck, &ik, sn_name, &rand, &res).unwrap();
+    // UDM: the authentication vector of MILENAGE, then KAUSF and XRES*
+    let vector = subscriber.authentication_vector(&rand, &sqn, &amf);
+    let k_ausf = derive_kausf(vector.ck(), vector.ik(), sn_name, vector.autn()).unwrap();
+    let xres_star = vector.xres_star(sn_name).unwrap();
+    println!("AUTN   {}", hex::encode(vector.autn().as_octets()));
     println!("KAUSF  {}", hex::encode(k_ausf.as_octets()));
     println!("XRES*  {}", hex::encode(xres_star.as_octets()));
 
     // AUSF: HXRES* and KSEAF
-    let hxres_star = compute_hxres_star(&rand, &xres_star);
+    let hxres_star = compute_hxres_star(vector.rand(), &xres_star);
     let k_seaf = derive_kseaf(&k_ausf, sn_name).unwrap();
     println!("HXRES* {}", hex::encode(hxres_star.as_octets()));
     println!("KSEAF  {}", hex::encode(k_seaf.as_octets()));
@@ -107,13 +110,82 @@ fn block_2() {
     let k_amf = derive_kamf(&k_seaf, &supi, &[0x00, 0x00]).unwrap();
     println!("KAMF   {}", hex::encode(k_amf.as_octets()));
 
-    // UE: RES*, which the AUSF compares with XRES* in constant time
-    let res_star = compute_res_star(&ck, &ik, sn_name, &rand, &res).unwrap();
+    // UE: the USIM checks the MAC of AUTN. The ME judges the SQN and the
+    // separation bit of the AMF, then sends RES*, which the AUSF compares with
+    // XRES* in constant time
+    let response = subscriber.check_autn(&rand, vector.autn()).unwrap();
+    println!("SQN {:x}, separation bit {}", response.sqn().get(), response.amf().separation_bit());
+    let res_star = response.res_star(sn_name).unwrap();
     println!("RES* accepted: {}", xres_star.accepts(&res_star));
 }
 
 /// The Rust block 3 of README.md.
 fn block_3() {
+    use oxirush_security::milenage::{Amf, Auts, K, Milenage, Opc, Sqn};
+    use oxirush_security::Rand;
+
+    let subscriber = Milenage::new(&K::new(&[0x46; 16]), &Opc::new(&[0xcd; 16]));
+    let rand = Rand::new(&[0x23; 16]);
+    let vector = subscriber.authentication_vector(&rand, &Sqn::try_from(32).unwrap(), &Amf::new(&[0x80, 0]));
+
+    // UE: its SQNMS is 64, ahead of the 32 of the AUTN, which is no longer
+    // fresh. Whether a SQN is fresh is the UE's policy (TS 33.102 Annex C)
+    let response = subscriber.check_autn(&rand, vector.autn()).unwrap();
+    let sqn_ms = Sqn::try_from(64).unwrap();
+    println!("SQN {} after SQNMS {}", response.sqn().get(), sqn_ms.get());
+    let auts = subscriber.auts(&rand, &sqn_ms);
+    println!("{auts:?}");
+
+    // Home network: the AUTS answers the RAND of the challenge, which the
+    // serving network gives with it. Its MAC-S is checked, and SQNMS read
+    let read = subscriber.verify_auts(&rand, &auts).unwrap();
+    println!("SQNMS {}", read.get());
+
+    // An AUTS with one bit changed, or for another RAND, is refused
+    let mut changed = *auts.as_octets();
+    changed[13] ^= 1;
+    println!("{:?}", subscriber.verify_auts(&rand, &Auts::new(&changed)));
+}
+
+/// The Rust block 4 of README.md.
+fn block_4() {
+    use oxirush_security::milenage::{
+        Amf, AutnJob, K, Milenage, Opc, Sqn, VectorJob, authentication_vector_batch,
+        check_autn_batch,
+    };
+    use oxirush_security::Rand;
+
+    // A thousand subscribers, each with its K, its RAND and its next SQN
+    let subscribers: Vec<Milenage> = (0..1000u16)
+        .map(|n| {
+            let mut k = [0x46; 16];
+            k[..2].copy_from_slice(&n.to_be_bytes());
+            Milenage::new(&K::new(&k), &Opc::new(&[0xcd; 16]))
+        })
+        .collect();
+    let rands: Vec<Rand> = (0..1000u16).map(|n| Rand::new(&[n as u8; 16])).collect();
+    let sqns: Vec<Sqn> = (0..1000u64).map(|n| Sqn::try_from(32 + n).unwrap()).collect();
+    let amf = Amf::new(&[0x80, 0x00]);
+
+    // Home network: the vectors
+    let mut jobs: Vec<_> = (0..1000)
+        .map(|n| VectorJob::new(&subscribers[n], &rands[n], &sqns[n], &amf))
+        .collect();
+    authentication_vector_batch(&mut jobs);
+    let vectors: Vec<_> = jobs.into_iter().map(|job| job.into_vector().unwrap()).collect();
+    println!("AUTN of the last {}", hex::encode(vectors[999].autn().as_octets()));
+
+    // The UEs: the check of each AUTN
+    let mut jobs: Vec<_> = (0..1000)
+        .map(|n| AutnJob::new(&subscribers[n], &rands[n], vectors[n].autn()))
+        .collect();
+    check_autn_batch(&mut jobs);
+    let accepted = jobs.iter().filter(|job| matches!(job.response(), Some(Ok(_)))).count();
+    println!("{accepted} AUTNs accepted");
+}
+
+/// The Rust block 5 of README.md.
+fn block_5() {
     use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, nas_cipher, nas_mac};
     use oxirush_security::{CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
 
@@ -145,8 +217,8 @@ fn block_3() {
     println!("deciphered {}, then from NAS COUNT {}", hex::encode(message), lowest.get());
 }
 
-/// The Rust block 4 of README.md.
-fn block_4() {
+/// The Rust block 6 of README.md.
+fn block_6() {
     use oxirush_security::nas_eps::{
         derive_kasme, derive_knas_enc, derive_knas_int, nas_cipher, nas_mac,
         service_request_short_mac,
@@ -186,8 +258,8 @@ fn block_4() {
     println!("short MAC {short_mac:04x}");
 }
 
-/// The Rust block 5 of README.md.
-fn block_5() {
+/// The Rust block 7 of README.md.
+fn block_7() {
     use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, cipher_job, mac_job};
     use oxirush_security::{
         CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount, nea_cipher_batch, nia_mac_batch,
@@ -229,8 +301,8 @@ fn block_5() {
     }
 }
 
-/// The Rust block 6 of README.md.
-fn block_6() {
+/// The Rust block 8 of README.md.
+fn block_8() {
     use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection};
     use oxirush_security::{
         CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm, IntegrityContext,
@@ -253,8 +325,8 @@ fn block_6() {
     }
 }
 
-/// The Rust block 7 of README.md.
-fn block_7() {
+/// The Rust block 9 of README.md.
+fn block_9() {
     use oxirush_security::NasCount;
     use oxirush_security::nas_5gs::{
         KAmf, derive_kamf_prime_handover, derive_kgnb, derive_kng_ran_star, derive_nh,
@@ -285,8 +357,8 @@ fn block_7() {
     println!("KAMF'    {}", hex::encode(k_amf_prime.as_octets()));
 }
 
-/// The Rust block 8 of README.md.
-fn block_8() {
+/// The Rust block 10 of README.md.
+fn block_10() {
     use oxirush_security::Plmn;
     use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci};
 
@@ -325,8 +397,8 @@ fn block_8() {
     println!("{:?}", annex.deconceal(None));
 }
 
-/// The Rust block 9 of README.md.
-fn block_9() {
+/// The Rust block 11 of README.md.
+fn block_11() {
     use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci, Supi};
 
     let private = "c53c22208b61860b06c62e5406a7b330c2b577aa5558981510d128247d38bd1d";
@@ -349,8 +421,8 @@ fn block_9() {
     println!("{}", Suci::from_nai("type1.rid0.schid1.hnkey1@example.net").unwrap_err());
 }
 
-/// The Rust block 10 of README.md.
-fn block_10() {
+/// The Rust block 12 of README.md.
+fn block_12() {
     use oxirush_security::nas_eps::{KNasEnc, KNasInt};
     use oxirush_security::{
         Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, nea_cipher_bits, nia_mac_bits,
@@ -374,8 +446,8 @@ fn block_10() {
     println!("{:08x}", mac.unwrap());
 }
 
-/// The Rust block 11 of README.md.
-fn block_11() {
+/// The Rust block 13 of README.md.
+fn block_13() {
     use oxirush_security::{
         CipheringAlgorithm, IntegrityAlgorithm, select_ciphering_algo, select_integrity_algo,
         select_integrity_algo_with_preference,
@@ -399,8 +471,8 @@ fn block_11() {
     println!("{} in 5GS, {} in EPS", selected.name_5gs(), selected.name_eps());
 }
 
-/// The Rust block 12 of README.md.
-fn block_12() {
+/// The Rust block 14 of README.md.
+fn block_14() {
     use oxirush_security::nas_5gs::Guti;
     use oxirush_security::{Plmn, tbcd};
 
@@ -420,7 +492,7 @@ fn block_12() {
 }
 
 /// The Rust block 1 of src/lib.rs.
-fn block_13() {
+fn block_15() {
     use oxirush_security::nas_5gs::{
         KAmf, NasConnection, derive_knas_enc, derive_knas_int, nas_cipher, nas_mac,
     };

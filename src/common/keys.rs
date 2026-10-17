@@ -181,7 +181,7 @@ key! {
 /// its octets, and not wiped.
 macro_rules! public_value {
     ($(#[$attribute:meta])* $name:ident, $octets:literal) => {
-        octets_type! {
+        $crate::common::keys::octets_type! {
             $(#[$attribute])*
             $name, $octets
         }
@@ -197,6 +197,7 @@ macro_rules! public_value {
         }
     };
 }
+pub(crate) use public_value;
 
 public_value! {
     /// RAND, the challenge of an authentication. A network sends it in

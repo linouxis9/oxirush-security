@@ -19,8 +19,8 @@
 //! leave.
 
 use crate::values::{
-    Secret, aes_secrets, cmac_secrets, eea3_iv, hmac_secrets, keystream_secrets, reversed, s,
-    secret, zuc_stages,
+    Secret, aes_secrets, cmac_secrets, eea3_iv, hmac_secrets, keystream_secrets, milenage_secrets,
+    reversed, s, secret, without, zuc_stages,
 };
 use oxirush_security::kdf::{extract_128, kdf};
 use oxirush_security::nas_5gs::{self, NasConnection, Supi};
@@ -132,6 +132,7 @@ pub fn all() -> Vec<Case> {
     generators(&mut cases);
     derivations(&mut cases);
     comparisons(&mut cases);
+    milenage(&mut cases);
     suci(&mut cases);
     cases.0
 }
@@ -1188,6 +1189,191 @@ fn comparisons(cases: &mut Cases) {
     cases.add("a key == a key", 1, of_key, move || {
         crate::here();
         let value = spare(black_box(kamf) == black_box(other));
+        crate::owned(&value);
+    });
+}
+
+/// MILENAGE with the subscriber of test set 1 of TS 35.208: each function,
+/// and the authentication of TS 33.102 on them, with what they handle of K
+/// and OPc that they do not return.
+fn milenage(cases: &mut Cases) {
+    use oxirush_security::milenage::{Amf, Auts, K, Milenage, Op, Opc, Sqn};
+    let k_octets: [u8; 16] = octets("465b5ce8b199b49faa5f0a2ee238a6bc");
+    let opc_octets: [u8; 16] = octets("cd63cb71954a9f4e48a5994e37a02baf");
+    let (rand_octets, sqn_octets, amf_octets): ([u8; 16], [u8; 6], [u8; 2]) = (
+        octets("23553cbe9637a89d218ae64dae47bf35"),
+        octets("ff9bb4d0b607"),
+        octets("b9b9"),
+    );
+    let k = kept(K::new(&k_octets));
+    let op = kept(Op::new(&octets("cdc202d5123e20f62b6d676ac72cb318")));
+    let subscriber = kept(Milenage::new(k, &Opc::new(&opc_octets)));
+    let rand = kept(Rand::new(&rand_octets));
+    let (sqn, amf) = (kept(Sqn::new(&sqn_octets)), kept(Amf::new(&amf_octets)));
+    let secrets = milenage_secrets(
+        &k_octets,
+        &opc_octets,
+        &rand_octets,
+        &sqn_octets,
+        &amf_octets,
+    );
+    // The AUTS has an AMF of zeros
+    let of_auts = milenage_secrets(&k_octets, &opc_octets, &rand_octets, &sqn_octets, &[0, 0]);
+    let autn = kept(
+        subscriber
+            .authentication_vector(rand, sqn, amf)
+            .autn()
+            .clone(),
+    );
+    let auts = kept(subscriber.auts(rand, sqn));
+    let mut wrong = *autn.as_octets();
+    wrong[15] ^= 1;
+    let wrong_autn = kept(Autn::new(&wrong));
+    let mut wrong = *auts.as_octets();
+    wrong[13] ^= 1;
+    let wrong_auts = kept(Auts::new(&wrong));
+
+    let mut of_op = aes_secrets(&k_octets);
+    of_op.push(secret("OP", op.as_octets()));
+    cases.add("Opc::from_op", 3, of_op, move || {
+        crate::here();
+        let value = spare(Opc::from_op(black_box(k), black_box(op)));
+        crate::owned(&value);
+    });
+    macro_rules! function {
+        ($name:literal, $secrets:expr, $returned:expr, |$subscriber:ident| $call:expr) => {
+            cases.add_returning($name, 3, $secrets.clone(), $returned, move || {
+                let $subscriber = black_box(subscriber);
+                crate::here();
+                let value = spare($call);
+                crate::owned(&value);
+            });
+        };
+        ($name:literal, $secrets:expr, |$subscriber:ident| $call:expr) => {
+            function!($name, $secrets, Vec::new(), |$subscriber| $call)
+        };
+    }
+    // f1, f1*, f2, f5 and f5* return their value in a register: MAC-A,
+    // MAC-S and RES, which travel in clear, are not looked for among the
+    // values of the work, and each is looked for on the stack where the
+    // crate is optimized
+    let named = |name: &str, octets: usize| -> Vec<Secret> {
+        let (_, value) = secrets.iter().find(|(of, _)| of == name).expect("a value");
+        vec![secret(&format!("{name}, as returned"), &value[..octets])]
+    };
+    let mac_a = without(&secrets, &["OUT1, high half"]);
+    let mac_s = without(&secrets, &["OUT1, low half"]);
+    let of_res = without(&secrets, &["OUT2, low half"]);
+    let returned = named("OUT1, high half", 8);
+    function!("Milenage::f1", mac_a, returned, |m| m.f1(rand, sqn, amf));
+    let returned = named("OUT1, low half", 8);
+    function!("Milenage::f1_star", mac_s, returned, |m| m
+        .f1_star(rand, sqn, amf));
+    let returned = named("OUT2, low half", 8);
+    function!("Milenage::f2", of_res, returned, |m| m.f2(rand));
+    function!("Milenage::f3", secrets, |m| m.f3(rand));
+    function!("Milenage::f4", secrets, |m| m.f4(rand));
+    let returned = named("OUT2, high half", 6);
+    function!("Milenage::f5", secrets, returned, |m| m.f5(rand));
+    let returned = named("OUT5, high half", 6);
+    function!("Milenage::f5_star", secrets, returned, |m| m.f5_star(rand));
+    function!("Milenage::f2345", secrets, |m| m.f2345(rand));
+    function!("Milenage::authentication_vector", secrets, |m| m
+        .authentication_vector(rand, sqn, amf));
+    function!("Milenage::check_autn", secrets, |m| m
+        .check_autn(rand, autn));
+    function!("Milenage::check_autn of a wrong AUTN", secrets, |m| m
+        .check_autn(rand, wrong_autn));
+    function!("Milenage::auts", of_auts, |m| m.auts(rand, sqn));
+    function!("Milenage::verify_auts", of_auts, |m| m
+        .verify_auts(rand, auts));
+    function!("Milenage::verify_auts of a wrong AUTS", of_auts, |m| m
+        .verify_auts(rand, wrong_auts));
+
+    // XRES* and RES*, a derivation from CK and IK
+    let vector = kept(subscriber.authentication_vector(rand, sqn, amf));
+    let response = kept(
+        subscriber
+            .check_autn(rand, autn)
+            .expect("the AUTN of the vector"),
+    );
+    let sn: &'static [u8] = b"5G:mnc093.mcc208.3gppnetwork.org";
+    let ck_ik: Vec<u8> = [&vector.ck().as_octets()[..], vector.ik().as_octets()].concat();
+    let s_res = s(0x6b, &[sn, rand.as_octets(), vector.xres().as_octets()]);
+    derivation(
+        cases,
+        "AuthenticationVector::xres_star",
+        &ck_ik,
+        Some(s_res.clone()),
+        move || {
+            crate::here();
+            let value = spare(black_box(vector).xres_star(sn));
+            crate::owned(&value);
+        },
+    );
+    derivation(
+        cases,
+        "UsimResponse::res_star",
+        &ck_ik,
+        Some(s_res),
+        move || {
+            crate::here();
+            let value = spare(black_box(response).res_star(sn));
+            crate::owned(&value);
+        },
+    );
+    // Batches of 1, 2, 3, 8 and 9 subscribers, each with its K: the
+    // subscriber above first, whose values are looked for
+    for count in [1usize, 2, 3, 8, 9] {
+        let subscribers: &'static [Milenage] = Box::leak(
+            (0..count)
+                .map(|index| {
+                    let mut k = k_octets;
+                    k[0] ^= index as u8;
+                    Milenage::new(&K::new(&k), &Opc::new(&opc_octets))
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        cases.add(
+            format!("authentication_vector_batch of {count}"),
+            3,
+            secrets.clone(),
+            move || {
+                use oxirush_security::milenage::{VectorJob, authentication_vector_batch};
+                let mut jobs = prepared(|| {
+                    let jobs = subscribers
+                        .iter()
+                        .map(|subscriber| VectorJob::new(subscriber, rand, sqn, amf));
+                    jobs.collect::<Vec<_>>()
+                });
+                crate::here();
+                authentication_vector_batch(black_box(&mut jobs));
+            },
+        );
+        cases.add(
+            format!("check_autn_batch of {count}"),
+            3,
+            secrets.clone(),
+            move || {
+                use oxirush_security::milenage::{AutnJob, check_autn_batch};
+                let mut jobs = prepared(|| {
+                    let jobs = subscribers
+                        .iter()
+                        .map(|subscriber| AutnJob::new(subscriber, rand, autn));
+                    jobs.collect::<Vec<_>>()
+                });
+                crate::here();
+                check_autn_batch(black_box(&mut jobs));
+            },
+        );
+    }
+
+    let res = kept(response.res().clone());
+    let of_xres = vec![secret("XRES", vector.xres().as_octets())];
+    cases.add("Xres::accepts", 1, of_xres, move || {
+        crate::here();
+        let value = spare(black_box(vector).xres().accepts(black_box(res)));
         crate::owned(&value);
     });
 }

@@ -20,6 +20,7 @@ cannot say is a `Result`. No public function panics on its arguments.
   | `oxirush_security::kdf::` | `kdf`, `build_s` and `extract_128` of TS 33.220 |
   | `oxirush_security::nas_5gs::` | The keys of TS 33.501 and their derivations, `nas_mac`, `nas_cipher`, `NasConnection`, `Supi`, `SupiType`, `Suci`, `ProtectionScheme`, `RoutingIndicator`, `Guti`, `STmsi`, `MobileIdentityType` |
   | `oxirush_security::nas_eps::` | The keys of TS 33.401 and their derivations, `nas_mac`, `nas_cipher`, the short MAC, the re-establishment MAC, `compute_hash_mme` |
+  | `oxirush_security::milenage::` | MILENAGE, new in 0.3.0: see Added |
 
   `common` is private, and so are `nas_5gs::kdf`, `nas_5gs::security`,
   `nas_5gs::suci`, `nas_5gs::guti`, `nas_5gs::algo` and their counterparts
@@ -258,8 +259,8 @@ cannot say is a `Result`. No public function panics on its arguments.
 - **`SecurityError`** is `#[non_exhaustive]`, `Clone`, `PartialEq` and
   `Eq`. Its variants are `InvalidKeyLength`, `InvalidParameter`,
   `Identity`, `InputTooLong`, `OutOfRange`, `UnsupportedAlgorithm`,
-  `BitLengthExceedsData` and `NasCountExhausted`; `Ecies` is gone, with
-  the errors of SUCI in `SuciError`. The public enums are
+  `BitLengthExceedsData`, `NasCountExhausted` and `MacFailure`; `Ecies` is
+  gone, with the errors of SUCI in `SuciError`. The public enums are
   `#[non_exhaustive]` and the public structs have private fields.
 
 - **Keystream generators.** `Snow3G::generate` and `Zuc::generate`, which
@@ -370,6 +371,46 @@ cannot say is a `Result`. No public function panics on its arguments.
 
 ### Added
 
+- **MILENAGE** (TS 35.205 to TS 35.208), and the authentication of
+  TS 33.102 on it, in `oxirush_security::milenage`. 0.2.0 took CK, IK, RES
+  and SQN ⊕ AK from the caller.
+
+  | Item | What it is |
+  |------|------------|
+  | `K`, `Op`, `Opc`, `Ak`, `AkStar`, `Xres` | Keys: wiped when they are dropped, compared in constant time, printed as their name alone |
+  | `Sqn`, `Amf`, `MacA`, `MacS`, `Res`, `Auts` | Values that travel in clear or in an AUTN, printed whole. `Sqn::try_from(u64)` refuses a number above 2^48 - 1 and `get()` gives it back; `Amf::separation_bit()` |
+  | `Opc::from_op(&K, &Op)` | OPc = OP ⊕ E[OP]K |
+  | `Milenage::new(&K, &Opc)`, `with_constants(&K, &Opc, Constants)` | A subscriber, with the constants c1 to c5 and r1 to r5 of TS 35.206 §4.1 or with those of its operator (§5.3), which `Constants::new` checks |
+  | `f1`, `f1_star`, `f2`, `f3`, `f4`, `f5`, `f5_star`, `f2345` | The functions, each from one TEMP: MAC-A, MAC-S, RES, CK, IK, AK, AK\* |
+  | `authentication_vector(&Rand, &Sqn, &Amf) -> AuthenticationVector` | RAND, XRES, CK, IK and AUTN = SQN ⊕ AK \|\| AMF \|\| MAC-A (TS 33.102 §6.3.2); `xres_star(sn_name)` gives XRES\* of 5GS |
+  | `check_autn(&Rand, &Autn) -> Result<UsimResponse, SecurityError>` | The USIM: SQN, MAC-A compared in constant time, then RES, CK and IK (§6.3.3); `Err(MacFailure)` for a MAC that is not the one of K; `res_star(sn_name)` gives RES\*. Whether the SQN is fresh and the AMF has the separation bit is the caller's to decide |
+  | `auts(&Rand, &Sqn) -> Auts`, `verify_auts(&Rand, &Auts) -> Result<Sqn, SecurityError>` | The AUTS of SQNMS with MAC-S over an AMF of zeros (§6.3.3), and its reading in the home network (§6.3.5) |
+  | `authentication_vector_batch(&mut [VectorJob])`, `check_autn_batch(&mut [AutnJob])` | The same for many subscribers: on the AES instructions the key expansions and the encryptions of eight run side by side, and a thousand take half the time of a call for each |
+
+  Each operation runs on the AES instructions of the processor where it
+  has them and on the `aes` crate elsewhere, needs no allocator, and
+  clears the stack and the registers after its work as the other
+  operations do. `Implementation::milenage()` and
+  `milenage_side_by_side()` say which code runs. An authentication vector
+  takes 0.13 µs, and 0.06 µs in a batch of a thousand, where the `milenage`
+  crate 0.1.6 takes 0.26 µs; `benches/README.md` has the figures.
+  `SecurityError::MacFailure` is new.
+
+  A program that took MILENAGE from the `milenage` crate 0.1.6 calls:
+
+  | `milenage` 0.1.6 | 0.3.0 |
+  |------------------|-------|
+  | `Milenage::new_with_opc(k, opc)` | `Milenage::new(&K::new(&k), &Opc::new(&opc))` |
+  | `Milenage::new_with_op(k, op)` | `Milenage::new(&k, &Opc::from_op(&k, &op))`, with `k = K::new(&k)` |
+  | `m.opc` | `Opc::from_op(&k, &op)` |
+  | `m.f1(&rand, &sqn, &amf) -> [u8; 8]` | `m.f1(&Rand::new(&rand), &Sqn::new(&sqn), &Amf::new(&amf)) -> MacA` |
+  | `m.f1star(&rand, &sqn, &amf)` | `m.f1_star(..) -> MacS` |
+  | `m.f2345(&rand) -> (res, ck, ik, ak)` | `m.f2345(&rand) -> (Res, Ck, Ik, Ak)` |
+  | `m.f5star(&rand)` | `m.f5_star(&rand) -> AkStar` |
+  | `m.compute_res_star(mcc, mnc, &rand, &res)` | `nas_5gs::compute_res_star(&ck, &ik, sn_name, &rand, res.as_octets())`, or `response.res_star(sn_name)` after `check_autn` |
+  | `m.res`, `m.ck`, `m.ik`, `m.ak`, `m.maca`, `m.macs`, `m.res_star` | The values that the functions return: a `Milenage` keeps none |
+  | the AUTN, the check of an AUTN and the AUTS, written by the program | `authentication_vector`, `check_autn`, `auts`, `verify_auts` |
+
 - **Cargo features.** The algorithms, the keys and their derivations build
   without the standard library and without an allocator, with 15 crates
   and no procedural macro; 0.2.0 had no feature and 76 crates.
@@ -420,20 +461,24 @@ cannot say is a `Result`. No public function panics on its arguments.
   `XresStar::accepts` and `HxresStar::accepts`, which compare in constant
   time; `nas_eps::derive_skgnb`; `constant_time_eq`.
 
-- Tests: 128-EIA2 set 7 of TS 33.401 Annex C.2.7, the six UEA2 design
-  conformance sets of TS 35.218 for 128-EEA1, every TS 33.501 Annex C.4
-  data set of SUCI with its intermediate values, and a 5G AKA key chain
-  from the TS 35.208 test set 1 outputs through KAUSF, XRES\*, HXRES\*,
-  KSEAF, KAMF, the NAS keys, KgNB and NH, which
-  `tests/five_g_aka_chain.py` derives with the HMAC-SHA-256 of Python.
-  KSEAF, KAMF, the 5GS NAS keys, NH and XRES\* had no test before. The
-  blocks of the README are compiled and run, and `tests/readme.rs`
+- Tests: MILENAGE on the six sets of TS 35.207 with their intermediate
+  values and on the twenty of TS 35.208 (set 2 repeats set 1 there), its AES
+  on the twenty Rijndael sets of TS 35.208 and the round keys of TS 35.207,
+  and every AUTN and AUTS with one bit changed refused; 128-EIA2 set 7 of
+  TS 33.401 Annex C.2.7, the six UEA2 design conformance sets of TS 35.218
+  for 128-EEA1, every TS 33.501 Annex C.4 data set of SUCI with its
+  intermediate values, and a 5G AKA key chain from the TS 35.208 test set 1
+  outputs through KAUSF, XRES\*, HXRES\*, KSEAF, KAMF, the NAS keys, KgNB
+  and NH, which `tests/five_g_aka_chain.py` derives with the HMAC-SHA-256 of
+  Python. KSEAF, KAMF, the 5GS NAS keys, NH and XRES\* had no test before.
+  The blocks of the README are compiled and run, and `tests/readme.rs`
   compares what each prints with the text under it.
 
 - Four `cargo fuzz` targets under `fuzz/`, which CI runs for a minute each
   at a push and for half an hour each week; `benches/`, which times the
-  algorithms, the derivations and SUCI with criterion; `leftovers/` and
-  `emulated-aarch64/`; a `SECURITY.md`; an advisory check in CI.
+  algorithms, the derivations, MILENAGE and SUCI with criterion;
+  `leftovers/` and `emulated-aarch64/`; a `SECURITY.md`; an advisory check
+  in CI.
 
 ### Fixed
 

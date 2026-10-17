@@ -72,6 +72,11 @@ pub enum SecurityError {
     /// message under its keys, so there is none to wrap around to: the
     /// security context is to be replaced by a new one.
     NasCountExhausted,
+    /// A MAC of an authentication that is not the one that the key of the
+    /// subscriber gives: the MAC-A of an AUTN, which a UE answers with the
+    /// cause "MAC failure" (TS 33.102 §6.3.3), or the MAC-S of an AUTS,
+    /// after which the home network does not take its SQN (§6.3.5).
+    MacFailure,
 }
 
 impl core::fmt::Display for SecurityError {
@@ -100,6 +105,7 @@ impl core::fmt::Display for SecurityError {
             Self::NasCountExhausted => {
                 f.write_str("no NAS COUNT is left after 16777215: a new security context is needed")
             }
+            Self::MacFailure => f.write_str("MAC failure: the MAC is not the one that K gives"),
         }
     }
 }
@@ -172,6 +178,10 @@ mod tests {
             (
                 SecurityError::NasCountExhausted,
                 "no NAS COUNT is left after 16777215: a new security context is needed",
+            ),
+            (
+                SecurityError::MacFailure,
+                "MAC failure: the MAC is not the one that K gives",
             ),
         ] {
             assert_eq!(error.to_string(), text);

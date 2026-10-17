@@ -50,6 +50,11 @@ fn the_implementation_is_the_one_that_the_job_expects() {
             implementation.integrity_side_by_side(integrity),
         );
     }
+    println!(
+        "  MILENAGE: AES on {}, {} subscribers side by side in a batch",
+        implementation.milenage(),
+        implementation.milenage_side_by_side(),
+    );
 
     let Ok(expected) = std::env::var("OXIRUSH_SECURITY_EXPECT") else {
         return;

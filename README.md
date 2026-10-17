@@ -4,8 +4,9 @@
 [![Documentation](https://docs.rs/oxirush-security/badge.svg)](https://docs.rs/oxirush-security)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-The security functions of 5GS and EPS in Rust, per 3GPP TS 33.501 and
-TS 33.401: key derivation, NAS integrity and ciphering, and SUCI concealment.
+The security functions of 5GS and EPS in Rust, per 3GPP TS 35.206,
+TS 33.102, TS 33.501 and TS 33.401: MILENAGE, key derivation, NAS integrity
+and ciphering, and SUCI concealment.
 
 ```rust
 use oxirush_security::nas_5gs::{
@@ -56,36 +57,36 @@ hex = "0.4" # for the examples of this page
 Until 0.3.0 is on crates.io, the repository has it:
 `oxirush-security = { git = "https://github.com/linouxis9/oxirush-security" }`.
 
-## Derive the keys of a 5G AKA run
+## Run 5G AKA, from MILENAGE to KAMF
 
-CK, IK, RES and SQN xor AK come from MILENAGE or TUAK, which the crate does
-not have: the [`milenage`](https://crates.io/crates/milenage) crate has
-MILENAGE. These are the outputs of TS 35.208 test set 1.
+The subscriber of TS 35.208 test set 1: its K, its OPc, and the RAND, the
+SQN and the AMF of a challenge.
 
 ```rust
+use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
 use oxirush_security::nas_5gs::{
-    Supi, compute_hxres_star, compute_res_star, compute_xres_star, derive_kamf, derive_kausf,
-    derive_kseaf,
+    Supi, compute_hxres_star, derive_kamf, derive_kausf, derive_kseaf,
 };
-use oxirush_security::{Autn, Ck, Ik, Rand};
+use oxirush_security::Rand;
 
 let octets = |s: &str| hex::decode(s).unwrap();
-let ck = Ck::from_slice(&octets("b40ba9a3c58b2a05bbf0d987b21bf8cb")).unwrap();
-let ik = Ik::from_slice(&octets("f769bcd751044604127672711c6d3441")).unwrap();
+let k = K::from_slice(&octets("465b5ce8b199b49faa5f0a2ee238a6bc")).unwrap();
+let opc = Opc::from_slice(&octets("cd63cb71954a9f4e48a5994e37a02baf")).unwrap();
+let subscriber = Milenage::new(&k, &opc);
 let rand = Rand::from_slice(&octets("23553cbe9637a89d218ae64dae47bf35")).unwrap();
-// SQN xor AK, the AMF field and MAC-A
-let autn = Autn::from_slice(&octets("55f328b43577b9b94a9ffac354dfafb3")).unwrap();
-let res = octets("a54211d5e3ba50bf");
+let (sqn, amf) = (Sqn::try_from(0xff9b_b4d0_b607).unwrap(), Amf::new(&[0xb9, 0xb9]));
 let sn_name = b"5G:mnc093.mcc208.3gppnetwork.org";
 
-// UDM: KAUSF and XRES*
-let k_ausf = derive_kausf(&ck, &ik, sn_name, &autn).unwrap();
-let xres_star = compute_xres_star(&ck, &ik, sn_name, &rand, &res).unwrap();
+// UDM: the authentication vector of MILENAGE, then KAUSF and XRES*
+let vector = subscriber.authentication_vector(&rand, &sqn, &amf);
+let k_ausf = derive_kausf(vector.ck(), vector.ik(), sn_name, vector.autn()).unwrap();
+let xres_star = vector.xres_star(sn_name).unwrap();
+println!("AUTN   {}", hex::encode(vector.autn().as_octets()));
 println!("KAUSF  {}", hex::encode(k_ausf.as_octets()));
 println!("XRES*  {}", hex::encode(xres_star.as_octets()));
 
 // AUSF: HXRES* and KSEAF
-let hxres_star = compute_hxres_star(&rand, &xres_star);
+let hxres_star = compute_hxres_star(vector.rand(), &xres_star);
 let k_seaf = derive_kseaf(&k_ausf, sn_name).unwrap();
 println!("HXRES* {}", hex::encode(hxres_star.as_octets()));
 println!("KSEAF  {}", hex::encode(k_seaf.as_octets()));
@@ -96,18 +97,113 @@ let supi = Supi::parse("imsi-208930000000001").unwrap();
 let k_amf = derive_kamf(&k_seaf, &supi, &[0x00, 0x00]).unwrap();
 println!("KAMF   {}", hex::encode(k_amf.as_octets()));
 
-// UE: RES*, which the AUSF compares with XRES* in constant time
-let res_star = compute_res_star(&ck, &ik, sn_name, &rand, &res).unwrap();
+// UE: the USIM checks the MAC of AUTN. The ME judges the SQN and the
+// separation bit of the AMF, then sends RES*, which the AUSF compares with
+// XRES* in constant time
+let response = subscriber.check_autn(&rand, vector.autn()).unwrap();
+println!("SQN {:x}, separation bit {}", response.sqn().get(), response.amf().separation_bit());
+let res_star = response.res_star(sn_name).unwrap();
 println!("RES* accepted: {}", xres_star.accepts(&res_star));
 ```
 
 ```text
+AUTN   55f328b43577b9b94a9ffac354dfafb3
 KAUSF  f2e35260f85194d4f891504d02111e56689ac23dd393bee3abbcc5bfbc013ef9
 XRES*  5cc9527f4d21c43bee83a15443acf1c4
 HXRES* 6970075e3c8245fdc2073003cf166279
 KSEAF  cfddde483bd1318a412e98870f556410905be4fb7500abed93ee16af71bbb3fa
 KAMF   9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4
+SQN ff9bb4d0b607, separation bit true
 RES* accepted: true
+```
+
+`Opc::from_op` derives OPc from OP. `nas_eps::derive_kasme` takes the CK,
+the IK and the AUTN of a vector for EPS AKA.
+
+## Re-synchronise a USIM
+
+A USIM that finds the SQN of a challenge out of range answers with an
+AUTS of its own SQN, SQNMS. The home network reads SQNMS back from it.
+
+```rust
+use oxirush_security::milenage::{Amf, Auts, K, Milenage, Opc, Sqn};
+use oxirush_security::Rand;
+
+let subscriber = Milenage::new(&K::new(&[0x46; 16]), &Opc::new(&[0xcd; 16]));
+let rand = Rand::new(&[0x23; 16]);
+let vector = subscriber.authentication_vector(&rand, &Sqn::try_from(32).unwrap(), &Amf::new(&[0x80, 0]));
+
+// UE: its SQNMS is 64, ahead of the 32 of the AUTN, which is no longer
+// fresh. Whether a SQN is fresh is the UE's policy (TS 33.102 Annex C)
+let response = subscriber.check_autn(&rand, vector.autn()).unwrap();
+let sqn_ms = Sqn::try_from(64).unwrap();
+println!("SQN {} after SQNMS {}", response.sqn().get(), sqn_ms.get());
+let auts = subscriber.auts(&rand, &sqn_ms);
+println!("{auts:?}");
+
+// Home network: the AUTS answers the RAND of the challenge, which the
+// serving network gives with it. Its MAC-S is checked, and SQNMS read
+let read = subscriber.verify_auts(&rand, &auts).unwrap();
+println!("SQNMS {}", read.get());
+
+// An AUTS with one bit changed, or for another RAND, is refused
+let mut changed = *auts.as_octets();
+changed[13] ^= 1;
+println!("{:?}", subscriber.verify_auts(&rand, &Auts::new(&changed)));
+```
+
+```text
+SQN 32 after SQNMS 64
+Auts(5ef40417ef4cb9ac9e76640b820d)
+SQNMS 64
+Err(MacFailure)
+```
+
+## Make the vectors of many subscribers in one call
+
+A job is a subscriber with the inputs of its call. On the AES instructions
+a batch runs the key expansions and the encryptions of eight subscribers
+side by side.
+
+```rust
+use oxirush_security::milenage::{
+    Amf, AutnJob, K, Milenage, Opc, Sqn, VectorJob, authentication_vector_batch,
+    check_autn_batch,
+};
+use oxirush_security::Rand;
+
+// A thousand subscribers, each with its K, its RAND and its next SQN
+let subscribers: Vec<Milenage> = (0..1000u16)
+    .map(|n| {
+        let mut k = [0x46; 16];
+        k[..2].copy_from_slice(&n.to_be_bytes());
+        Milenage::new(&K::new(&k), &Opc::new(&[0xcd; 16]))
+    })
+    .collect();
+let rands: Vec<Rand> = (0..1000u16).map(|n| Rand::new(&[n as u8; 16])).collect();
+let sqns: Vec<Sqn> = (0..1000u64).map(|n| Sqn::try_from(32 + n).unwrap()).collect();
+let amf = Amf::new(&[0x80, 0x00]);
+
+// Home network: the vectors
+let mut jobs: Vec<_> = (0..1000)
+    .map(|n| VectorJob::new(&subscribers[n], &rands[n], &sqns[n], &amf))
+    .collect();
+authentication_vector_batch(&mut jobs);
+let vectors: Vec<_> = jobs.into_iter().map(|job| job.into_vector().unwrap()).collect();
+println!("AUTN of the last {}", hex::encode(vectors[999].autn().as_octets()));
+
+// The UEs: the check of each AUTN
+let mut jobs: Vec<_> = (0..1000)
+    .map(|n| AutnJob::new(&subscribers[n], &rands[n], vectors[n].autn()))
+    .collect();
+check_autn_batch(&mut jobs);
+let accepted = jobs.iter().filter(|job| matches!(job.response(), Some(Ok(_)))).count();
+println!("{accepted} AUTNs accepted");
+```
+
+```text
+AUTN of the last a8ea63cde1078000cad3a5b1943c2ec3
+1000 AUTNs accepted
 ```
 
 ## Protect and check a NAS message
@@ -555,7 +651,7 @@ The clearing takes 10 to 33 ns for a message, and a batch pays it once.
 
 | Feature | The crate has | Needs |
 |---------|---------------|-------|
-| none | the algorithms, the contexts and the batches, the keys and their derivations, NAS integrity and ciphering, the selection of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone: no allocator |
+| none | the algorithms, the contexts and the batches, MILENAGE, the keys and their derivations, NAS integrity and ciphering, the selection of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone: no allocator |
 | `alloc` | and what returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | an allocator |
 | `std` | and, on an AArch64 system other than Linux, Android and Apple's, the choice of the code on the vector and AES instructions when the program runs | the standard library |
 | `suci` | and the SUCI of an IMSI, with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, and a source of random numbers that `getrandom` has for the target |
@@ -582,10 +678,11 @@ dependency at a version that 1.88 builds.
 
 ## What it does not do
 
-- AKA: it has no MILENAGE or TUAK. The
-  [`milenage`](https://crates.io/crates/milenage) crate has the first.
-- State: it stores no key and keeps no NAS COUNT. The caller passes both,
-  and `NasCount` gives the next one and the one of a received message.
+- AKA: it has MILENAGE and not TUAK. Whether a SQN is fresh and whether
+  an AMF has the separation bit are the caller's to decide.
+- State: it stores no key and keeps no NAS COUNT or SQN. The caller passes
+  them, and `NasCount` gives the next one and the one of a received
+  message.
 - NAS messages: it protects octets.
   [oxirush-nas](https://github.com/linouxis9/oxirush-nas) encodes the
   messages and their security header.
@@ -602,20 +699,24 @@ as one of sixteen in a call of `nea_cipher_batch` or `nia_mac_batch`:
 | 128-NEA1, 128-NIA1 (SNOW 3G) | 2.3 µs | 0.41 µs | 0.65 µs | 0.24 µs |
 | 128-NEA3, 128-NIA3 (ZUC) | 3.2 µs | 3.6 µs | 0.87 µs | 1.2 µs |
 
-A key derivation takes 0.24 µs, and SUCI concealment 59 µs with Profile A
-and 286 µs with Profile B. [`benches/`](https://github.com/linouxis9/oxirush-security/tree/master/benches)
+MILENAGE makes an authentication vector in 0.13 µs, and in 0.06 µs as one
+of a thousand in a call of `authentication_vector_batch`, where the
+`milenage` crate 0.1.6 takes 0.26 µs. A key derivation takes 0.24 µs, and
+SUCI concealment 59 µs with Profile A and 286 µs with Profile B.
+[`benches/`](https://github.com/linouxis9/oxirush-security/tree/master/benches)
 has the benchmarks, the other figures and how to profile.
 
 ## Tests and fuzzing
 
-The algorithms and SUCI are tested on the 3GPP test data. TS 33.501 has none
-for its key derivations: the 5G AKA chain is compared with a second
-implementation, [`tests/five_g_aka_chain.py`](tests/five_g_aka_chain.py),
-and the other derivations with values that the tests calculate.
+The algorithms, MILENAGE and SUCI are tested on the 3GPP test data, MILENAGE
+on every set of TS 35.207 and TS 35.208. TS 33.501 has none for its
+key derivations: the 5G AKA chain is compared with a second implementation,
+[`tests/five_g_aka_chain.py`](tests/five_g_aka_chain.py), and the other
+derivations with values that the tests calculate.
 
-SNOW 3G, ZUC and AES run on the AES, vector and carry-less multiplication
-instructions of an x86-64 or AArch64 processor that has them, and on scalar
-code elsewhere. The source has no index into memory and no branch that
+SNOW 3G, ZUC, AES and MILENAGE run on the AES, vector and carry-less
+multiplication instructions of an x86-64 or AArch64 processor that has
+them, and on scalar code elsewhere. The source has no index into memory and no branch that
 depends on a secret, and the compiled code of one x86-64 build was read
 for it; no timing was measured. The tests compare the two forms, and a
 batch with its messages one by one. CI runs them on x86-64, AArch64 and

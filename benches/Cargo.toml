@@ -13,6 +13,8 @@ oxirush-security = { path = ".." }
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
 pprof = { version = "0.15", features = ["criterion", "protobuf-codec", "flamegraph"] }
+# The MILENAGE that programs took before this crate had one, timed beside it
+milenage = "=0.1.6"
 
 [[bench]]
 name = "algorithms"
@@ -22,9 +24,15 @@ harness = false
 name = "batch"
 harness = false
 
+[[bench]]
+name = "milenage"
+harness = false
+
 # `--cfg oxirush_security_hooks` and `FORM=scalar` time the scalar code.
+# `aes_force_soft` is what the `aes` crate of `milenage` takes for its code
+# without the AES instructions.
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oxirush_security_hooks)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oxirush_security_hooks)', 'cfg(aes_force_soft)', 'cfg(aes_backend, values("soft"))'] }
 
 # Symbols for the profiles.
 [profile.bench]

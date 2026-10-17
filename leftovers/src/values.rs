@@ -201,3 +201,71 @@ pub fn hmac_secrets(name: &str, key: &[u8], message: &[u8]) -> Vec<Secret> {
         secret("the 256 bits that are derived", &outer),
     ]
 }
+
+/// What MILENAGE handles for a RAND, with K and OPc (TS 35.206 §4.1), each
+/// as its octets and as the number that holds them: OPc, TEMP, the input
+/// and the encryption of the input of OUT1 to OUT5, and the two halves of
+/// each OUT, where OUT1 has the SQN and the AMF of `in1`. The halves are
+/// apart, so that a case leaves out what its operation returns in clear:
+/// MAC-A and MAC-S are the halves of OUT1, and RES the low half of OUT2.
+pub fn milenage_secrets(
+    k: &[u8; 16],
+    opc: &[u8; 16],
+    rand: &[u8; 16],
+    sqn: &[u8; 6],
+    amf: &[u8; 2],
+) -> Vec<Secret> {
+    use aes::cipher::{BlockCipherEncrypt, KeyInit};
+    let e = |x: u128| {
+        let mut block = x.to_be_bytes();
+        aes::Aes128Enc::new(k.into()).encrypt_block((&mut block).into());
+        u128::from_be_bytes(block)
+    };
+    let opc = u128::from_be_bytes(*opc);
+    let half = u128::from(u64::from_be_bytes([
+        sqn[0], sqn[1], sqn[2], sqn[3], sqn[4], sqn[5], amf[0], amf[1],
+    ]));
+    let in1 = (half << 64) | half;
+    let temp = e(u128::from_be_bytes(*rand) ^ opc);
+    let constants: [(u32, u128); 5] = [(64, 0), (0, 1), (32, 2), (64, 4), (96, 8)];
+    let mut values = vec![("OPc".to_string(), opc), ("TEMP".to_string(), temp)];
+    let mut outputs = Vec::new();
+    for (i, (r, c)) in (1..).zip(constants) {
+        let input = match i {
+            1 => temp ^ (in1 ^ opc).rotate_left(r) ^ c,
+            _ => (temp ^ opc).rotate_left(r) ^ c,
+        };
+        values.push((format!("the input of OUT{i}"), input));
+        values.push((format!("E of the input of OUT{i}"), e(input)));
+        outputs.push((i, e(input) ^ opc));
+    }
+    let mut secrets = aes_secrets(k);
+    for (name, value) in values {
+        secrets.push(secret(&name, &value.to_be_bytes()));
+        secrets.push(secret(
+            &format!("{name}, as a number"),
+            &value.to_le_bytes(),
+        ));
+    }
+    for (i, value) in outputs {
+        let (octets, number) = (value.to_be_bytes(), value.to_le_bytes());
+        secrets.push(secret(&format!("OUT{i}, high half"), &octets[..8]));
+        secrets.push(secret(
+            &format!("OUT{i}, high half, as a number"),
+            &number[8..],
+        ));
+        secrets.push(secret(&format!("OUT{i}, low half"), &octets[8..]));
+        secrets.push(secret(
+            &format!("OUT{i}, low half, as a number"),
+            &number[..8],
+        ));
+    }
+    secrets
+}
+
+/// `secrets` without those whose name begins with one of `returned`: what
+/// an operation returns in clear, which is the program's.
+pub fn without(secrets: &[Secret], returned: &[&str]) -> Vec<Secret> {
+    let kept = |(name, _): &&Secret| !returned.iter().any(|part| name.starts_with(part));
+    secrets.iter().filter(kept).cloned().collect()
+}
