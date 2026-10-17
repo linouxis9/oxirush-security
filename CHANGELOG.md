@@ -423,7 +423,8 @@ cannot say is a `Result`. No public function panics on its arguments.
   | `alloc` | And what returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | An allocator |
   | `std`, a default | And, on an AArch64 system other than Linux, Android and Apple's, the choice of the vector code when the program runs | The standard library |
   | `suci`, a default | And `nas_5gs::Suci` with the null scheme, Profile A and Profile B: 42 crates | `alloc`, and a source of random numbers for `getrandom` |
-  | `nai`, a default | And the SUCI in the NAI format and that of a SUPI that is a NAI: 70 crates | `suci` |
+  | `nai`, a default | And the SUCI in the NAI format and that of a SUPI that is a NAI, checked by the grammar of RFC 7542: 42 crates | `suci` |
+  | `idna` | And the realm and the username of a NAI checked as internationalized names, Unicode normalization form C and IDNA, as the features `idna` of oxirush-nas and of oxirush-utils have it: 70 crates | `nai` |
 
   On a target without an operating system the vector code runs when the
   build enables its instructions. CI builds each set of features for

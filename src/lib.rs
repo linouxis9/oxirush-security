@@ -355,7 +355,7 @@
 //!
 //! # Features
 //!
-//! `std`, `suci` and `nai` are on by default.
+//! `std`, `suci` and `nai` are on by default, and `idna` is not.
 //!
 //! | Feature | Adds | Needs |
 //! |---------|------|-------|
@@ -363,7 +363,8 @@
 //! | `alloc` | What returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | An allocator |
 //! | `std` | On an AArch64 system other than Linux, Android and Apple's: the choice of the code on the vector and AES instructions when the program runs. Nothing else | The standard library. It brings `alloc` |
 //! | `suci` | `nas_5gs::Suci`: the SUCI of an IMSI in a mobile identity, concealed and de-concealed with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, which it brings, and a source of random numbers that `getrandom` has for the target: concealment draws a key. 42 crates |
-//! | `nai` | The SUCI in the NAI format, and the SUCI of a SUPI that is a NAI: a network specific identifier, a GCI or a GLI | `suci`, which it brings, with the Unicode normalization and the IDNA of oxirush-utils. 70 crates |
+//! | `nai` | The SUCI in the NAI format, and the SUCI of a SUPI that is a NAI: a network specific identifier, a GCI or a GLI, their realm and username checked by the grammar of RFC 7542 | `suci`, which it brings. 42 crates |
+//! | `idna` | The realm and the username of a NAI are also checked as internationalized names: Unicode normalization form C, and a realm that IDNA takes as it is written | `nai`, which it brings, with the Unicode normalization and the IDNA of oxirush-utils. 70 crates |
 //!
 //! Without `std` the crate is `no_std`. The key derivations give the
 //! hasher their parameters part after part: the string S of TS 33.220 is

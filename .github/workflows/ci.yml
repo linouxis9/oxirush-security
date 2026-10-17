@@ -225,6 +225,7 @@ jobs:
       - run: cargo build --target ${{ matrix.target }} --no-default-features --features alloc
       - run: cargo build --target ${{ matrix.target }} --no-default-features --features suci
       - run: cargo build --target ${{ matrix.target }} --no-default-features --features nai
+      - run: cargo build --target ${{ matrix.target }} --no-default-features --features idna
 
   # A target that has the scalar code alone, and 32-bit lengths
   scalar:
@@ -279,6 +280,7 @@ jobs:
           cargo build --target thumbv7em-none-eabihf --no-default-features --features alloc
           cargo build --target thumbv7em-none-eabihf --no-default-features --features suci
           cargo build --target thumbv7em-none-eabihf --no-default-features --features nai
+          cargo build --target thumbv7em-none-eabihf --no-default-features --features idna
 
   clippy:
     name: Clippy
@@ -318,7 +320,7 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: |
-          for features in "" alloc std suci nai; do
+          for features in "" alloc std suci nai idna; do
             echo "::group::--no-default-features --features \"$features\""
             cargo doc --no-deps --no-default-features --features "$features"
             echo "::endgroup::"

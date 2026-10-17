@@ -28,9 +28,13 @@ alloc = ["zeroize/alloc", "oxirush-utils/alloc"]
 suci = ["alloc", "dep:x25519-dalek", "dep:p256", "dep:getrandom"]
 # The SUCI in the NAI format, TS 23.003 clause 28.7.3, and the SUCI of a SUPI
 # that is a NAI: a network specific identifier, a GCI or a GLI. Its realm and
-# its username are also checked as internationalized names: it brings the
-# Unicode normalization and the IDNA of oxirush-utils.
-nai = ["suci", "oxirush-utils/idna"]
+# its username are checked by the grammar of RFC 7542.
+nai = ["suci"]
+# The realm and the username of a NAI are also checked as internationalized
+# names: Unicode normalization form C, and a realm that IDNA takes as it is
+# written. It brings the Unicode tables of the `idna` of oxirush-utils, some
+# forty crates, as the feature `idna` of oxirush-nas does.
+idna = ["nai", "oxirush-utils/idna"]
 
 [dependencies]
 # KDF and SUCI: SHA-256 whose state is wiped on drop

@@ -655,9 +655,10 @@ The clearing takes 10 to 33 ns for a message, and a batch pays it once.
 | `alloc` | and what returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | an allocator |
 | `std` | and, on an AArch64 system other than Linux, Android and Apple's, the choice of the code on the vector and AES instructions when the program runs | the standard library |
 | `suci` | and the SUCI of an IMSI, with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, and a source of random numbers that `getrandom` has for the target |
-| `nai` | and the SUCI in the NAI format and that of a SUPI that is a NAI, with Unicode normalization and IDNA | `suci` |
+| `nai` | and the SUCI in the NAI format and that of a SUPI that is a NAI, by the grammar of RFC 7542 | `suci` |
+| `idna` | and the realm and the username of a NAI are also checked as internationalized names: Unicode normalization and IDNA | `nai`; the Unicode tables of `idna` and `unicode-normalization` |
 
-`std`, `suci` and `nai` are the default. Without `std` the crate is
+`std`, `suci` and `nai` are the default, without IDNA. Without `std` the crate is
 `no_std`, and it still asks the processor what it has: by CPUID on x86-64,
 through the auxiliary vector on AArch64 Linux and Android. On a target
 without an operating system the code on the vector and AES instructions
