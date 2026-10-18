@@ -706,68 +706,69 @@ The clearing takes 10 to 33 ns for a message, and a batch pays it once.
 
 ## Performance
 
-On one core of an AMD Ryzen 7 5700G, with a load of 4 to 6 from other
-work on the machine, a message of 1500 octets, alone and as one of sixteen
-in a call of `nea_cipher_batch` or `nia_mac_batch`:
+On one core of an AMD Ryzen 7 5700G (16 threads, Linux 7.0, Rust 1.98.1),
+measured on a quiet machine on 2026-10-18, a message of 1500 octets, alone
+and as one of sixteen in a call of `nea_cipher_batch` or `nia_mac_batch`,
+the lowest of five runs:
 
 | | Cipher | MAC | Cipher, one of sixteen | MAC, one of sixteen |
 |---|---|---|---|---|
-| 128-NEA2, 128-NIA2 (AES) | 0.19 µs | 1.00 µs | 0.18 µs | 0.26 µs |
-| 128-NEA1, 128-NIA1 (SNOW 3G) | 2.3 µs | 0.42 µs | 0.66 µs | 0.24 µs |
-| 128-NEA3, 128-NIA3 (ZUC) | 3.4 µs | 3.6 µs | 0.94 µs | 1.2 µs |
+| 128-NEA2, 128-NIA2 (AES) | 0.18 µs | 0.94 µs | 0.17 µs | 0.25 µs |
+| 128-NEA1, 128-NIA1 (SNOW 3G) | 2.2 µs | 0.39 µs | 0.62 µs | 0.23 µs |
+| 128-NEA3, 128-NIA3 (ZUC) | 3.1 µs | 3.4 µs | 0.82 µs | 1.1 µs |
 
-MILENAGE makes an authentication vector in 0.13 µs, and in 0.06 µs as one
+MILENAGE makes an authentication vector in 0.12 µs, and in 0.06 µs as one
 of a thousand in a call of `authentication_vector_batch`. A key
-derivation takes 0.24 µs, and SUCI concealment 58 µs with Profile A and
-282 µs with Profile B.
+derivation takes 0.22 µs, and SUCI concealment 55 µs with Profile A and
+268 µs with Profile B.
 [`benches/`](https://github.com/linouxis9/oxirush-security/tree/master/benches)
 has the benchmarks, the other figures and how to profile.
 
 ### Against other implementations
 
-The same inputs to each, a call for each operation, on core 9 of the same
-machine, with a load of 5 to 8. Times are the lowest of three runs;
-cycles and instructions are per operation, from `perf stat`, in user mode;
-peak memory is that of the whole program; the last column is the time of
-each against this crate's. cryptography-rs has the keystream generators,
-which the program runs with the IV of 128-NEA1 and 128-NEA3; its `Ct`
-types read no table at an index from the state, as this crate does.
-Open5GS is called through `ogs_nas_encrypt` and `ogs_nas_mac_calculate`,
-which its AMF and MME call.
+The same inputs to each, a call for each operation, on core 2 of the same
+machine (Go 1.27). Times are the lowest of three runs, and each figure the
+median of three runs of the script; cycles and instructions are per
+operation, from `perf stat`, in user mode; peak memory is that of the whole
+program; the last column is the time of each against this crate's.
+cryptography-rs has the keystream generators, which the program runs with
+the IV of 128-NEA1 and 128-NEA3; its `Ct` types read no table at an index
+from the state, as this crate does. Open5GS is called through
+`ogs_nas_encrypt` and `ogs_nas_mac_calculate`, which its AMF and MME call.
 
 | Operation | | ns | Cycles | Instructions | Allocations | Octets allocated | Peak memory | Time against oxirush-security |
 |---|---|---|---|---|---|---|---|---|
-| MILENAGE, an authentication vector | oxirush-security | 134.4 | 565 | 1 037 | 0 | 0 | 2.9 MiB |  |
-|  | milenage 0.3.1 | 689.6 | 3 014 | 7 419 | 0 | 0 | 2.8 MiB | 5.13 |
-|  | milenage 0.1.6 | 263.7 | 1 217 | 2 914 | 0 | 0 | 2.8 MiB | 1.96 |
-|  | Open5GS v2.8.0 | 445.5 | 1 862 | 6 115 | 0 | 0 | 2.1 MiB | 3.31 |
-|  | free5GC util v1.3.2 | 590.7 | 2 398 | 8 716 | 19.00 | 1 248 | 7.5 MiB | 4.40 |
-| 128-NEA1 (SNOW 3G), 1500 octets | oxirush-security | 2 332 | 10 217 | 34 901 | 0 | 0 | 2.8 MiB |  |
-|  | cryptography-rs 0.8.0, Snow3g | 3 674 | 15 875 | 69 233 | 0 | 0 | 2.8 MiB | 1.58 |
-|  | cryptography-rs 0.8.0, Snow3gCt | 45 145 | 195 314 | 850 007 | 0 | 0 | 2.8 MiB | 19.36 |
-|  | Open5GS v2.8.0 | 2 954 | 12 386 | 42 136 | 0 | 0 | 2.2 MiB | 1.27 |
-|  | free5GC nas v1.2.3 | 463 680 | 2 173 686 | 5 359 324 | 3.00 | 3 152 | 4.9 MiB | 198.83 |
-| 128-NEA2 (AES-CTR), 1500 octets | oxirush-security | 225.2 | 952 | 3 677 | 0 | 0 | 2.8 MiB |  |
-|  | aes 0.8.4, ctr 0.9.2 | 203.6 | 872 | 2 980 | 0 | 0 | 2.7 MiB | 0.90 |
-|  | Open5GS v2.8.0 | 4 629 | 19 775 | 69 722 | 0 | 0 | 2.1 MiB | 20.55 |
-|  | free5GC nas v1.2.3 | 526.3 | 2 147 | 6 460 | 4.00 | 2 576 | 7.7 MiB | 2.34 |
-| 128-NEA3 (ZUC), 1500 octets | oxirush-security | 3 518 | 15 141 | 53 167 | 0 | 0 | 2.9 MiB |  |
-|  | zuc 0.4.1 | 3 628 | 15 573 | 58 520 | 0 | 0 | 2.8 MiB | 1.03 |
-|  | cryptography-rs 0.8.0, Zuc128 | 3 640 | 15 597 | 63 784 | 0 | 0 | 2.9 MiB | 1.03 |
-|  | cryptography-rs 0.8.0, Zuc128Ct | 43 143 | 186 931 | 792 637 | 0 | 0 | 2.8 MiB | 12.26 |
-|  | Open5GS v2.8.0 | 7 829 | 33 582 | 126 029 | 1.00 | 1 596 | 2.1 MiB | 2.23 |
-|  | free5GC nas v1.2.3 | 11 773 | 49 685 | 203 420 | 2.00 | 3 072 | 7.6 MiB | 3.35 |
-| 128-NIA1 (SNOW 3G), 1500 octets | oxirush-security | 415.2 | 1 786 | 5 156 | 0 | 0 | 2.8 MiB |  |
-|  | Open5GS v2.8.0 | 496 648 | 2 685 780 | 5 514 519 | 0 | 0 | 2.1 MiB | 1 196 |
-|  | free5GC nas v1.2.3 | 435 477 | 1 809 273 | 4 688 044 | 3.00 | 108 | 2.9 MiB | 1 049 |
-| 128-NIA2 (AES-CMAC), 1500 octets | oxirush-security | 1 002 | 4 316 | 2 613 | 0 | 0 | 2.9 MiB |  |
-|  | aes 0.8.4, cmac 0.7.2 | 1 003 | 4 326 | 2 649 | 0 | 0 | 2.8 MiB | 1.00 |
-|  | Open5GS v2.8.0 | 4 350 | 18 947 | 60 224 | 0 | 0 | 2.1 MiB | 4.34 |
-|  | free5GC nas v1.2.3 | 1 996 | 8 408 | 21 038 | 8.00 | 2 240 | 7.4 MiB | 1.99 |
-| 128-NIA3 (ZUC), 1500 octets | oxirush-security | 3 795 | 16 478 | 58 119 | 0 | 0 | 2.9 MiB |  |
-|  | zuc 0.4.1 | 5 906 | 25 710 | 120 257 | 0 | 0 | 2.7 MiB | 1.56 |
-|  | Open5GS v2.8.0 | 33 267 | 161 884 | 443 082 | 1.00 | 1 604 | 2.1 MiB | 8.77 |
-|  | free5GC nas v1.2.3 | 25 552 | 109 643 | 602 375 | 2.00 | 1 540 | 7.6 MiB | 6.73 |
+| MILENAGE, an authentication vector | oxirush-security | 120.9 | 554 | 1 013 | 0 | 0 | 2.5 MiB |  |
+|  | milenage 0.3.1 | 713.7 | 3 253 | 7 965 | 0 | 0 | 2.4 MiB | 5.90 |
+|  | milenage 0.1.6 | 246.4 | 1 124 | 2 952 | 0 | 0 | 2.4 MiB | 2.04 |
+|  | Open5GS v2.8.0 | 416.9 | 1 897 | 6 115 | 0 | 0 | 2.1 MiB | 3.45 |
+|  | free5GC util v1.3.2 | 537.9 | 2 376 | 8 682 | 19.00 | 1 248 | 7.5 MiB | 4.45 |
+| 128-NEA1 (SNOW 3G), 1500 octets | oxirush-security | 2 193 | 9 980 | 32 706 | 0 | 0 | 2.5 MiB |  |
+|  | cryptography-rs 0.8.0, Snow3g | 3 172 | 14 434 | 66 230 | 0 | 0 | 2.5 MiB | 1.45 |
+|  | cryptography-rs 0.8.0, Snow3gCt | 42 846 | 195 420 | 853 943 | 0 | 0 | 2.5 MiB | 19.53 |
+|  | Open5GS v2.8.0 | 2 798 | 12 352 | 42 136 | 0 | 0 | 2.1 MiB | 1.28 |
+|  | free5GC nas v1.2.3 | 438 584 | 1 987 513 | 5 359 230 | 3.00 | 3 152 | 5.0 MiB | 199.97 |
+| 128-NEA2 (AES-CTR), 1500 octets | oxirush-security | 178.3 | 822 | 2 440 | 0 | 0 | 2.5 MiB |  |
+|  | aes 0.8.4, ctr 0.9.2 | 187.6 | 857 | 2 972 | 0 | 0 | 2.4 MiB | 1.05 |
+|  | Open5GS v2.8.0 | 4 336 | 19 775 | 69 722 | 0 | 0 | 2.1 MiB | 24.32 |
+|  | free5GC nas v1.2.3 | 451.8 | 2 014 | 6 403 | 4.00 | 2 576 | 7.6 MiB | 2.53 |
+| 128-NEA3 (ZUC), 1500 octets | oxirush-security | 3 102 | 14 242 | 51 537 | 0 | 0 | 2.5 MiB |  |
+|  | zuc 0.4.1 | 3 116 | 14 144 | 55 504 | 0 | 0 | 2.4 MiB | 1.00 |
+|  | cryptography-rs 0.8.0, Zuc128 | 3 383 | 15 384 | 60 783 | 0 | 0 | 2.5 MiB | 1.09 |
+|  | cryptography-rs 0.8.0, Zuc128Ct | 41 669 | 190 702 | 795 415 | 0 | 0 | 2.5 MiB | 13.43 |
+|  | Open5GS v2.8.0 | 7 422 | 33 735 | 126 029 | 1.00 | 1 596 | 2.1 MiB | 2.39 |
+|  | free5GC nas v1.2.3 | 10 843 | 48 746 | 203 237 | 2.00 | 3 072 | 7.5 MiB | 3.50 |
+| 128-NIA1 (SNOW 3G), 1500 octets | oxirush-security | 389.1 | 1 794 | 4 947 | 0 | 0 | 2.5 MiB |  |
+|  | Open5GS v2.8.0 | 546 014 | 2 278 205 | 5 514 519 | 0 | 0 | 2.1 MiB | 1 403 |
+|  | free5GC nas v1.2.3 | 410 815 | 1 803 541 | 4 688 036 | 3.00 | 108 | 2.9 MiB | 1 056 |
+| 128-NIA2 (AES-CMAC), 1500 octets | oxirush-security | 938.3 | 4 323 | 2 704 | 0 | 0 | 2.5 MiB |  |
+|  | aes 0.8.4, cmac 0.7.2 | 946.1 | 4 357 | 2 603 | 0 | 0 | 2.4 MiB | 1.01 |
+|  | Open5GS v2.8.0 | 4 144 | 18 926 | 60 224 | 0 | 0 | 2.1 MiB | 4.42 |
+|  | free5GC nas v1.2.3 | 1 825 | 8 173 | 21 030 | 8.00 | 2 240 | 7.7 MiB | 1.94 |
+| 128-NIA3 (ZUC), 1500 octets | oxirush-security | 3 417 | 15 672 | 56 569 | 0 | 0 | 2.5 MiB |  |
+|  | zuc 0.4.1 | 5 381 | 24 593 | 116 125 | 0 | 0 | 2.4 MiB | 1.57 |
+|  | Open5GS v2.8.0 | 35 626 | 161 648 | 443 082 | 1.00 | 1 604 | 2.1 MiB | 10.43 |
+|  | free5GC nas v1.2.3 | 24 196 | 109 099 | 602 376 | 2.00 | 1 540 | 7.5 MiB | 7.08 |
 
 `benches/compare/compare.sh 3` runs every row on core 3. It fetches each
 implementation at the version that it pins, and builds Open5GS's libraries
