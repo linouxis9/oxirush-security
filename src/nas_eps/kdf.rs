@@ -53,6 +53,24 @@ fn halves(full: Zeroizing<[u8; 32]>) -> ([u8; 16], [u8; 16]) {
 /// Derive KASME from CK || IK, the serving network identity and the AUTN of
 /// the authentication, whose SQN xor AK the derivation takes (TS 33.401
 /// Annex A.2, FC=0x10).
+///
+/// ```
+/// use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
+/// use oxirush_security::nas_eps::derive_kasme;
+/// use oxirush_security::{Plmn, Rand};
+///
+/// // The vector of the subscriber of TS 35.208 test set 1, in the network 208-93
+/// # let octets = |s: &str| hex::decode(s).unwrap();
+/// # let k = K::from_slice(&octets("465b5ce8b199b49faa5f0a2ee238a6bc")).unwrap();
+/// # let opc = Opc::from_slice(&octets("cd63cb71954a9f4e48a5994e37a02baf")).unwrap();
+/// # let rand = Rand::from_slice(&octets("23553cbe9637a89d218ae64dae47bf35")).unwrap();
+/// # let (sqn, amf) = (Sqn::try_from(0xff9b_b4d0_b607).unwrap(), Amf::new(&[0xb9, 0xb9]));
+/// let vector = Milenage::new(&k, &opc).authentication_vector(&rand, &sqn, &amf);
+/// let serving_network = Plmn::new("208", "93").unwrap();
+/// let kasme = derive_kasme(vector.ck(), vector.ik(), serving_network, vector.autn());
+/// let expected = "ba595c5419be71add1212bc8e1bd843afd26e58c0ad8d54f144686b5f55cda77";
+/// assert_eq!(hex::encode(kasme.as_octets()), expected);
+/// ```
 pub fn derive_kasme(ck: &Ck, ik: &Ik, serving_network: Plmn, autn: &Autn) -> KAsme {
     wipe::derivation(|| {
         let sn_id = serving_network.to_nas_octets();

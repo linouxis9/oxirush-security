@@ -48,6 +48,14 @@ const CIPHERING_PREFERENCE: &[CipheringAlgorithm] = &[
 /// or EIA0 to EIA7. The null algorithm is not selected, as ordinary
 /// signalling must not use it; `None` when the UE supports none of the
 /// three others.
+///
+/// ```
+/// use oxirush_security::{IntegrityAlgorithm, select_integrity_algo};
+///
+/// // A UE security capability of IA1 and IA2, then one of IA0 alone
+/// assert_eq!(select_integrity_algo(0x60), Some(IntegrityAlgorithm::NIA2));
+/// assert_eq!(select_integrity_algo(0x80), None);
+/// ```
 pub fn select_integrity_algo(capability: u8) -> Option<IntegrityAlgorithm> {
     select_integrity_algo_with_preference(capability, INTEGRITY_PREFERENCE)
 }
@@ -73,6 +81,14 @@ pub fn select_integrity_algo_with_preference(
 ///
 /// `capability` is the octet of the ciphering algorithms: 5G-EA0 to 5G-EA7
 /// or EEA0 to EEA7. `None` when the UE supports none of the four.
+///
+/// ```
+/// use oxirush_security::{CipheringAlgorithm, select_ciphering_algo};
+///
+/// // A UE security capability of EA0, EA1 and EA2, then one of EA0 alone
+/// assert_eq!(select_ciphering_algo(0xe0), Some(CipheringAlgorithm::NEA2));
+/// assert_eq!(select_ciphering_algo(0x80), Some(CipheringAlgorithm::NEA0));
+/// ```
 pub fn select_ciphering_algo(capability: u8) -> Option<CipheringAlgorithm> {
     select_ciphering_algo_with_preference(capability, CIPHERING_PREFERENCE)
 }

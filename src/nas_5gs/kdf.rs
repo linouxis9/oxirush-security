@@ -46,6 +46,24 @@ fn ck_ik(ck: &Ck, ik: &Ik) -> Zeroizing<[u8; 32]> {
 /// `5G:mnc093.mcc208.3gppnetwork.org`, and `autn` the AUTN of the
 /// authentication, whose SQN xor AK the derivation takes. A name longer
 /// than 65535 octets is [`SecurityError::InputTooLong`].
+///
+/// ```
+/// use oxirush_security::nas_5gs::derive_kausf;
+///
+/// // The vector of the subscriber of TS 35.208 test set 1
+/// # use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
+/// # use oxirush_security::Rand;
+/// # let octets = |s: &str| hex::decode(s).unwrap();
+/// # let k = K::from_slice(&octets("465b5ce8b199b49faa5f0a2ee238a6bc")).unwrap();
+/// # let opc = Opc::from_slice(&octets("cd63cb71954a9f4e48a5994e37a02baf")).unwrap();
+/// # let rand = Rand::from_slice(&octets("23553cbe9637a89d218ae64dae47bf35")).unwrap();
+/// # let (sqn, amf) = (Sqn::try_from(0xff9b_b4d0_b607).unwrap(), Amf::new(&[0xb9, 0xb9]));
+/// let vector = Milenage::new(&k, &opc).authentication_vector(&rand, &sqn, &amf);
+/// let sn_name = b"5G:mnc093.mcc208.3gppnetwork.org";
+/// let k_ausf = derive_kausf(vector.ck(), vector.ik(), sn_name, vector.autn()).unwrap();
+/// let expected = "f2e35260f85194d4f891504d02111e56689ac23dd393bee3abbcc5bfbc013ef9";
+/// assert_eq!(hex::encode(k_ausf.as_octets()), expected);
+/// ```
 pub fn derive_kausf(ck: &Ck, ik: &Ik, sn_name: &[u8], autn: &Autn) -> Result<KAusf, SecurityError> {
     wipe::derivation(|| {
         let sn_name = checked_parameter(sn_name)?;
@@ -62,6 +80,17 @@ pub fn derive_kausf(ck: &Ck, ik: &Ik, sn_name: &[u8], autn: &Autn) -> Result<KAu
 ///
 /// An `sn_name` longer than 65535 octets is
 /// [`SecurityError::InputTooLong`].
+///
+/// ```
+/// use oxirush_security::nas_5gs::{KAusf, derive_kseaf};
+///
+/// // The KAUSF of the example of `derive_kausf`
+/// let k_ausf = "f2e35260f85194d4f891504d02111e56689ac23dd393bee3abbcc5bfbc013ef9";
+/// let k_ausf = KAusf::from_slice(&hex::decode(k_ausf).unwrap()).unwrap();
+/// let k_seaf = derive_kseaf(&k_ausf, b"5G:mnc093.mcc208.3gppnetwork.org").unwrap();
+/// let expected = "cfddde483bd1318a412e98870f556410905be4fb7500abed93ee16af71bbb3fa";
+/// assert_eq!(hex::encode(k_seaf.as_octets()), expected);
+/// ```
 pub fn derive_kseaf(kausf: &KAusf, sn_name: &[u8]) -> Result<KSeaf, SecurityError> {
     wipe::derivation(|| {
         let sn_name = checked_parameter(sn_name)?;
@@ -80,6 +109,18 @@ pub fn derive_kseaf(kausf: &KAusf, sn_name: &[u8]) -> Result<KSeaf, SecurityErro
 /// (Annex A.7.1). One that is not 2 to 255 octets long, the lengths that
 /// its information element has (TS 24.501 §9.11.3.10), is
 /// [`SecurityError::InvalidParameter`].
+///
+/// ```
+/// use oxirush_security::nas_5gs::{KSeaf, Supi, derive_kamf};
+///
+/// // The KSEAF of the example of `derive_kseaf`, and the SUPI as an SBI writes it
+/// let k_seaf = "cfddde483bd1318a412e98870f556410905be4fb7500abed93ee16af71bbb3fa";
+/// let k_seaf = KSeaf::from_slice(&hex::decode(k_seaf).unwrap()).unwrap();
+/// let supi = Supi::parse("imsi-208930000000001").unwrap();
+/// let k_amf = derive_kamf(&k_seaf, &supi, &[0x00, 0x00]).unwrap();
+/// let expected = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
+/// assert_eq!(hex::encode(k_amf.as_octets()), expected);
+/// ```
 pub fn derive_kamf(kseaf: &KSeaf, supi: &Supi<'_>, abba: &[u8]) -> Result<KAmf, SecurityError> {
     wipe::derivation(|| {
         if !(2..=255).contains(&abba.len()) {
@@ -95,6 +136,16 @@ pub fn derive_kamf(kseaf: &KSeaf, supi: &Supi<'_>, abba: &[u8]) -> Result<KAmf, 
 
 /// Derive KNASenc, the NAS ciphering key of `algorithm`, from KAMF
 /// (TS 33.501 Annex A.8, algorithm type distinguisher 0x01).
+///
+/// ```
+/// use oxirush_security::CipheringAlgorithm;
+/// use oxirush_security::nas_5gs::{KAmf, derive_knas_enc};
+///
+/// let k_amf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
+/// let k_amf = KAmf::from_slice(&hex::decode(k_amf).unwrap()).unwrap();
+/// let k_nas_enc = derive_knas_enc(&k_amf, CipheringAlgorithm::NEA2);
+/// assert_eq!(hex::encode(k_nas_enc.as_octets()), "f47ae570afde775373d1b313d2176f54");
+/// ```
 pub fn derive_knas_enc(kamf: &KAmf, algorithm: CipheringAlgorithm) -> KNasEnc {
     wipe::derivation(|| {
         let key = derive_algorithm_key(kamf.as_octets(), FC_ALGORITHM_KEY, 0x01, algorithm.into());
@@ -104,6 +155,16 @@ pub fn derive_knas_enc(kamf: &KAmf, algorithm: CipheringAlgorithm) -> KNasEnc {
 
 /// Derive KNASint, the NAS integrity key of `algorithm`, from KAMF
 /// (TS 33.501 Annex A.8, algorithm type distinguisher 0x02).
+///
+/// ```
+/// use oxirush_security::IntegrityAlgorithm;
+/// use oxirush_security::nas_5gs::{KAmf, derive_knas_int};
+///
+/// let k_amf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
+/// let k_amf = KAmf::from_slice(&hex::decode(k_amf).unwrap()).unwrap();
+/// let k_nas_int = derive_knas_int(&k_amf, IntegrityAlgorithm::NIA2);
+/// assert_eq!(hex::encode(k_nas_int.as_octets()), "28ddb5356880149b9fee22f2367522a4");
+/// ```
 pub fn derive_knas_int(kamf: &KAmf, algorithm: IntegrityAlgorithm) -> KNasInt {
     wipe::derivation(|| {
         let key = derive_algorithm_key(kamf.as_octets(), FC_ALGORITHM_KEY, 0x02, algorithm.into());
@@ -194,6 +255,18 @@ pub fn compute_hxres_star(rand: &Rand, xres_star: &XresStar) -> HxresStar {
 /// as a [`NasCount`]. At an N2 handover with a KAMF change and at a
 /// handover from EPS it is [`AccessKeyCount::Handover`] (§6.9.2.3.3,
 /// §8.4.2).
+///
+/// ```
+/// use oxirush_security::NasCount;
+/// use oxirush_security::nas_5gs::{KAmf, derive_kgnb};
+///
+/// // The KAMF of the 5G AKA of the README, and a SECURITY MODE COMPLETE of NAS COUNT 0
+/// let k_amf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
+/// let k_amf = KAmf::from_slice(&hex::decode(k_amf).unwrap()).unwrap();
+/// let k_gnb = derive_kgnb(&k_amf, NasCount::ZERO);
+/// let expected = "c18166e13cfde1dea842c708f6e0b3372b6896664df4e865c0c78bd270852005";
+/// assert_eq!(hex::encode(k_gnb.as_octets()), expected);
+/// ```
 pub fn derive_kgnb(kamf: &KAmf, ul_nas_count: impl Into<AccessKeyCount>) -> KGnb {
     wipe::derivation(|| {
         let count = ul_nas_count.into().get().to_be_bytes();
@@ -316,6 +389,20 @@ pub fn derive_kng_ran_star_ng_enb(
 ///
 /// `sync_input` is KgNB for the first NH, and the NH before it for each
 /// one after.
+///
+/// ```
+/// use oxirush_security::NasCount;
+/// use oxirush_security::nas_5gs::{KAmf, derive_kgnb, derive_nh};
+///
+/// let k_amf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
+/// let k_amf = KAmf::from_slice(&hex::decode(k_amf).unwrap()).unwrap();
+/// let k_gnb = derive_kgnb(&k_amf, NasCount::ZERO);
+/// let nh_1 = derive_nh(&k_amf, &k_gnb);
+/// let nh_2 = derive_nh(&k_amf, &nh_1);
+/// let expected = "383c6b76bf2a99aa2ca4c5136d4122a2b942301f0b9e07439786939cd30c4a4b";
+/// assert_eq!(hex::encode(nh_1.as_octets()), expected);
+/// assert_ne!(nh_2.as_octets(), nh_1.as_octets());
+/// ```
 pub fn derive_nh(kamf: &KAmf, sync_input: &impl AccessKey) -> Nh {
     wipe::derivation(|| Nh::new(&derive(kamf.as_octets(), 0x6F, &[sync_input.key_octets()])))
 }

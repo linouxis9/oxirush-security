@@ -67,6 +67,20 @@ impl From<NasConnection> for Bearer {
 ///
 /// `message` is what the MAC covers: the sequence number octet, then the
 /// NAS message, ciphered when it is to be.
+///
+/// ```
+/// use oxirush_security::nas_5gs::{KNasInt, NasConnection, nas_mac};
+/// use oxirush_security::{Direction, IntegrityAlgorithm, NasCount};
+///
+/// // The ciphered REGISTRATION COMPLETE of the example of `nas_cipher`, after its
+/// // sequence number
+/// let k_nas_int = hex::decode("28ddb5356880149b9fee22f2367522a4").unwrap();
+/// let k_nas_int = KNasInt::from_slice(&k_nas_int).unwrap();
+/// let (count, access, uplink) = (NasCount::ZERO, NasConnection::ThreeGpp, Direction::Uplink);
+/// let protected = [0x00, 0xb5, 0x7d, 0xd5];
+/// let mac = nas_mac(&k_nas_int, count, access, uplink, &protected, IntegrityAlgorithm::NIA2);
+/// assert_eq!(mac, 0x83e4_d009);
+/// ```
 pub fn nas_mac(
     key: &KNasInt,
     count: NasCount,
@@ -86,6 +100,23 @@ pub fn nas_mac(
 }
 
 /// Cipher or decipher a 5GS NAS message in place (TS 33.501 §6.4.4).
+///
+/// ```
+/// use oxirush_security::nas_5gs::{KNasEnc, NasConnection, nas_cipher};
+/// use oxirush_security::{CipheringAlgorithm, Direction, NasCount};
+///
+/// // An uplink REGISTRATION COMPLETE of NAS COUNT 0, with 128-NEA2
+/// let k_nas_enc = hex::decode("f47ae570afde775373d1b313d2176f54").unwrap();
+/// let k_nas_enc = KNasEnc::from_slice(&k_nas_enc).unwrap();
+/// let (count, access, uplink) = (NasCount::ZERO, NasConnection::ThreeGpp, Direction::Uplink);
+/// let mut message = [0x7e, 0x00, 0x43];
+/// nas_cipher(&k_nas_enc, count, access, uplink, &mut message, CipheringAlgorithm::NEA2);
+/// assert_eq!(message, [0xb5, 0x7d, 0xd5]);
+///
+/// // The same call deciphers
+/// nas_cipher(&k_nas_enc, count, access, uplink, &mut message, CipheringAlgorithm::NEA2);
+/// assert_eq!(message, [0x7e, 0x00, 0x43]);
+/// ```
 pub fn nas_cipher(
     key: &KNasEnc,
     count: NasCount,

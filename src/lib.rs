@@ -59,10 +59,25 @@
 //! receiver computes the MAC first, then deciphers with the same call
 //! (TS 24.501 §4.4.3). No function panics on its arguments.
 //!
+//! # Tasks
+//!
 //! The [README](https://github.com/linouxis9/oxirush-security#readme) has
-//! an example for each task: a 5G AKA run from MILENAGE to KAMF, a
-//! re-synchronisation, the keys of a handover, NAS protection in EPS, SUCI
-//! concealment, the algorithms on the 3GPP test sets.
+//! an example of each, with what it prints.
+//!
+//! | Task | Items |
+//! |------|-------|
+//! | Run 5G AKA, from MILENAGE to KAMF | [`milenage::Milenage::authentication_vector`], [`milenage::Milenage::check_autn`], [`nas_5gs::derive_kausf`], [`nas_5gs::derive_kseaf`], [`nas_5gs::derive_kamf`], [`nas_5gs::XresStar::accepts`] |
+//! | Re-synchronise a USIM | [`milenage::Milenage::auts`], [`milenage::Milenage::verify_auts`] |
+//! | Make the vectors of many subscribers in one call | [`milenage::authentication_vector_batch`], [`milenage::check_autn_batch`] |
+//! | Protect and check a NAS message | [`nas_5gs::derive_knas_enc`], [`nas_5gs::derive_knas_int`], [`nas_5gs::nas_cipher`], [`nas_5gs::nas_mac`], [`NasCount::estimate`], [`constant_time_eq`] |
+//! | The same in EPS | [`nas_eps::derive_kasme`], [`nas_eps::nas_cipher`], [`nas_eps::nas_mac`], [`nas_eps::service_request_short_mac`] |
+//! | Protect the messages of many UEs in one call | [`nea_cipher_batch`], [`nia_mac_batch`], [`nas_5gs::cipher_job`], [`nas_5gs::mac_job`] |
+//! | Keep the keys of a UE between its messages | [`CipheringContext`], [`IntegrityContext`] |
+//! | Derive the keys of a handover | [`nas_5gs::derive_kgnb`], [`nas_5gs::derive_nh`], [`nas_5gs::derive_kng_ran_star`], [`nas_5gs::derive_kamf_prime_handover`] |
+//! | Conceal and deconceal a SUCI, with the `suci` and `nai` features | `nas_5gs::Suci::conceal_imsi`, `nas_5gs::Suci::conceal_nai`, `nas_5gs::Suci::deconceal`, `nas_5gs::HomeNetworkPrivateKey` |
+//! | Run an algorithm on a 3GPP test set | [`nea_cipher_bits`], [`nia_mac_bits`] |
+//! | Select the algorithms | [`select_ciphering_algo`], [`select_integrity_algo`], [`select_integrity_algo_with_preference`] |
+//! | Encode a PLMN identity, a 5G-GUTI and TBCD digits | [`Plmn`], [`nas_5gs::Guti`], `tbcd` with `alloc` |
 //!
 //! # Where things are
 //!
@@ -395,6 +410,17 @@
 //! | TS 35.205, 35.206, 35.207, 35.208 | MILENAGE: general, algorithm, implementers' test data, conformance test data |
 //! | TS 35.215, 35.216, 35.217, 35.218 | SNOW 3G modes, core, and test data |
 //! | TS 35.221, 35.222, 35.223 | ZUC modes, core, and test data |
+//!
+//! # The OxiRush family
+//!
+//! - [oxirush-utils](https://docs.rs/oxirush-utils): the 3GPP identities, and the JSON tree with its paths that the others share.
+//! - [oxirush-aper](https://docs.rs/oxirush-aper): aligned PER, the runtime of the NGAP and S1AP codecs.
+//! - [oxirush-nas](https://docs.rs/oxirush-nas): the NAS messages of 5GS and EPS.
+//! - [oxirush-security](https://docs.rs/oxirush-security): NAS security, AKA and the derivation of keys.
+//! - [oxirush-ngap](https://docs.rs/oxirush-ngap): NGAP, between a gNB and an AMF.
+//! - [oxirush-s1ap](https://docs.rs/oxirush-s1ap): S1AP, between an eNB and an MME.
+//! - [oxirush-gtp-u](https://docs.rs/oxirush-gtp-u): GTP-U tunnels, with a test UPF.
+//! - [oxirush-sctp](https://docs.rs/oxirush-sctp): SCTP sockets, which carry NGAP and S1AP.
 
 // The tests use the standard library, whatever the features of the build.
 #![cfg_attr(not(test), no_std)]

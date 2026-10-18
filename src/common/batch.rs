@@ -201,6 +201,27 @@ impl<'a> CipherJob<'a> {
 
 /// Cipher or decipher each message of `jobs` in place, which is one
 /// operation. Each call ciphers every job once more.
+///
+/// ```
+/// use oxirush_security::nas_5gs::{KNasEnc, NasConnection, cipher_job, nas_cipher};
+/// use oxirush_security::{CipheringAlgorithm, Direction, NasCount, nea_cipher_batch};
+///
+/// // The downlink messages of two UEs, each with its key and its NAS COUNT
+/// let keys = [KNasEnc::new(&[0x11; 16]), KNasEnc::new(&[0x22; 16])];
+/// let counts = [NasCount::new(7).unwrap(), NasCount::ZERO];
+/// let (access, downlink) = (NasConnection::ThreeGpp, Direction::Downlink);
+/// let nea1 = CipheringAlgorithm::NEA1;
+/// let mut messages = [vec![0x7e, 0x00, 0x54, 0x43, 0x90], vec![0x7e, 0x00, 0x5d, 0x02]];
+/// let mut jobs: Vec<_> = (messages.iter_mut().zip(&keys).zip(counts))
+///     .map(|((message, key), count)| cipher_job(key, count, access, downlink, message, nea1))
+///     .collect();
+/// nea_cipher_batch(&mut jobs);
+///
+/// // Each is what the function of one message gives
+/// let mut alone = vec![0x7e, 0x00, 0x5d, 0x02];
+/// nas_cipher(&keys[1], counts[1], access, downlink, &mut alone, nea1);
+/// assert_eq!(messages[1], alone);
+/// ```
 pub fn nea_cipher_batch(jobs: &mut [CipherJob<'_>]) {
     // Each piece of work clears what it left: the generators that run
     // side by side, and the messages that come one after the other
@@ -329,6 +350,26 @@ impl<'a> MacJob<'a> {
 
 /// Compute the MAC of each message of `jobs`, which [`MacJob::mac`] then
 /// returns.
+///
+/// ```
+/// use oxirush_security::nas_5gs::{KNasInt, NasConnection, mac_job, nas_mac};
+/// use oxirush_security::{Direction, IntegrityAlgorithm, NasCount, nia_mac_batch};
+///
+/// // The uplink messages of two UEs, each with its key, its NAS COUNT and its algorithm
+/// let keys = [KNasInt::new(&[0x44; 16]), KNasInt::new(&[0x55; 16])];
+/// let counts = [NasCount::new(7).unwrap(), NasCount::ZERO];
+/// let algorithms = [IntegrityAlgorithm::NIA2, IntegrityAlgorithm::NIA1];
+/// let (access, uplink) = (NasConnection::ThreeGpp, Direction::Uplink);
+/// let messages = [[0x07, 0x7e, 0x00, 0x43], [0x00, 0x7e, 0x00, 0x43]];
+/// let mut jobs: Vec<_> = (0..2)
+///     .map(|ue| mac_job(&keys[ue], counts[ue], access, uplink, &messages[ue], algorithms[ue]))
+///     .collect();
+/// nia_mac_batch(&mut jobs);
+///
+/// // Each is what the function of one message gives
+/// let alone = nas_mac(&keys[1], counts[1], access, uplink, &messages[1], algorithms[1]);
+/// assert_eq!(jobs[1].mac(), Some(alone));
+/// ```
 pub fn nia_mac_batch(jobs: &mut [MacJob<'_>]) {
     // Each piece of work clears what it left: the generators and the
     // chains that run side by side, and the messages that come one after

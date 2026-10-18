@@ -38,6 +38,14 @@ use subtle::ConstantTimeEq;
 /// and the time it took tells the peer how much of a guess was right.
 /// Strings of different lengths are unequal, which is found at once: the
 /// lengths are not secret. The comparison is that of the `subtle` crate.
+///
+/// ```
+/// use oxirush_security::constant_time_eq;
+///
+/// // A MAC that was received, against the one computed
+/// assert!(constant_time_eq(&0x83e4_d009_u32.to_be_bytes(), &[0x83, 0xe4, 0xd0, 0x09]));
+/// assert!(!constant_time_eq(&[0x83, 0xe4], &[0x83, 0xe5]));
+/// ```
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     crate::common::wipe::words(|| a.ct_eq(b).into())
 }

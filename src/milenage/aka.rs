@@ -158,6 +158,22 @@ impl Milenage {
     /// next SQN of the subscriber, which it keeps (TS 33.102 Annex C). EPS
     /// and 5GS take an AMF with the separation bit (TS 33.401 §6.1.1,
     /// TS 33.501 §6.1.3.2).
+    ///
+    /// ```
+    /// use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
+    /// use oxirush_security::Rand;
+    ///
+    /// // The subscriber and the challenge of TS 35.208 test set 1
+    /// # let octets = |s: &str| hex::decode(s).unwrap();
+    /// # let k = K::from_slice(&octets("465b5ce8b199b49faa5f0a2ee238a6bc")).unwrap();
+    /// # let opc = Opc::from_slice(&octets("cd63cb71954a9f4e48a5994e37a02baf")).unwrap();
+    /// # let rand = Rand::from_slice(&octets("23553cbe9637a89d218ae64dae47bf35")).unwrap();
+    /// let subscriber = Milenage::new(&k, &opc);
+    /// let (sqn, amf) = (Sqn::try_from(0xff9b_b4d0_b607).unwrap(), Amf::new(&[0xb9, 0xb9]));
+    /// let vector = subscriber.authentication_vector(&rand, &sqn, &amf);
+    /// assert_eq!(hex::encode(vector.autn().as_octets()), "55f328b43577b9b94a9ffac354dfafb3");
+    /// assert_eq!(hex::encode(vector.xres().as_octets()), "a54211d5e3ba50bf");
+    /// ```
     pub fn authentication_vector(&self, rand: &Rand, sqn: &Sqn, amf: &Amf) -> AuthenticationVector {
         self.run(rand, |temp| vector(temp, rand, sqn, amf))
     }
@@ -171,6 +187,26 @@ impl Milenage {
     /// a UE answers with the cause "MAC failure". Otherwise the caller
     /// judges [`UsimResponse::sqn`], and the separation bit of
     /// [`UsimResponse::amf`] in EPS and 5GS, before it sends RES or RES\*.
+    ///
+    /// ```
+    /// use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
+    /// use oxirush_security::{Autn, Rand, SecurityError};
+    ///
+    /// // The AUTN of the example of `authentication_vector`, in the USIM
+    /// # let octets = |s: &str| hex::decode(s).unwrap();
+    /// # let k = K::from_slice(&octets("465b5ce8b199b49faa5f0a2ee238a6bc")).unwrap();
+    /// # let opc = Opc::from_slice(&octets("cd63cb71954a9f4e48a5994e37a02baf")).unwrap();
+    /// # let rand = Rand::from_slice(&octets("23553cbe9637a89d218ae64dae47bf35")).unwrap();
+    /// let usim = Milenage::new(&k, &opc);
+    /// let autn = Autn::from_slice(&octets("55f328b43577b9b94a9ffac354dfafb3")).unwrap();
+    /// let response = usim.check_autn(&rand, &autn).unwrap();
+    /// assert_eq!(response.sqn().get(), 0xff9b_b4d0_b607);
+    /// assert!(response.amf().separation_bit());
+    ///
+    /// // An AUTN of another network is refused
+    /// let forged = Autn::new(&[0; 16]);
+    /// assert!(matches!(usim.check_autn(&rand, &forged), Err(SecurityError::MacFailure)));
+    /// ```
     pub fn check_autn(&self, rand: &Rand, autn: &Autn) -> Result<UsimResponse, SecurityError> {
         self.run(rand, |temp| response(temp, rand, autn))
     }
@@ -179,6 +215,19 @@ impl Milenage {
     /// challenge `rand` whose SQN it found out of range (TS 33.102
     /// §6.3.3): SQNMS ⊕ f5\* of `rand`, then MAC-S = f1\* of SQNMS, `rand`
     /// and an AMF of zeros.
+    ///
+    /// ```
+    /// use oxirush_security::milenage::{K, Milenage, Opc, Sqn};
+    /// use oxirush_security::Rand;
+    ///
+    /// let subscriber = Milenage::new(&K::new(&[0x46; 16]), &Opc::new(&[0xcd; 16]));
+    /// let rand = Rand::new(&[0x23; 16]);
+    ///
+    /// // The USIM is at SQN 64, and the home network reads it back
+    /// let auts = subscriber.auts(&rand, &Sqn::try_from(64).unwrap());
+    /// assert_eq!(format!("{auts:?}"), "Auts(5ef40417ef4cb9ac9e76640b820d)");
+    /// assert_eq!(subscriber.verify_auts(&rand, &auts).unwrap().get(), 64);
+    /// ```
     pub fn auts(&self, rand: &Rand, sqn_ms: &Sqn) -> Auts {
         self.run(rand, |temp| auts(temp, sqn_ms))
     }
@@ -192,6 +241,22 @@ impl Milenage {
     /// A MAC-S that is not that one is [`SecurityError::MacFailure`]: the
     /// home network does not take SQNMS. Whether it then resets its SQN to
     /// SQNMS is its own to decide (§6.3.5).
+    ///
+    /// ```
+    /// use oxirush_security::milenage::{Auts, K, Milenage, Opc};
+    /// use oxirush_security::{Rand, SecurityError};
+    ///
+    /// // The AUTS of the example of `auts`, then the same with one bit changed
+    /// let subscriber = Milenage::new(&K::new(&[0x46; 16]), &Opc::new(&[0xcd; 16]));
+    /// let rand = Rand::new(&[0x23; 16]);
+    /// let mut auts = *Auts::from_slice(&hex::decode("5ef40417ef4cb9ac9e76640b820d").unwrap())
+    ///     .unwrap()
+    ///     .as_octets();
+    /// assert_eq!(subscriber.verify_auts(&rand, &Auts::new(&auts)).unwrap().get(), 64);
+    /// auts[13] ^= 1;
+    /// let refused = subscriber.verify_auts(&rand, &Auts::new(&auts));
+    /// assert!(matches!(refused, Err(SecurityError::MacFailure)));
+    /// ```
     pub fn verify_auts(&self, rand: &Rand, auts: &Auts) -> Result<Sqn, SecurityError> {
         self.run(rand, |temp| sqn_ms_of(temp, auts))
     }

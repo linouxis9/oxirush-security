@@ -29,6 +29,21 @@ use crate::common::nia::{nia_mac, nia_mac_bits};
 ///
 /// `message` is what the MAC covers: the sequence number octet, then the
 /// NAS message, ciphered when it is to be.
+///
+/// ```
+/// use oxirush_security::nas_eps::{derive_kasme, derive_knas_int, nas_mac};
+/// use oxirush_security::{Autn, Ck, Direction, Ik, IntegrityAlgorithm, NasCount, Plmn};
+///
+/// // KASME of a CK, an IK and an AUTN, and the EMM STATUS of the example of
+/// // `nas_cipher`, ciphered, after its sequence number
+/// let (ck, ik, autn) = (Ck::new(&[0x11; 16]), Ik::new(&[0x22; 16]), Autn::new(&[0; 16]));
+/// let kasme = derive_kasme(&ck, &ik, Plmn::new("208", "93").unwrap(), &autn);
+/// let eia2 = IntegrityAlgorithm::EIA2;
+/// let k_nas_int = derive_knas_int(&kasme, eia2);
+/// let protected = [0x00, 0xb0, 0x2c, 0x47];
+/// let mac = nas_mac(&k_nas_int, NasCount::ZERO, Direction::Uplink, &protected, eia2);
+/// assert_eq!(mac, 0x190a_f1e7);
+/// ```
 pub fn nas_mac(
     key: &KNasInt,
     count: NasCount,
@@ -47,6 +62,21 @@ pub fn nas_mac(
 }
 
 /// Cipher or decipher an EPS NAS message in place, with BEARER 0.
+///
+/// ```
+/// use oxirush_security::nas_eps::{derive_kasme, derive_knas_enc, nas_cipher};
+/// use oxirush_security::{Autn, CipheringAlgorithm, Ck, Direction, Ik, NasCount, Plmn};
+///
+/// // KASME of a CK, an IK and an AUTN, and an uplink EMM STATUS with cause #3
+/// // and NAS COUNT 0, with 128-EEA2
+/// let (ck, ik, autn) = (Ck::new(&[0x11; 16]), Ik::new(&[0x22; 16]), Autn::new(&[0; 16]));
+/// let kasme = derive_kasme(&ck, &ik, Plmn::new("208", "93").unwrap(), &autn);
+/// let eea2 = CipheringAlgorithm::EEA2;
+/// let k_nas_enc = derive_knas_enc(&kasme, eea2);
+/// let mut message = [0x07, 0x60, 0x03];
+/// nas_cipher(&k_nas_enc, NasCount::ZERO, Direction::Uplink, &mut message, eea2);
+/// assert_eq!(message, [0xb0, 0x2c, 0x47]);
+/// ```
 pub fn nas_cipher(
     key: &KNasEnc,
     count: NasCount,
