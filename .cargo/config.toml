@@ -4,4 +4,4 @@
 # until the revision is changed here. The published crate has no such file: once
 # oxirush-utils 0.1.0 is published, this file goes (see CHANGELOG.md).
 [patch.crates-io]
-oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "0617bcb831fec1e9a7a41f7c370a4f624868073e" }
+oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "2f99edcc40baa5cf7397f94ecfc131dc1143bac5" }

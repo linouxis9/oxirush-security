@@ -87,7 +87,7 @@ revision that it is tested with:
 oxirush-security = { git = "https://github.com/linouxis9/oxirush-security" }
 
 [patch.crates-io]
-oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "0617bcb831fec1e9a7a41f7c370a4f624868073e" }
+oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "2f99edcc40baa5cf7397f94ecfc131dc1143bac5" }
 ```
 
 A clone has that revision in `.cargo/config.toml`, and `cargo test` runs
