@@ -15,6 +15,8 @@ criterion = { version = "0.5", default-features = false }
 pprof = { version = "0.15", features = ["criterion", "protobuf-codec", "flamegraph"] }
 # The MILENAGE that programs took before this crate had one, timed beside it
 milenage = "=0.1.6"
+# The version before this one, whose algorithms `version_0_2` times
+oxirush-security-0-2 = { package = "oxirush-security", version = "=0.2.0" }
 
 [[bench]]
 name = "algorithms"
@@ -26,6 +28,10 @@ harness = false
 
 [[bench]]
 name = "milenage"
+harness = false
+
+[[bench]]
+name = "version_0_2"
 harness = false
 
 # `--cfg oxirush_security_hooks` and `FORM=scalar` time the scalar code.

@@ -689,7 +689,7 @@ the keys, the round keys and the keystream after each operation and finds
 none. A copy that the program makes is its own: a key that is moved leaves
 its octets where it was, so make a key where it stays and pass references.
 
-The clearing takes 10 to 33 ns for a message, and a batch pays it once.
+The clearing takes 13 to 34 ns for a message, and a batch pays it once.
 `RUSTFLAGS="--cfg oxirush_security_unwiped"` builds the crate without it.
 
 ## Limits
