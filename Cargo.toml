@@ -10,7 +10,7 @@ rust-version = "1.88"
 keywords = ["5g", "lte", "3gpp", "milenage", "suci"]
 categories = ["cryptography", "network-programming", "no-std"]
 readme = "README.md"
-exclude = [".cargo/", ".github/", ".gitignore", "benches/", "differential/", "emulated-aarch64/", "fuzz/", "leftovers/"]
+exclude = [".cargo/", ".github/", ".gitignore", "benches/", "differential/", "emulated-aarch64/", "family/", "fuzz/", "leftovers/"]
 
 [features]
 default = ["std", "suci", "nai"]

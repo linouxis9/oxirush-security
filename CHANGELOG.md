@@ -279,6 +279,16 @@ cannot say is a `Result`. No public function panics on its arguments.
 
 ### Changed
 
+- Each Rust block of the README, and the sample of the front page, is a
+  whole program, whose `main` returns a `Result` and takes `?`. A section
+  protects a message that oxirush-nas encodes, and the package of `family/`
+  runs it. The comparison with the other implementations gives each time
+  as `other / this crate`, and "about the same" within 10 %. The benchmark
+  page keeps the figures of its own harnesses alone, and the README has
+  the one time of SUCI concealment. `K`, `Sqn`, `Rand`,
+  `compute_hxres_star`, `HxresStar::accepts` and `nas_eps::derive_kenb`
+  have an example.
+
 - **What an operation leaves.** The values that the code names were wiped
   in part in 0.2.0: the HMAC-SHA-256 state of every derivation, the KDF
   output and the keystream of SUCI, and the keystream blocks of 128-EEA2

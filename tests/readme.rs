@@ -25,7 +25,9 @@
 //! that its page shows under its block.
 //!
 //! A page is the README, or the documentation of the crate: the `//!` lines
-//! of `src/lib.rs`. A block that is checked opens with ` ```rust `. The output
+//! of `src/lib.rs`. A block that is checked opens with ` ```rust `; one that
+//! opens with ` ```rust,ignore ` uses oxirush-nas, and the package of
+//! `family/` runs it. The output
 //! of a block is the `json` and `text` blocks that follow it with nothing
 //! but blank lines between them. A block that shows no output prints none.
 //! A block that is a program is run as the documentation test runs it:

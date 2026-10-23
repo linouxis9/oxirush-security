@@ -163,7 +163,7 @@
 //! | PLMN, TBCD string, 5G-GUTI, 5G-S-TMSI | [`Plmn`], `nas_5gs::Guti`, `nas_5gs::STmsi`: an error of [`identity`] that names the member at fault and says why, which is `Err(Identity)` in a function of this crate |
 //! | SUPI | `nas_5gs::Supi`: an IMSI or a NAI, from its identity or from the text of a service based interface |
 //! | SUCI from a peer | `nas_5gs::Suci`: a `nas_5gs::SuciError` that says what could not be read, or which step of the de-concealment failed |
-//! | KDF parameter of variable length | `Err(InputTooLong)` above 65535 octets |
+//! | KDF parameter of variable length | `Err(InputTooLong)` above 65,535 octets |
 //!
 //! # Key material and timing
 //!
@@ -194,14 +194,14 @@
 //!
 //! | Work | Stack cleared after it, in octets |
 //! |------|-----------------------------------|
-//! | AES on its instructions, one message with a keyed context | 1792 |
-//! | AES on its instructions, from a key; MILENAGE on them | 2304 |
-//! | One message of SNOW 3G or ZUC, a derivation, a new generator | 4096 |
-//! | What goes through the `aes` crate: AES without its instructions, a new keyed context, the messages of a batch one after the other, MILENAGE without the AES instructions | 8192 on x86 and x86-64, 6144 elsewhere |
-//! | Words of a generator, a comparison | 1536 |
-//! | SUCI | 12288 |
-//! | Several messages side by side, the MILENAGE of several subscribers side by side | 18432 |
-//! | Any, in a build with debug assertions | 49152 |
+//! | AES on its instructions, one message with a keyed context | 1,792 |
+//! | AES on its instructions, from a key; MILENAGE on them | 2,304 |
+//! | One message of SNOW 3G or ZUC, a derivation, a new generator | 4,096 |
+//! | What goes through the `aes` crate: AES without its instructions, a new keyed context, the messages of a batch one after the other, MILENAGE without the AES instructions | 8,192 on x86 and x86-64, 6,144 elsewhere |
+//! | Words of a generator, a comparison | 1,536 |
+//! | SUCI | 12,288 |
+//! | Several messages side by side, the MILENAGE of several subscribers side by side | 18,432 |
+//! | Any, in a build with debug assertions | 49,152 |
 //!
 //! An operation needs that much stack. Each figure is at least twice what
 //! the deepest work of its kind used wherever it was run, and the scan

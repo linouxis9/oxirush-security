@@ -341,6 +341,7 @@ jobs:
       - run: cargo fmt --check --manifest-path emulated-aarch64/guest/Cargo.toml
       - run: cargo fmt --check --manifest-path emulated-aarch64/host/Cargo.toml
       - run: cargo fmt --check --manifest-path leftovers/Cargo.toml
+      - run: cargo fmt --check --manifest-path family/Cargo.toml
 
   # A minute for each target at a push, half an hour each Monday
   fuzz:
@@ -385,6 +386,24 @@ jobs:
       # say nothing
       - run: cargo test --manifest-path benches/Cargo.toml --benches
       - run: cargo clippy --manifest-path benches/Cargo.toml --all-targets -- -D warnings
+
+  # The block of the README that uses oxirush-nas: `family/` is a package of its own,
+  # which takes oxirush-nas at the revision of its manifest, so that the crate depends on
+  # none of the other crates. It compares what the block prints with the README.
+  family:
+    name: The README block with oxirush-nas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: family
+      - run: cargo test --manifest-path family/Cargo.toml
+      - run: cargo clippy --manifest-path family/Cargo.toml --all-targets -- -D warnings
+      - run: cargo fmt --check --manifest-path family/Cargo.toml
 
   package:
     name: Package
