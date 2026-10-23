@@ -1,6 +1,6 @@
 # The AArch64 code on an emulated processor
 
-```bash
+```sh
 rustup target add aarch64-unknown-none
 ./run.sh
 ```

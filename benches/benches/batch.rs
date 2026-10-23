@@ -18,7 +18,7 @@
 //! The time of several messages at once, each with its own key and COUNT,
 //! as an AMF, an MME or a load generator has them.
 //!
-//! ```bash
+//! ```sh
 //! cargo bench --bench batch                    # every case
 //! cargo bench --bench batch -- 16x64           # sixteen messages of 64 octets
 //! cargo bench --bench batch -- 128-EEA3/single # those whose name has it

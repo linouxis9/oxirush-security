@@ -19,7 +19,7 @@
 //! crates.io, on the messages and with the configuration of `algorithms`:
 //! the columns of 0.2.0 in `README.md`.
 //!
-//! ```bash
+//! ```sh
 //! cargo bench --bench version_0_2
 //! ```
 //!

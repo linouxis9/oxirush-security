@@ -18,7 +18,7 @@
 //! The time of the algorithms, the key derivations and SUCI, and their CPU
 //! profile.
 //!
-//! ```bash
+//! ```sh
 //! cargo bench --bench algorithms                      # every case
 //! cargo bench --bench algorithms -- cipher/128-EEA1   # those whose name has it
 //! cargo bench --bench algorithms -- --profile-time 10 cipher/128-EEA1/1500

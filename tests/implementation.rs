@@ -23,7 +23,7 @@
 //! that a job that was meant to exercise the vector code cannot pass on the
 //! scalar code. Without the variable it prints what runs.
 //!
-//! ```bash
+//! ```sh
 //! OXIRUSH_SECURITY_EXPECT=Vector256 cargo test --test implementation -- --nocapture
 //! ```
 

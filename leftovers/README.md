@@ -1,6 +1,6 @@
 # What an operation leaves
 
-```bash
+```sh
 cargo run --release
 ```
 

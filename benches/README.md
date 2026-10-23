@@ -5,7 +5,7 @@ algorithms, the key derivations and SUCI with
 [criterion](https://crates.io/crates/criterion), and profiles them with
 [pprof](https://crates.io/crates/pprof).
 
-```bash
+```sh
 cargo bench --bench algorithms                # every benchmark of one message
 cargo bench --bench algorithms -- 128-EEA2    # those whose name has it
 cargo bench --bench batch -- 16x64            # sixteen messages of 64 octets
@@ -35,7 +35,7 @@ The first two columns are what this processor runs, which has the vector
 and AES instructions. The next two are the code that a processor without
 them runs:
 
-```bash
+```sh
 RUSTFLAGS="--cfg oxirush_security_hooks" FORM=scalar cargo bench --bench algorithms
 ```
 
@@ -100,7 +100,7 @@ After each operation the crate sets to zero the stack that the work used
 and the registers. `RUSTFLAGS="--cfg oxirush_security_unwiped"` builds the
 crate without it, and the benchmarks with it:
 
-```bash
+```sh
 cargo bench --bench algorithms
 RUSTFLAGS="--cfg oxirush_security_unwiped" cargo bench --bench algorithms
 ```

@@ -1,6 +1,6 @@
 # MILENAGE beside three other implementations
 
-```bash
+```sh
 git clone --depth 1 --branch v2.8.0 https://github.com/open5gs/open5gs ../../open5gs
 (cd free5gc && go build -o ../target/free5gc-milenage .)
 OPEN5GS=../../open5gs FREE5GC=target/free5gc-milenage cargo run --release -- 1000000

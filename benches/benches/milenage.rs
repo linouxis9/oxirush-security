@@ -18,7 +18,7 @@
 //! The time of MILENAGE for one subscriber, beside that of the `milenage`
 //! crate 0.1.6.
 //!
-//! ```bash
+//! ```sh
 //! cargo bench --bench milenage                  # every case
 //! cargo bench --bench milenage -- f2345         # those whose name has it
 //! ```

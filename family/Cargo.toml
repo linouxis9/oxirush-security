@@ -12,7 +12,7 @@ license = "Apache-2.0"
 
 [dev-dependencies]
 oxirush-security = { path = ".." }
-oxirush-nas = { git = "https://github.com/linouxis9/oxirush-nas", rev = "bec263fa6ff1649f6a9b8c8be757e295be531957", features = ["security"] }
+oxirush-nas = { git = "https://github.com/linouxis9/oxirush-nas", rev = "ddb5a07407a9176ab37cef999e812fb7c857ed81", features = ["security"] }
 hex = "0.4"
 
 # Not a member of a workspace that the crate may be in.
