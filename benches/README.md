@@ -251,3 +251,53 @@ longer than a vector: for one or two subscribers, a call for each is
 faster. On the `aes` crate a batch of a thousand vectors takes 198 µs,
 where a call for each takes 249 µs: the jobs run one after the other, and
 the stack is cleared once.
+
+## Against other implementations
+
+The same inputs to each, a call for each operation, on core 2 of the
+machine above (Go 1.27), at 9dc28da. Times are the lowest of three runs, and
+each figure the median of three runs of the script; cycles and instructions are
+per operation, from `perf stat`, in user mode; peak memory is that of the
+whole program. A ratio within 10 % is "about the same": the layout of the
+code alone moves a time by 7 to 15 % between two builds. cryptography-rs
+has the keystream generators, which the program runs with the IV of
+128-NEA1 and 128-NEA3; its `Ct` types read no table at an index from the
+state, as this crate does. Open5GS is called through `ogs_nas_encrypt` and
+`ogs_nas_mac_calculate`, which its AMF and MME call.
+
+| Operation | | ns | Cycles | Instructions | Allocations | Octets allocated | Peak memory | Other / this crate |
+|---|---|---|---|---|---|---|---|---|
+| MILENAGE, an authentication vector | oxirush-security | 120.9 | 554 | 1,013 | 0 | 0 | 2.5 MiB | |
+| | milenage 0.3.1 | 713.7 | 3,253 | 7,965 | 0 | 0 | 2.4 MiB | 5.9x |
+| | milenage 0.1.6 | 246.4 | 1,124 | 2,952 | 0 | 0 | 2.4 MiB | 2.0x |
+| | Open5GS v2.8.0 | 416.9 | 1,897 | 6,115 | 0 | 0 | 2.1 MiB | 3.4x |
+| | free5GC util v1.3.2 | 537.9 | 2,376 | 8,682 | 19 | 1,248 | 7.5 MiB | 4.4x |
+| 128-NEA1 (SNOW 3G), 1,500 octets | oxirush-security | 2,193 | 9,980 | 32,706 | 0 | 0 | 2.5 MiB | |
+| | cryptography-rs 0.8.0, Snow3g | 3,172 | 14,434 | 66,230 | 0 | 0 | 2.5 MiB | 1.4x |
+| | cryptography-rs 0.8.0, Snow3gCt | 42,846 | 195,420 | 853,943 | 0 | 0 | 2.5 MiB | 20x |
+| | Open5GS v2.8.0 | 2,798 | 12,352 | 42,136 | 0 | 0 | 2.1 MiB | 1.3x |
+| | free5GC nas v1.2.3 | 438,584 | 1,987,513 | 5,359,230 | 3 | 3,152 | 5.0 MiB | 200x |
+| 128-NEA2 (AES-CTR), 1,500 octets | oxirush-security | 178.3 | 822 | 2,440 | 0 | 0 | 2.5 MiB | |
+| | aes 0.8.4, ctr 0.9.2 | 187.6 | 857 | 2,972 | 0 | 0 | 2.4 MiB | about the same |
+| | Open5GS v2.8.0 | 4,336 | 19,775 | 69,722 | 0 | 0 | 2.1 MiB | 24x |
+| | free5GC nas v1.2.3 | 451.8 | 2,014 | 6,403 | 4 | 2,576 | 7.6 MiB | 2.5x |
+| 128-NEA3 (ZUC), 1,500 octets | oxirush-security | 3,102 | 14,242 | 51,537 | 0 | 0 | 2.5 MiB | |
+| | zuc 0.4.1 | 3,116 | 14,144 | 55,504 | 0 | 0 | 2.4 MiB | about the same |
+| | cryptography-rs 0.8.0, Zuc128 | 3,383 | 15,384 | 60,783 | 0 | 0 | 2.5 MiB | about the same |
+| | cryptography-rs 0.8.0, Zuc128Ct | 41,669 | 190,702 | 795,415 | 0 | 0 | 2.5 MiB | 13x |
+| | Open5GS v2.8.0 | 7,422 | 33,735 | 126,029 | 1 | 1,596 | 2.1 MiB | 2.4x |
+| | free5GC nas v1.2.3 | 10,843 | 48,746 | 203,237 | 2 | 3,072 | 7.5 MiB | 3.5x |
+| 128-NIA1 (SNOW 3G), 1,500 octets | oxirush-security | 389.1 | 1,794 | 4,947 | 0 | 0 | 2.5 MiB | |
+| | Open5GS v2.8.0 | 546,014 | 2,278,205 | 5,514,519 | 0 | 0 | 2.1 MiB | 1,400x |
+| | free5GC nas v1.2.3 | 410,815 | 1,803,541 | 4,688,036 | 3 | 108 | 2.9 MiB | 1,100x |
+| 128-NIA2 (AES-CMAC), 1,500 octets | oxirush-security | 938.3 | 4,323 | 2,704 | 0 | 0 | 2.5 MiB | |
+| | aes 0.8.4, cmac 0.7.2 | 946.1 | 4,357 | 2,603 | 0 | 0 | 2.4 MiB | about the same |
+| | Open5GS v2.8.0 | 4,144 | 18,926 | 60,224 | 0 | 0 | 2.1 MiB | 4.4x |
+| | free5GC nas v1.2.3 | 1,825 | 8,173 | 21,030 | 8 | 2,240 | 7.7 MiB | 1.9x |
+| 128-NIA3 (ZUC), 1,500 octets | oxirush-security | 3,417 | 15,672 | 56,569 | 0 | 0 | 2.5 MiB | |
+| | zuc 0.4.1 | 5,381 | 24,593 | 116,125 | 0 | 0 | 2.4 MiB | 1.6x |
+| | Open5GS v2.8.0 | 35,626 | 161,648 | 443,082 | 1 | 1,604 | 2.1 MiB | 10x |
+
+`benches/compare/compare.sh 3` runs every row on core 3. It fetches each
+implementation at the version that it pins, and builds Open5GS's libraries
+of NAS security; perf may need `PERF="sudo -n perf"`.

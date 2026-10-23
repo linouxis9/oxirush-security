@@ -1,5 +1,5 @@
 #!/bin/sh
-# The table of the README's comparison: oxirush-security beside the
+# The table of the comparison in benches/README.md: oxirush-security beside the
 # implementations of the same functions, on the same inputs: MILENAGE, and
 # the six NAS algorithms on a message of 1500 octets.
 #

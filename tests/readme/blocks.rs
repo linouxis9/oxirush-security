@@ -42,8 +42,6 @@ pub const BLOCKS: &[fn()] = &[
     block_11,
     block_12,
     block_13,
-    block_14,
-    block_15,
 ];
 
 /// The Rust block 1 of README.md.
@@ -255,15 +253,11 @@ fn block_6() {
     };
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        // KASME from CK, IK, the serving network and the AUTN of the
-        // authentication, whose SQN xor AK the derivation takes
+        // KASME from CK, IK, the serving network and the AUTN, then the NAS keys
         let (ck, ik, autn) = (Ck::new(&[0x11; 16]), Ik::new(&[0x22; 16]), Autn::new(&[0; 16]));
         let kasme = derive_kasme(&ck, &ik, Plmn::new("208", "93")?, &autn);
-
-        // The NAS keys of the selected algorithms
         let (eea2, eia2) = (CipheringAlgorithm::EEA2, IntegrityAlgorithm::EIA2);
-        let knas_enc = derive_knas_enc(&kasme, eea2);
-        let knas_int = derive_knas_int(&kasme, eia2);
+        let (knas_enc, knas_int) = (derive_knas_enc(&kasme, eea2), derive_knas_int(&kasme, eia2));
 
         // An uplink EMM STATUS with cause #3 and NAS COUNT 0
         let (count, uplink) = (NasCount::ZERO, Direction::Uplink);
@@ -273,16 +267,9 @@ fn block_6() {
         let mac = nas_mac(&knas_int, count, uplink, &protected, eia2);
         println!("ciphered {}, MAC {mac:08x}", hex::encode(message));
 
-        // The MME computes the same MAC over what it received, then deciphers
-        let received = [&[count.sequence_number()][..], &message].concat();
-        println!("MAC as sent: {}", nas_mac(&knas_int, count, uplink, &received, eia2) == mac);
-        nas_cipher(&knas_enc, count, uplink, &mut message, eea2);
-        println!("deciphered {}", hex::encode(message));
-
         // The short MAC of a SERVICE REQUEST with NAS COUNT 1: KSI 0 and sequence
         // number 1 in its second octet
-        let count = count.next()?;
-        let short_mac = service_request_short_mac(&knas_int, count, uplink, 0x01, eia2);
+        let short_mac = service_request_short_mac(&knas_int, count.next()?, uplink, 0x01, eia2);
         println!("short MAC {short_mac:04x}");
         Ok(())
     }
@@ -409,7 +396,7 @@ fn block_9() {
 /// The Rust block 10 of README.md.
 fn block_10() {
     use oxirush_security::Plmn;
-    use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci};
+    use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci, Supi};
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Home network: its private key, and the public key that its subscribers
@@ -446,6 +433,13 @@ fn block_10() {
         println!("{annex}");
         println!("{:?}", annex.deconceal(Some(&private)));
         println!("{:?}", annex.deconceal(None));
+
+        // A SUPI that is a NAI: the username is concealed, the realm is not
+        let supi = Supi::network_specific("sensor-17@example.net")?;
+        let protection = Protection::Ecies { key_id: 1, key: &public };
+        let text = Suci::conceal_nai(&supi, RoutingIndicator::default(), protection)?.to_nai()?;
+        println!("{}...", &text[..31]);
+        println!("{}", Suci::from_nai(&text)?.deconceal(Some(&private))?);
         Ok(())
     }
 
@@ -454,38 +448,6 @@ fn block_10() {
 
 /// The Rust block 11 of README.md.
 fn block_11() {
-    use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci, Supi};
-
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let mut private = [0; 32];
-        let text = "c53c22208b61860b06c62e5406a7b330c2b577aa5558981510d128247d38bd1d";
-        hex::decode_to_slice(text, &mut private)?;
-        let private = HomeNetworkPrivateKey::profile_a(&private);
-        let public = private.public_key();
-
-        // UE: the username is concealed, the realm is not
-        let supi = Supi::network_specific("sensor-17@example.net")?;
-        let protection = Protection::Ecies { key_id: 1, key: &public };
-        let suci = Suci::conceal_nai(&supi, RoutingIndicator::default(), protection)?;
-        let text = suci.to_nai()?;
-        println!("{}...", &text[..31]);
-
-        // Home network
-        let received = Suci::from_nai(&text)?;
-        println!("{}", received.deconceal(Some(&private))?);
-
-        // A text that is no SUCI says what is wrong with it
-        if let Err(error) = Suci::from_nai("type1.rid0.schid1.hnkey1@example.net") {
-            println!("{error}");
-        }
-        Ok(())
-    }
-
-    main().unwrap();
-}
-
-/// The Rust block 12 of README.md.
-fn block_12() {
     use oxirush_security::nas_eps::{KNasEnc, KNasInt};
     use oxirush_security::{
         Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, nea_cipher_bits, nia_mac_bits,
@@ -512,14 +474,14 @@ fn block_12() {
     main().unwrap();
 }
 
-/// The Rust block 13 of README.md.
-fn block_13() {
+/// The Rust block 12 of README.md.
+fn block_12() {
     use oxirush_security::{
         CipheringAlgorithm, IntegrityAlgorithm, select_ciphering_algo, select_integrity_algo,
         select_integrity_algo_with_preference,
     };
 
-    fn main() {
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The EA and IA octets of a UE security capability: EA0, EA1 and EA2, and
         // IA1 and IA2. 128-NEA2 and 128-NIA2 are AES, 128-NEA1 and 128-NIA1 SNOW 3G
         println!("{:?}", select_ciphering_algo(0xe0));
@@ -537,30 +499,6 @@ fn block_13() {
         if let Some(selected) = select_integrity_algo(0x60) {
             println!("{} in 5GS, {} in EPS", selected.name_5gs(), selected.name_eps());
         }
-    }
-
-    main();
-}
-
-/// The Rust block 14 of README.md.
-fn block_14() {
-    use oxirush_security::nas_5gs::Guti;
-    use oxirush_security::{Plmn, tbcd};
-
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        // MCC 208 and MNC 93
-        let plmn = Plmn::new("208", "93")?;
-        println!("{} is {plmn}", hex::encode(plmn.to_nas_octets()));
-
-        // AMF region 1, set 1 and pointer 2, and a 5G-TMSI
-        let guti = Guti::new(plmn, 0x01, 0x001, 0x02, 0x1122_3344)?;
-        let octets = guti.to_nas_octets();
-        let read = Guti::from_nas_octets(&octets)?;
-        println!("{} has 5G-TMSI {:08x}", hex::encode(octets), read.tmsi());
-
-        // The digits of an IMSI
-        let imsi = tbcd::encode("208930000000001")?;
-        println!("{} is {}", hex::encode(&imsi), tbcd::decode(&imsi)?);
         Ok(())
     }
 
@@ -568,7 +506,7 @@ fn block_14() {
 }
 
 /// The Rust block 1 of src/lib.rs.
-fn block_15() {
+fn block_13() {
     use oxirush_security::nas_5gs::{
         KAmf, NasConnection, derive_knas_enc, derive_knas_int, nas_cipher, nas_mac,
     };

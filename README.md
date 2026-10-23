@@ -44,9 +44,13 @@ KNASint 28ddb5356880149b9fee22f2367522a4
 ciphered b57dd5, MAC 83e4d009
 ```
 
-The text under a block is what the block prints.
+Each example is followed by its output.
 
 This page describes oxirush-security 0.3.0, which is not on crates.io yet.
+
+The keys that the examples print are values of 3GPP test sets, or derived
+from them, to compare with the specifications. `{:?}` of a key prints only
+its name, as `KAmf(..)`.
 
 ## Installation
 
@@ -56,24 +60,25 @@ oxirush-security = "0.3"
 hex = "0.4" # for the examples of this page
 ```
 
-| Feature | The crate has | Needs |
-|---------|---------------|-------|
-| none | the algorithms, the contexts and the batches, MILENAGE, the keys and their derivations, NAS integrity and ciphering, the selection of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone: no allocator |
-| `alloc` | and what returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | an allocator |
-| `std` | and, on an AArch64 system other than Linux, Android and Apple's, the choice of the code on the vector and AES instructions when the program runs | the standard library |
-| `suci` | and the SUCI of an IMSI, with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, and a source of random numbers that `getrandom` has for the target |
-| `nai` | and the SUCI in the NAI format and that of a SUPI that is a NAI, by the grammar of RFC 7542 | `suci` |
-| `idna` | and the realm and the username of a NAI are also checked as internationalized names: Unicode normalization and IDNA | `nai`; the Unicode tables of `idna` and `unicode-normalization` |
+| Feature | Adds | Needs |
+|---------|------|-------|
+| none | The algorithms, their contexts and batches, MILENAGE, the key derivations, NAS integrity and ciphering, the choice of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone, no allocator |
+| `alloc` | What returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | An allocator |
+| `std` | On AArch64 outside Linux, Android and Apple systems, the choice of the vector code at run time | The standard library |
+| `suci` | The SUCI of an IMSI: the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, and a source of random numbers that `getrandom` has for the target |
+| `nai` | The SUCI in NAI form, and the SUCI of a SUPI that is a NAI (RFC 7542) | `suci` |
+| `idna` | The realm and the username of a NAI are checked as internationalized names too | `nai`, and the Unicode tables of `idna` and `unicode-normalization` |
 
-`std`, `suci` and `nai` are the default, without IDNA. Without `std` the crate is
-`no_std`, and it still asks the processor what it has: by CPUID on x86-64,
-through the auxiliary vector on AArch64 Linux and Android. On a target
-without an operating system the code on the vector and AES instructions
-runs when the build enables them
-(`-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq`, or `+neon,+aes`).
+The identities (`Plmn`, `Guti`, `Supi`, …) are oxirush-utils' types,
+re-exported in `oxirush_security::identity`; `tbcd` encodes the digits of an
+IMSI.
 
-`oxirush_security::implementation()` says which code runs for each
-algorithm, scalar or on the instructions: log it when the program starts.
+`std`, `suci` and `nai` are on by default. Without `std` the crate is
+`no_std`, and it still runs the vector and AES instructions where the
+processor has them. On a target without an operating system, the build
+enables them (`-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq`, or
+`+neon,+aes`). `oxirush_security::implementation()` says which code runs for
+each algorithm: log it when the program starts.
 
 ```toml
 # no_std, without an allocator
@@ -214,9 +219,8 @@ Err(MacFailure)
 
 ## Make the vectors of many subscribers in one call
 
-A job is a subscriber with the inputs of its call. On the AES instructions
-a batch runs the key expansions and the encryptions of eight subscribers
-side by side.
+A job is one subscriber with the inputs of its call. On the AES
+instructions, a batch works on eight subscribers side by side.
 
 ```rust
 use oxirush_security::milenage::{
@@ -264,8 +268,8 @@ AUTN of the last a8ea63cde1078000cad3a5b1943c2ec3
 
 ## Protect and check a NAS message
 
-The first block of the page is the sender. The receiver computes the MAC
-before it deciphers.
+This is the receiving side of the first example: it checks the MAC before
+it deciphers.
 
 ```rust
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, nas_cipher, nas_mac};
@@ -310,10 +314,8 @@ MAC 83e4d009, as received: true
 deciphered 7e0043, then from NAS COUNT 1
 ```
 
-## Protect and check a NAS message in EPS
-
-The EPS functions are in `nas_eps`. Its `nas_mac` and `nas_cipher` take no
-NAS connection: the BEARER of EPS NAS is zero.
+In EPS the functions are in `nas_eps`, and take no NAS connection: the
+BEARER of EPS NAS is zero.
 
 ```rust
 use oxirush_security::nas_eps::{
@@ -325,15 +327,11 @@ use oxirush_security::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // KASME from CK, IK, the serving network and the AUTN of the
-    // authentication, whose SQN xor AK the derivation takes
+    // KASME from CK, IK, the serving network and the AUTN, then the NAS keys
     let (ck, ik, autn) = (Ck::new(&[0x11; 16]), Ik::new(&[0x22; 16]), Autn::new(&[0; 16]));
     let kasme = derive_kasme(&ck, &ik, Plmn::new("208", "93")?, &autn);
-
-    // The NAS keys of the selected algorithms
     let (eea2, eia2) = (CipheringAlgorithm::EEA2, IntegrityAlgorithm::EIA2);
-    let knas_enc = derive_knas_enc(&kasme, eea2);
-    let knas_int = derive_knas_int(&kasme, eia2);
+    let (knas_enc, knas_int) = (derive_knas_enc(&kasme, eea2), derive_knas_int(&kasme, eia2));
 
     // An uplink EMM STATUS with cause #3 and NAS COUNT 0
     let (count, uplink) = (NasCount::ZERO, Direction::Uplink);
@@ -343,16 +341,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mac = nas_mac(&knas_int, count, uplink, &protected, eia2);
     println!("ciphered {}, MAC {mac:08x}", hex::encode(message));
 
-    // The MME computes the same MAC over what it received, then deciphers
-    let received = [&[count.sequence_number()][..], &message].concat();
-    println!("MAC as sent: {}", nas_mac(&knas_int, count, uplink, &received, eia2) == mac);
-    nas_cipher(&knas_enc, count, uplink, &mut message, eea2);
-    println!("deciphered {}", hex::encode(message));
-
     // The short MAC of a SERVICE REQUEST with NAS COUNT 1: KSI 0 and sequence
     // number 1 in its second octet
-    let count = count.next()?;
-    let short_mac = service_request_short_mac(&knas_int, count, uplink, 0x01, eia2);
+    let short_mac = service_request_short_mac(&knas_int, count.next()?, uplink, 0x01, eia2);
     println!("short MAC {short_mac:04x}");
     Ok(())
 }
@@ -360,18 +351,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```text
 ciphered b02c47, MAC 190af1e7
-MAC as sent: true
-deciphered 076003
 short MAC 7e95
 ```
 
 ## Protect a message that oxirush-nas encodes
 
 [oxirush-nas](https://github.com/linouxis9/oxirush-nas) encodes the
-message, and its security context calls these functions. Under the
-security header of TS 24.501 §9.1.1 are the extended protocol
-discriminator, the security header type, the MAC and the sequence number,
-then the ciphered message.
+message, and its security context calls these functions. A protected
+message starts with its security header (TS 24.501, 9.1.1): the extended
+protocol discriminator, the security header type, the MAC and the sequence
+number. The ciphered message follows.
 
 ```rust,ignore
 use oxirush_nas::nas_5gs::{self, GmmCause, Nas5gsMessage, NasFGmmCause, NasFGmmStatus};
@@ -419,7 +408,7 @@ SecurityProtected (SHT=IntegrityProtectedAndCiphered, MAC=0xcbbc4fbb, SN=0) Opaq
 ## Protect the messages of many UEs in one call
 
 A job is one message with its key, its NAS COUNT and its algorithm. A batch
-gives each job the result of `nas_cipher` or `nas_mac`, and runs the
+gives each job what `nas_cipher` or `nas_mac` would give it, and runs the
 keystream generators and the MAC chains of several jobs side by side.
 
 ```rust
@@ -475,14 +464,14 @@ MAC 6a11a04f of 00e17ff3e0
 MAC c48d481a of 295c7b75e6ac69
 ```
 
-`CipherJob::new` and `MacJob::new` take any 32-bit COUNT and a BEARER, for
-a message that is not a NAS message.
+For a message that is not a NAS message, `CipherJob::new` and
+`MacJob::new` take any 32-bit COUNT and a BEARER.
 
 ## Keep the keys of a UE between its messages
 
-A context holds a key with its algorithm and what the algorithm computes
+A context holds a key with its algorithm, and what the algorithm computes
 from the key alone: the round keys of AES and the subkeys of CMAC. It
-serves both directions, and its `job` goes in a batch.
+serves both directions, and its `job` goes into a batch.
 
 ```rust
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection};
@@ -560,20 +549,22 @@ KNG-RAN* 563d8aba7015f1ad77af632104b023d51c1cd410ef2ff46886aa2e02887e71d1
 KAMF'    ae5e2cb9cda5b1687556e9c3d889d0edb0aa4e7317d409e0315dac5597ad438a
 ```
 
-`nas_eps` has `derive_kenb`, `derive_nh` and `derive_kenb_star` for EPS. The
-keys of a change of system are in `nas_5gs`: `derive_mapped_kasme_idle` and
-`derive_mapped_kamf_idle`, and those of a handover.
+`nas_eps` has `derive_kenb`, `derive_nh` and `derive_kenb_star` for EPS.
+The keys of a change of system are in `nas_5gs`: `derive_mapped_kasme_idle`
+and `derive_mapped_kamf_idle`, and those of a handover.
 
 ## Conceal and deconceal a SUCI
 
-The home network key pair is that of Profile A in TS 33.501 Annex C.4.
-`HomeNetworkPrivateKey::profile_b` makes one of Profile B, and the rest is
-the same. A SIDF with several keys chooses by the protection scheme and the
-home network public key identifier of the SUCI that it read.
+The home network's key pair is the one of Profile A in TS 33.501
+Annex C.4. `HomeNetworkPrivateKey::profile_b` makes one of Profile B, and
+the rest is the same. A SIDF with several keys picks one by the protection
+scheme and the home network public key identifier of the SUCI it read. With
+the `nai` feature, a SUPI that is a NAI is concealed as a NAI (TS 23.003,
+28.7.3).
 
 ```rust
 use oxirush_security::Plmn;
-use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci};
+use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci, Supi};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Home network: its private key, and the public key that its subscribers
@@ -610,6 +601,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{annex}");
     println!("{:?}", annex.deconceal(Some(&private)));
     println!("{:?}", annex.deconceal(None));
+
+    // A SUPI that is a NAI: the username is concealed, the realm is not
+    let supi = Supi::network_specific("sensor-17@example.net")?;
+    let protection = Protection::Ecies { key_id: 1, key: &public };
+    let text = Suci::conceal_nai(&supi, RoutingIndicator::default(), protection)?.to_nai()?;
+    println!("{}...", &text[..31]);
+    println!("{}", Suci::from_nai(&text)?.deconceal(Some(&private))?);
     Ok(())
 }
 ```
@@ -622,46 +620,8 @@ imsi-274012001002086, of which KAMF takes 274012001002086
 suci-0-274-012-0-1-27-b2e92f836055a255837debf850b528997ce0201cb82adfe4be1f587d07d8457dcb02352410cddd9e730ef3fa87
 Ok(Supi(imsi-274012001002086))
 Err(MissingKey)
-```
-
-## Conceal a network specific identifier
-
-A SUPI that is a NAI is concealed as a NAI (TS 23.003 §28.7.3), with the
-`nai` feature.
-
-```rust
-use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci, Supi};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut private = [0; 32];
-    let text = "c53c22208b61860b06c62e5406a7b330c2b577aa5558981510d128247d38bd1d";
-    hex::decode_to_slice(text, &mut private)?;
-    let private = HomeNetworkPrivateKey::profile_a(&private);
-    let public = private.public_key();
-
-    // UE: the username is concealed, the realm is not
-    let supi = Supi::network_specific("sensor-17@example.net")?;
-    let protection = Protection::Ecies { key_id: 1, key: &public };
-    let suci = Suci::conceal_nai(&supi, RoutingIndicator::default(), protection)?;
-    let text = suci.to_nai()?;
-    println!("{}...", &text[..31]);
-
-    // Home network
-    let received = Suci::from_nai(&text)?;
-    println!("{}", received.deconceal(Some(&private))?);
-
-    // A text that is no SUCI says what is wrong with it
-    if let Err(error) = Suci::from_nai("type1.rid0.schid1.hnkey1@example.net") {
-        println!("{error}");
-    }
-    Ok(())
-}
-```
-
-```text
 type1.rid0.schid1.hnkey1.ecckey...
 nai-sensor-17@example.net
-the NAI is not one: `ecckey` is written as ecckey and the ephemeral public key in hexadecimal digits
 ```
 
 ## Run an algorithm on a 3GPP test set
@@ -707,7 +667,7 @@ use oxirush_security::{
     select_integrity_algo_with_preference,
 };
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The EA and IA octets of a UE security capability: EA0, EA1 and EA2, and
     // IA1 and IA2. 128-NEA2 and 128-NIA2 are AES, 128-NEA1 and 128-NIA1 SNOW 3G
     println!("{:?}", select_ciphering_algo(0xe0));
@@ -725,6 +685,7 @@ fn main() {
     if let Some(selected) = select_integrity_algo(0x60) {
         println!("{} in 5GS, {} in EPS", selected.name_5gs(), selected.name_eps());
     }
+    Ok(())
 }
 ```
 
@@ -737,68 +698,26 @@ Err(UnsupportedAlgorithm(5))
 128-NIA2 in 5GS, 128-EIA2 in EPS
 ```
 
-## Encode a PLMN identity, a 5G-GUTI and TBCD digits
-
-The identities are the values of
-[oxirush-utils](https://github.com/linouxis9/oxirush-utils), which
-`oxirush_security::identity` is.
-
-```rust
-use oxirush_security::nas_5gs::Guti;
-use oxirush_security::{Plmn, tbcd};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // MCC 208 and MNC 93
-    let plmn = Plmn::new("208", "93")?;
-    println!("{} is {plmn}", hex::encode(plmn.to_nas_octets()));
-
-    // AMF region 1, set 1 and pointer 2, and a 5G-TMSI
-    let guti = Guti::new(plmn, 0x01, 0x001, 0x02, 0x1122_3344)?;
-    let octets = guti.to_nas_octets();
-    let read = Guti::from_nas_octets(&octets)?;
-    println!("{} has 5G-TMSI {:08x}", hex::encode(octets), read.tmsi());
-
-    // The digits of an IMSI
-    let imsi = tbcd::encode("208930000000001")?;
-    println!("{} is {}", hex::encode(&imsi), tbcd::decode(&imsi)?);
-    Ok(())
-}
-```
-
-```text
-02f839 is 208-93
-f202f83901004211223344 has 5G-TMSI 11223344
-02980300000000f1 is 208930000000001
-```
-
-`examples/` has five programs: `key_derivation_nas_5gs`,
-`key_derivation_nas_eps`, `integrity_nas_5gs`, `integrity_nas_eps` and
-`suci_conceal`. Run one with `cargo run --example suci_conceal`.
-
 ## What an operation leaves
 
-A key, a context and a generator are wiped when they are dropped, and
-`{:?}` prints no octet of a key. RES, RES\*, XRES, XRES\*, HRES\* and
-HXRES\* are keys: whoever has one answers the challenge. An identity, and
-RAND, AUTN, SQN and AUTS, which travel in clear, are printed whole.
+Keys, contexts and generators are wiped when they are dropped. RES, RES\*,
+XRES, XRES\*, HRES\* and HXRES\* are keys too: whoever has one can answer
+the challenge. Identities, and RAND, AUTN, SQN and AUTS, which travel in
+clear, are printed whole.
 
-When an operation that computes with a key returns, the crate also sets to
-zero the stack that the work used and, on x86-64 and AArch64, the registers.
-[`leftovers/`](https://github.com/linouxis9/oxirush-security/tree/master/leftovers) looks for
-the keys, the round keys and the keystream after each operation and finds
-none. A copy that the program makes is its own: a key that is moved leaves
-its octets where it was, so make a key where it stays and pass references.
-
-The clearing takes 13 to 34 ns for a message, and a batch pays it once.
-`RUSTFLAGS="--cfg oxirush_security_unwiped"` builds the crate without it.
+When an operation that uses a key returns, the crate also zeroes the stack
+that it used and, on x86-64 and AArch64, the registers. That costs 13 to
+34 ns a message, and a batch pays it once;
+`RUSTFLAGS="--cfg oxirush_security_unwiped"` builds the crate without it. A
+copy that the program makes is its own: a key that is moved leaves its
+octets where it was, so make a key where it stays and pass references.
 
 ## Limits
 
-- AKA: it has MILENAGE and not TUAK. Whether a SQN is fresh and whether
-  an AMF has the separation bit are the caller's to decide.
+- AKA: it has MILENAGE, not TUAK. Whether a SQN is fresh, and whether an
+  AMF has the separation bit, are the caller's to decide.
 - State: it stores no key and keeps no NAS COUNT or SQN. The caller passes
-  them, and `NasCount` gives the next one and the one of a received
-  message.
+  them, and `NasCount` gives the next one and that of a received message.
 - NAS messages: it protects octets.
   [oxirush-nas](https://github.com/linouxis9/oxirush-nas) encodes the
   messages and their security header.
@@ -806,10 +725,9 @@ The clearing takes 13 to 34 ns for a message, and a batch pays it once.
 
 ## Performance
 
-On one core of an AMD Ryzen 7 5700G (16 threads, Linux 7.0, Rust 1.98.1),
-measured at 9dc28da on a quiet machine on 2026-10-18, a message of 1,500
-octets, alone and as one of sixteen in a call of `nea_cipher_batch` or
-`nia_mac_batch`, the lowest of five runs:
+On one core of an AMD Ryzen 7 5700G (Linux 7.0, Rust 1.98.1), at 9dc28da
+on 2026-10-18, for a message of 1,500 octets, alone and as one of sixteen in
+a call of `nea_cipher_batch` or `nia_mac_batch`:
 
 | | Cipher | MAC | Cipher, one of sixteen | MAC, one of sixteen |
 |---|---|---|---|---|
@@ -821,58 +739,36 @@ MILENAGE makes an authentication vector in 0.12 µs, and in 0.06 µs as one
 of a thousand in a call of `authentication_vector_batch`. A key
 derivation takes 0.22 µs, and SUCI concealment 55 µs with Profile A and
 268 µs with Profile B.
-[`benches/`](https://github.com/linouxis9/oxirush-security/tree/master/benches)
-has the benchmarks, the other figures and how to profile.
+[`benches/`](benches/README.md) has the benchmarks, the other figures and
+how to profile.
 
 ### Against other implementations
 
-The same inputs to each, a call for each operation, on core 2 of the same
-machine (Go 1.27), at 9dc28da. Times are the lowest of three runs, and each
-figure the median of three runs of the script; cycles and instructions are
-per operation, from `perf stat`, in user mode; peak memory is that of the
-whole program. A ratio within 10 % is "about the same": the layout of the
-code alone moves a time by 7 to 15 % between two builds. cryptography-rs
-has the keystream generators, which the program runs with the IV of
-128-NEA1 and 128-NEA3; its `Ct` types read no table at an index from the
-state, as this crate does. Open5GS is called through `ogs_nas_encrypt` and
-`ogs_nas_mac_calculate`, which its AMF and MME call.
+The same inputs, one call for each operation, at 9dc28da on core 2 of the
+same machine, against milenage 0.3.1 and 0.1.6, aes 0.8.4 (with ctr 0.9.2
+and cmac 0.7.2), zuc 0.4.1, cryptography-rs 0.8.0, Open5GS v2.8.0 and
+free5GC (util v1.3.2, nas v1.2.3). A ratio is the time of the other
+implementation over this crate's, and "about the same" is within 10 %:
 
-| Operation | | ns | Cycles | Instructions | Allocations | Octets allocated | Peak memory | Other / this crate |
-|---|---|---|---|---|---|---|---|---|
-| MILENAGE, an authentication vector | oxirush-security | 120.9 | 554 | 1,013 | 0 | 0 | 2.5 MiB | |
-| | milenage 0.3.1 | 713.7 | 3,253 | 7,965 | 0 | 0 | 2.4 MiB | 5.9x |
-| | milenage 0.1.6 | 246.4 | 1,124 | 2,952 | 0 | 0 | 2.4 MiB | 2.0x |
-| | Open5GS v2.8.0 | 416.9 | 1,897 | 6,115 | 0 | 0 | 2.1 MiB | 3.4x |
-| | free5GC util v1.3.2 | 537.9 | 2,376 | 8,682 | 19 | 1,248 | 7.5 MiB | 4.4x |
-| 128-NEA1 (SNOW 3G), 1,500 octets | oxirush-security | 2,193 | 9,980 | 32,706 | 0 | 0 | 2.5 MiB | |
-| | cryptography-rs 0.8.0, Snow3g | 3,172 | 14,434 | 66,230 | 0 | 0 | 2.5 MiB | 1.4x |
-| | cryptography-rs 0.8.0, Snow3gCt | 42,846 | 195,420 | 853,943 | 0 | 0 | 2.5 MiB | 20x |
-| | Open5GS v2.8.0 | 2,798 | 12,352 | 42,136 | 0 | 0 | 2.1 MiB | 1.3x |
-| | free5GC nas v1.2.3 | 438,584 | 1,987,513 | 5,359,230 | 3 | 3,152 | 5.0 MiB | 200x |
-| 128-NEA2 (AES-CTR), 1,500 octets | oxirush-security | 178.3 | 822 | 2,440 | 0 | 0 | 2.5 MiB | |
-| | aes 0.8.4, ctr 0.9.2 | 187.6 | 857 | 2,972 | 0 | 0 | 2.4 MiB | about the same |
-| | Open5GS v2.8.0 | 4,336 | 19,775 | 69,722 | 0 | 0 | 2.1 MiB | 24x |
-| | free5GC nas v1.2.3 | 451.8 | 2,014 | 6,403 | 4 | 2,576 | 7.6 MiB | 2.5x |
-| 128-NEA3 (ZUC), 1,500 octets | oxirush-security | 3,102 | 14,242 | 51,537 | 0 | 0 | 2.5 MiB | |
-| | zuc 0.4.1 | 3,116 | 14,144 | 55,504 | 0 | 0 | 2.4 MiB | about the same |
-| | cryptography-rs 0.8.0, Zuc128 | 3,383 | 15,384 | 60,783 | 0 | 0 | 2.5 MiB | about the same |
-| | cryptography-rs 0.8.0, Zuc128Ct | 41,669 | 190,702 | 795,415 | 0 | 0 | 2.5 MiB | 13x |
-| | Open5GS v2.8.0 | 7,422 | 33,735 | 126,029 | 1 | 1,596 | 2.1 MiB | 2.4x |
-| | free5GC nas v1.2.3 | 10,843 | 48,746 | 203,237 | 2 | 3,072 | 7.5 MiB | 3.5x |
-| 128-NIA1 (SNOW 3G), 1,500 octets | oxirush-security | 389.1 | 1,794 | 4,947 | 0 | 0 | 2.5 MiB | |
-| | Open5GS v2.8.0 | 546,014 | 2,278,205 | 5,514,519 | 0 | 0 | 2.1 MiB | 1,400x |
-| | free5GC nas v1.2.3 | 410,815 | 1,803,541 | 4,688,036 | 3 | 108 | 2.9 MiB | 1,100x |
-| 128-NIA2 (AES-CMAC), 1,500 octets | oxirush-security | 938.3 | 4,323 | 2,704 | 0 | 0 | 2.5 MiB | |
-| | aes 0.8.4, cmac 0.7.2 | 946.1 | 4,357 | 2,603 | 0 | 0 | 2.4 MiB | about the same |
-| | Open5GS v2.8.0 | 4,144 | 18,926 | 60,224 | 0 | 0 | 2.1 MiB | 4.4x |
-| | free5GC nas v1.2.3 | 1,825 | 8,173 | 21,030 | 8 | 2,240 | 7.7 MiB | 1.9x |
-| 128-NIA3 (ZUC), 1,500 octets | oxirush-security | 3,417 | 15,672 | 56,569 | 0 | 0 | 2.5 MiB | |
-| | zuc 0.4.1 | 5,381 | 24,593 | 116,125 | 0 | 0 | 2.4 MiB | 1.6x |
-| | Open5GS v2.8.0 | 35,626 | 161,648 | 443,082 | 1 | 1,604 | 2.1 MiB | 10x |
+| Operation | This crate | Other / this crate |
+|---|---|---|
+| MILENAGE, an authentication vector | 120.9 ns | milenage 0.3.1 5.9x, milenage 0.1.6 2.0x, Open5GS 3.4x, free5GC 4.4x |
+| 128-NEA1 (SNOW 3G), 1,500 octets | 2,193 ns | cryptography-rs 1.4x, Open5GS 1.3x, free5GC 200x |
+| 128-NEA2 (AES-CTR), 1,500 octets | 178.3 ns | aes and ctr about the same, Open5GS 24x, free5GC 2.5x |
+| 128-NEA3 (ZUC), 1,500 octets | 3,102 ns | zuc and cryptography-rs about the same, Open5GS 2.4x, free5GC 3.5x |
+| 128-NIA1 (SNOW 3G), 1,500 octets | 389.1 ns | Open5GS 1,400x, free5GC 1,100x |
+| 128-NIA2 (AES-CMAC), 1,500 octets | 938.3 ns | aes and cmac about the same, Open5GS 4.4x, free5GC 1.9x |
+| 128-NIA3 (ZUC), 1,500 octets | 3,417 ns | zuc 1.6x, Open5GS 10x |
 
-`benches/compare/compare.sh 3` runs every row on core 3. It fetches each
-implementation at the version that it pins, and builds Open5GS's libraries
-of NAS security; perf may need `PERF="sudo -n perf"`.
+cryptography-rs also has `Ct` generators, which read no table at an index
+taken from the state, as this crate does: they take 20x for SNOW 3G and
+13x for ZUC. [`benches/`](benches/README.md#against-other-implementations)
+has every figure, with cycles, instructions, allocations and peak memory,
+and the method. `benches/compare/compare.sh 3` runs every row on core 3:
+
+```sh
+benches/compare/compare.sh 3
+```
 
 ## Tests and fuzzing
 
@@ -883,25 +779,30 @@ cargo +nightly fuzz run algorithms -- -max_total_time=60
 ```
 
 The algorithms, MILENAGE and SUCI are tested on the 3GPP test data, and
-MILENAGE on every set of TS 35.207 and TS 35.208. TS 33.501 has no test
-data for its key derivations: a second implementation,
-[`tests/five_g_aka_chain.py`](tests/five_g_aka_chain.py), derives the 5G
-AKA chain.
+MILENAGE on every set of TS 35.207 and TS 35.208. TS 33.501 has no test data
+for its key derivations: a second implementation,
+[`tests/five_g_aka_chain.py`](tests/five_g_aka_chain.py), derives the 5G AKA
+chain.
 [`differential/`](https://github.com/linouxis9/oxirush-security/tree/master/differential)
 compares MILENAGE with the `milenage` crate, Open5GS and free5GC on a
-million random subscribers. CI compares the vector code with the scalar
-code on x86-64, AArch64 and an emulated AArch64 processor
+million random subscribers.
+[`leftovers/`](https://github.com/linouxis9/oxirush-security/tree/master/leftovers)
+searches the memory for keys, round keys and keystream after each
+operation, and finds none. CI compares the vector code with the scalar code
+on x86-64, AArch64 and an emulated AArch64 processor
 ([`emulated-aarch64/`](https://github.com/linouxis9/oxirush-security/tree/master/emulated-aarch64)),
 and fuzzes the four targets of
 [`fuzz/`](https://github.com/linouxis9/oxirush-security/tree/master/fuzz).
 The only `unsafe` code calls the vector code and clears the stack and the
-registers.
+registers. `examples/` has five programs: `key_derivation_nas_5gs`,
+`key_derivation_nas_eps`, `integrity_nas_5gs`, `integrity_nas_eps` and
+`suci_conceal`. Run one with `cargo run --example suci_conceal`.
 
-The Rust blocks of this page are checked with what they print
-([`tests/readme.rs`](tests/readme.rs) says how), and the block that uses
+Each Rust block of this page is checked with what it prints
+([`tests/readme.rs`](tests/readme.rs) says how). The block that uses
 oxirush-nas runs in the package of [`family/`](family/).
 [The documentation](https://docs.rs/oxirush-security) has the terms, each
-function with its clause and the values that it is tested against, what an
+function with its clause and the values it is tested against, what an
 operation leaves, and how the code was checked for a time that does not
 depend on a secret.
 
