@@ -541,7 +541,7 @@ fn nothing_of_a_key_is_printed() {
     assert!(printed.contains("xres: Xres(..), ck: Ck(..), ik: Ik(..), autn: Autn("));
     let response = subscriber.check_autn(&rand, vector.autn()).unwrap();
     let printed = format!("{response:?}");
-    assert!(printed.contains("sqn: Sqn(000000000000), amf: Amf(8000), res: Res("));
+    assert!(printed.contains("sqn: Sqn(000000000000), amf: Amf(8000), res: Res(..), "));
     assert!(printed.ends_with("ck: Ck(..), ik: Ik(..) }"), "{printed}");
 }
 

@@ -84,6 +84,19 @@ pub fn derive_kasme(ck: &Ck, ik: &Ik, serving_network: Plmn, autn: &Autn) -> KAs
 /// `ul_nas_count` is the uplink NAS COUNT of the message that started the
 /// derivation, as a [`NasCount`]. At a handover from 5GS it is
 /// [`AccessKeyCount::Handover`] (TS 33.501 §8.3.2).
+///
+/// ```
+/// use oxirush_security::NasCount;
+/// use oxirush_security::nas_eps::{KAsme, derive_kenb};
+///
+/// // The KASME of the example of `derive_kasme`, and the uplink NAS COUNT
+/// // of the ATTACH REQUEST that set the context up
+/// let kasme = "ba595c5419be71add1212bc8e1bd843afd26e58c0ad8d54f144686b5f55cda77";
+/// let kasme = KAsme::from_slice(&hex::decode(kasme).unwrap()).unwrap();
+/// let kenb = derive_kenb(&kasme, NasCount::ZERO);
+/// let expected = "1221d2b558e3f2403b6115b5e103535f72c300cede7b330b7975d0da633eaa0e";
+/// assert_eq!(hex::encode(kenb.as_octets()), expected);
+/// ```
 pub fn derive_kenb(kasme: &KAsme, ul_nas_count: impl Into<AccessKeyCount>) -> KEnb {
     wipe::derivation(|| {
         let count = ul_nas_count.into().get().to_be_bytes();

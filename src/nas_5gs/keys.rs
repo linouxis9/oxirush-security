@@ -118,7 +118,25 @@ impl XresStar {
 
 impl HxresStar {
     /// Whether `hres_star`, which the SEAF computed from the RES\* of the
-    /// UE, is the one that was expected (TS 33.501 §6.1.3.2).
+    /// UE, is the one that was expected (TS 33.501 §6.1.3.2), compared in a
+    /// time that does not depend on where the two differ. HRES\* and
+    /// HXRES\* are two types, so that `==` does not compare them by
+    /// mistake.
+    ///
+    /// ```
+    /// use oxirush_security::Rand;
+    /// use oxirush_security::nas_5gs::{ResStar, XresStar, compute_hres_star, compute_hxres_star};
+    ///
+    /// // The AUSF gives the SEAF the RAND and HXRES*, from the XRES* of the vector
+    /// let rand = Rand::new(&[0x23; 16]);
+    /// let hxres_star = compute_hxres_star(&rand, &XresStar::new(&[0x5c; 16]));
+    ///
+    /// // The SEAF computes HRES* from the RES* of the UE, and compares
+    /// let hres_star = compute_hres_star(&rand, &ResStar::new(&[0x5c; 16]));
+    /// assert!(hxres_star.accepts(&hres_star));
+    /// let wrong = compute_hres_star(&rand, &ResStar::new(&[0x5d; 16]));
+    /// assert!(!hxres_star.accepts(&wrong));
+    /// ```
     pub fn accepts(&self, hres_star: &HresStar) -> bool {
         crate::common::ct::constant_time_eq(self.as_octets(), hres_star.as_octets())
     }

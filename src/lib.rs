@@ -25,25 +25,28 @@
 //! };
 //! use oxirush_security::{CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
 //!
-//! // KAMF, the key of the AMF
-//! let k_amf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
-//! let k_amf = KAmf::from_slice(&hex::decode(k_amf).unwrap()).unwrap();
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // KAMF, the key of the AMF
+//!     let k_amf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
+//!     let k_amf = KAmf::from_slice(&hex::decode(k_amf)?)?;
 //!
-//! // The NAS keys of the algorithms that the AMF selected
-//! let (nea2, nia2) = (CipheringAlgorithm::NEA2, IntegrityAlgorithm::NIA2);
-//! let k_nas_enc = derive_knas_enc(&k_amf, nea2);
-//! let k_nas_int = derive_knas_int(&k_amf, nia2);
-//! println!("KNASenc {}", hex::encode(k_nas_enc.as_octets()));
-//! println!("KNASint {}", hex::encode(k_nas_int.as_octets()));
+//!     // The NAS keys of the algorithms that the AMF selected
+//!     let (nea2, nia2) = (CipheringAlgorithm::NEA2, IntegrityAlgorithm::NIA2);
+//!     let k_nas_enc = derive_knas_enc(&k_amf, nea2);
+//!     let k_nas_int = derive_knas_int(&k_amf, nia2);
+//!     println!("KNASenc {}", hex::encode(k_nas_enc.as_octets()));
+//!     println!("KNASint {}", hex::encode(k_nas_int.as_octets()));
 //!
-//! // An uplink REGISTRATION COMPLETE on 3GPP access with NAS COUNT 0: cipher
-//! // it, then compute the MAC over the sequence number and the ciphertext
-//! let (count, access, uplink) = (NasCount::ZERO, NasConnection::ThreeGpp, Direction::Uplink);
-//! let mut message = [0x7e, 0x00, 0x43];
-//! nas_cipher(&k_nas_enc, count, access, uplink, &mut message, nea2);
-//! let protected = [&[count.sequence_number()][..], &message].concat();
-//! let mac = nas_mac(&k_nas_int, count, access, uplink, &protected, nia2);
-//! println!("ciphered {}, MAC {mac:08x}", hex::encode(message));
+//!     // An uplink REGISTRATION COMPLETE on 3GPP access with NAS COUNT 0: cipher
+//!     // it, then compute the MAC over the sequence number and the ciphertext
+//!     let (count, access, uplink) = (NasCount::ZERO, NasConnection::ThreeGpp, Direction::Uplink);
+//!     let mut message = [0x7e, 0x00, 0x43];
+//!     nas_cipher(&k_nas_enc, count, access, uplink, &mut message, nea2);
+//!     let protected = [&[count.sequence_number()][..], &message].concat();
+//!     let mac = nas_mac(&k_nas_int, count, access, uplink, &protected, nia2);
+//!     println!("ciphered {}, MAC {mac:08x}", hex::encode(message));
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ```text
@@ -51,6 +54,8 @@
 //! KNASint 28ddb5356880149b9fee22f2367522a4
 //! ciphered b57dd5, MAC 83e4d009
 //! ```
+//!
+//! The text under a block is what the block prints.
 //!
 //! A key has a type of its own, which is wiped when it is dropped: KNASenc
 //! does not compile where KNASint is expected. The crate stores no key and
@@ -143,9 +148,9 @@
 //!
 //! | Input | Type or check |
 //! |-------|---------------|
-//! | Key, RES\*, XRES\*, XRES | A type for each, such as [`nas_5gs::KAmf`], [`Ck`] or [`milenage::K`]: `new` takes the octets, `from_slice` a slice, `as_octets` gives them back. Wiped on drop, not `Copy`, and never printed: `{:?}` shows the name alone |
+//! | Key, RES, RES\*, XRES, XRES\* | A type for each, such as [`nas_5gs::KAmf`], [`Ck`] or [`milenage::K`]: `new` takes the octets, `from_slice` a slice, `as_octets` gives them back. Wiped on drop, not `Copy`, and never printed: `{:?}` shows the name alone |
 //! | RAND, AUTN | [`Rand`] and [`Autn`], built and viewed as a key is. They travel in clear: `{:?}` prints their octets, as it prints an identity whole |
-//! | SQN, AMF, MAC-A, MAC-S, RES, AUTS | The public values of [`milenage`], built, viewed and printed as RAND is. [`milenage::Sqn`] takes a number with `try_from`, which refuses one above 2^48 - 1 |
+//! | SQN, AMF, MAC-A, MAC-S, AUTS | The public values of [`milenage`], built, viewed and printed as RAND is. [`milenage::Sqn`] takes a number with `try_from`, which refuses one above 2^48 - 1 |
 //! | The MAC of an AUTN or an AUTS | `Err(MacFailure)` when it is not the one that K gives |
 //! | Algorithm | [`IntegrityAlgorithm`] and [`CipheringAlgorithm`], under both names (`NIA2` and `EIA2`). `try_from(u8)` refuses 4 and above |
 //! | NAS COUNT | [`NasCount`], 24 bits. `next` and `estimate` refuse to wrap around |

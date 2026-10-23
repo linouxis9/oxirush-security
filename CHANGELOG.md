@@ -382,8 +382,8 @@ cannot say is a `Result`. No public function panics on its arguments.
 
   | Item | What it is |
   |------|------------|
-  | `K`, `Op`, `Opc`, `Ak`, `AkStar`, `Xres` | Keys: wiped when they are dropped, compared in constant time, printed as their name alone |
-  | `Sqn`, `Amf`, `MacA`, `MacS`, `Res`, `Auts` | Values that travel in clear or in an AUTN, printed whole. `Sqn::try_from(u64)` refuses a number above 2^48 - 1 and `get()` gives it back; `Amf::separation_bit()` |
+  | `K`, `Op`, `Opc`, `Ak`, `AkStar`, `Xres`, `Res` | Keys: wiped when they are dropped, compared in constant time, printed as their name alone. RES is one as XRES is: whoever has it answers the challenge |
+  | `Sqn`, `Amf`, `MacA`, `MacS`, `Auts` | Values that travel in clear or in an AUTN, printed whole. `Sqn::try_from(u64)` refuses a number above 2^48 - 1 and `get()` gives it back; `Amf::separation_bit()` |
   | `Opc::from_op(&K, &Op)` | OPc = OP ⊕ E[OP]K |
   | `Milenage::new(&K, &Opc)`, `with_constants(&K, &Opc, Constants)` | A subscriber, with the constants c1 to c5 and r1 to r5 of TS 35.206 §4.1 or with those of its operator (§5.3), which `Constants::new` checks |
   | `f1`, `f1_star`, `f2`, `f3`, `f4`, `f5`, `f5_star`, `f2345` | The functions, each from one TEMP: MAC-A, MAC-S, RES, CK, IK, AK, AK\* |

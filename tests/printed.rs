@@ -96,7 +96,7 @@ fn rand_and_autn_are_printed_whole() {
 
 #[test]
 fn the_values_of_milenage_that_travel_are_printed_whole() {
-    use milenage::{Amf, Auts, MacA, MacS, Res, Sqn};
+    use milenage::{Amf, Auts, MacA, MacS, Sqn};
     let octets = [0x4a, 0x9f, 0xfa, 0xc3, 0x54, 0xdf, 0xaf, 0xb3];
     assert_eq!(
         format!("{:?}", Sqn::try_from(0xff9b_b4d0_b607).unwrap()),
@@ -111,7 +111,6 @@ fn the_values_of_milenage_that_travel_are_printed_whole() {
         format!("{:?}", MacS::new(&octets)),
         "MacS(4a9ffac354dfafb3)"
     );
-    assert_eq!(format!("{:?}", Res::new(&octets)), "Res(4a9ffac354dfafb3)");
     assert_eq!(
         format!("{:?}", Auts::new(&[0x01; 14])),
         "Auts(0101010101010101010101010101)"
@@ -126,6 +125,7 @@ fn a_key_is_not_printed() {
         format!("{:?}", Ik::new(&short)),
         format!("{:?}", KAmf::new(&long)),
         format!("{:?}", KNasInt::new(&short)),
+        format!("{:?}", milenage::Res::new(&[0x5a; 8])),
         format!("{:?}", ResStar::new(&short)),
         format!("{:?}", XresStar::new(&short)),
         format!("{:?}", milenage::K::new(&short)),
@@ -142,6 +142,7 @@ fn a_key_is_not_printed() {
             "Ik(..)",
             "KAmf(..)",
             "KNasInt(..)",
+            "Res(..)",
             "ResStar(..)",
             "XresStar(..)",
             "K(..)",

@@ -20,8 +20,9 @@
 //!
 //! K, OP and OPc, and what is derived from them that the network does not
 //! send, are keys: they are wiped when they are dropped and `{:?}` prints
-//! their name alone. SQN, AMF, MAC-A, MAC-S, RES and AUTS travel in clear
-//! or in an AUTN, and print whole.
+//! their name alone. So is RES, the answer to a challenge, which proves that
+//! the USIM has K. SQN, AMF, MAC-A, MAC-S and AUTS travel in clear or in an
+//! AUTN, and print whole.
 
 use crate::common::error::SecurityError;
 use crate::common::keys::{key, public_value};
@@ -29,6 +30,20 @@ use crate::common::keys::{key, public_value};
 key! {
     /// K, the key of a subscriber, which its USIM and its home network
     /// share (TS 35.206 §2.3). MILENAGE takes a K of 128 bits.
+    ///
+    /// ```
+    /// use oxirush_security::milenage::K;
+    ///
+    /// // The K of TS 35.208 test set 1, as a subscriber database keeps it
+    /// let octets = hex::decode("465b5ce8b199b49faa5f0a2ee238a6bc").unwrap();
+    /// let k = K::from_slice(&octets).unwrap();
+    /// assert_eq!(k.as_octets()[..2], [0x46, 0x5b]);
+    ///
+    /// // A key is never printed, and a K of another length is refused
+    /// assert_eq!(format!("{k:?}"), "K(..)");
+    /// let error = K::from_slice(&octets[..15]).unwrap_err();
+    /// assert_eq!(error.to_string(), "invalid length of `K`: expected 16 octets, got 15");
+    /// ```
     K, 16
 }
 key! {
@@ -63,6 +78,18 @@ public_value! {
     /// SQN, a sequence number of 48 bits (TS 33.102 §6.3.7): that of an
     /// AUTN, or SQNMS, the highest that a USIM has taken. `{:?}` prints its
     /// octets; [`Sqn::get`] gives it as a number.
+    ///
+    /// ```
+    /// use oxirush_security::milenage::Sqn;
+    ///
+    /// // The SQN of TS 35.208 test set 1, from its number
+    /// let sqn = Sqn::try_from(0xff9b_b4d0_b607).unwrap();
+    /// assert_eq!(format!("{sqn:?}"), "Sqn(ff9bb4d0b607)");
+    /// assert_eq!(sqn.get(), 0xff9b_b4d0_b607);
+    ///
+    /// // A number above 2^48 - 1 is no SQN
+    /// assert!(Sqn::try_from(Sqn::MAX + 1).is_err());
+    /// ```
     Sqn, 6
 }
 public_value! {
@@ -78,10 +105,11 @@ public_value! {
     /// MAC-S, the 64 bits of an AUTS that f1\* gives (TS 35.206 §2.4).
     MacS, 8
 }
-public_value! {
+key! {
     /// RES, the response of a USIM: the 64 bits that f2 gives
-    /// (TS 35.206 §2.4). A UE sends it, or RES\* which 5GS derives from it:
-    /// `{:?}` prints its octets.
+    /// (TS 35.206 §2.4). A UE sends it, or RES\* which 5GS derives from it.
+    /// It is a key, as XRES is: whoever has it answers the challenge, so it
+    /// is wiped when it is dropped and `{:?}` prints `Res(..)`.
     Res, 8
 }
 public_value! {
@@ -157,6 +185,7 @@ mod tests {
         assert_eq!(format!("{:?}", Ak::new(&[0x5a; 6])), "Ak(..)");
         assert_eq!(format!("{:?}", AkStar::new(&[0x5a; 6])), "AkStar(..)");
         assert_eq!(format!("{:?}", Xres::new(&[0x5a; 8])), "Xres(..)");
+        assert_eq!(format!("{:?}", Res::new(&[0x5a; 8])), "Res(..)");
 
         let sqn = Sqn::new(&[0xff, 0x9b, 0xb4, 0xd0, 0xb6, 0x07]);
         assert_eq!(format!("{sqn:?}"), "Sqn(ff9bb4d0b607)");
@@ -164,7 +193,6 @@ mod tests {
         let mac = [0x4a, 0x9f, 0xfa, 0xc3, 0x54, 0xdf, 0xaf, 0xb3];
         assert_eq!(format!("{:?}", MacA::new(&mac)), "MacA(4a9ffac354dfafb3)");
         assert_eq!(format!("{:?}", MacS::new(&mac)), "MacS(4a9ffac354dfafb3)");
-        assert_eq!(format!("{:?}", Res::new(&mac)), "Res(4a9ffac354dfafb3)");
         assert_eq!(
             format!("{:?}", Auts::new(&[0x11; 14])),
             "Auts(1111111111111111111111111111)"

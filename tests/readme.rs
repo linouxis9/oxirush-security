@@ -28,6 +28,9 @@
 //! of `src/lib.rs`. A block that is checked opens with ` ```rust `. The output
 //! of a block is the `json` and `text` blocks that follow it with nothing
 //! but blank lines between them. A block that shows no output prints none.
+//! A block that is a program is run as the documentation test runs it:
+//! its function calls `main`, and an error that `main` returns fails the
+//! test.
 //!
 //! After a change of the code of a Rust block of a page, write the file
 //! again and run the tests once more:
@@ -144,6 +147,12 @@ fn generated(examples: &[Example]) -> String {
                 false => writeln!(file, "    {code}").unwrap(),
             }
         }
+        // A block that is a program is run through its `main`.
+        if example.code.contains("fn main() -> ") {
+            writeln!(file, "\n    main().unwrap();").unwrap();
+        } else if example.code.contains("fn main()") {
+            writeln!(file, "\n    main();").unwrap();
+        }
         writeln!(file, "}}").unwrap();
     }
     file
@@ -162,14 +171,14 @@ macro_rules! println {
     () => {
         PRINTED.with(|printed| printed.borrow_mut().push('\n'))
     };
-    ($($argument:tt)*) => {
+    ($($argument:tt)*) => {{
+        let line = format!($($argument)*);
         PRINTED.with(|printed| {
-            let line = format!($($argument)*);
             let mut printed = printed.borrow_mut();
             printed.push_str(&line);
             printed.push('\n');
         })
-    };
+    }};
 }
 
 /// What `block` prints.

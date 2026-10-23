@@ -88,8 +88,7 @@ impl AuthenticationVector {
 /// AUTN, which the ME judges.
 ///
 /// It is wiped when it is dropped, but for the values that the network
-/// sent and RES. `{:?}` prints RAND, SQN, AMF and RES, and nothing of CK
-/// and IK.
+/// sent. `{:?}` prints RAND, SQN and AMF, and nothing of RES, CK and IK.
 #[derive(Clone, Debug)]
 pub struct UsimResponse {
     rand: Rand,

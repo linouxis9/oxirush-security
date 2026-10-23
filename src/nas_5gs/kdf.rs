@@ -240,6 +240,19 @@ pub fn compute_hres_star(rand: &Rand, res_star: &ResStar) -> HresStar {
 
 /// Compute HXRES*, in the AUSF, from XRES*: the 128 least significant bits
 /// of SHA-256(RAND || XRES*) (TS 33.501 Annex A.5).
+///
+/// ```
+/// use oxirush_security::Rand;
+/// use oxirush_security::nas_5gs::{XresStar, compute_hxres_star};
+///
+/// // The RAND of TS 35.208 test set 1, and the XRES* of the serving
+/// // network 5G:mnc093.mcc208.3gppnetwork.org
+/// let octets = |s: &str| hex::decode(s).unwrap();
+/// let rand = Rand::from_slice(&octets("23553cbe9637a89d218ae64dae47bf35")).unwrap();
+/// let xres_star = XresStar::from_slice(&octets("5cc9527f4d21c43bee83a15443acf1c4")).unwrap();
+/// let hxres_star = compute_hxres_star(&rand, &xres_star);
+/// assert_eq!(hex::encode(hxres_star.as_octets()), "6970075e3c8245fdc2073003cf166279");
+/// ```
 pub fn compute_hxres_star(rand: &Rand, xres_star: &XresStar) -> HxresStar {
     wipe::derivation(|| {
         let parts: [&[u8]; 2] = [rand.as_octets(), xres_star.as_octets()];

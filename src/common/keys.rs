@@ -203,6 +203,19 @@ pub(crate) use public_value;
 public_value! {
     /// RAND, the challenge of an authentication. A network sends it in
     /// clear: `{:?}` prints its octets, and it is not wiped.
+    ///
+    /// ```
+    /// use oxirush_security::Rand;
+    ///
+    /// // The RAND of an AUTHENTICATION REQUEST, as its IE has it
+    /// let octets = hex::decode("23553cbe9637a89d218ae64dae47bf35").unwrap();
+    /// let rand = Rand::from_slice(&octets).unwrap();
+    /// assert_eq!(format!("{rand:?}"), "Rand(23553cbe9637a89d218ae64dae47bf35)");
+    ///
+    /// // Of sixteen octets that a program draws, by reference
+    /// let drawn = [0x11; 16];
+    /// assert_eq!(Rand::new(&drawn).as_octets(), &drawn);
+    /// ```
     Rand, 16
 }
 public_value! {
