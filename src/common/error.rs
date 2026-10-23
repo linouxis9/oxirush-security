@@ -155,7 +155,7 @@ mod tests {
             ),
             (
                 SecurityError::from(crate::Plmn::new("208", "9").unwrap_err()),
-                "invalid identity: `mnc` has 1 digit, and has 2 or 3",
+                "invalid identity: `mnc` has 1 digit, and must have 2 or 3",
             ),
             (
                 SecurityError::InputTooLong {

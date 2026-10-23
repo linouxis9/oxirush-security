@@ -2,7 +2,7 @@
 name = "oxirush-security"
 version = "0.3.0"
 edition = "2024"
-description = "The security functions of 5GS and EPS, per 3GPP TS 35.206, TS 33.102, TS 33.501 and TS 33.401: MILENAGE, key derivation, NAS integrity and ciphering, and SUCI concealment"
+description = "5GS and EPS security in Rust: MILENAGE and 5G AKA, key derivation, NIA/NEA and EIA/EEA (SNOW 3G, AES, ZUC) and SUCI concealment, per 3GPP TS 33.501, TS 33.401 and TS 35.206. Keys wiped, no_std."
 license = "Apache-2.0"
 repository = "https://github.com/linouxis9/oxirush-security"
 authors = ["Valentin D'Emmanuele"]

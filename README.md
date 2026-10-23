@@ -88,7 +88,7 @@ repository, and oxirush-utils at the revision that it is tested with:
 oxirush-security = { git = "https://github.com/linouxis9/oxirush-security" }
 
 [patch.crates-io]
-oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "2f99edcc40baa5cf7397f94ecfc131dc1143bac5" }
+oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "1fb4d2720fa0b1c036e54d3e9907b278adac0f80" }
 ```
 
 In a clone, cargo takes oxirush-utils from `.cargo/config.toml`, as CI does:
