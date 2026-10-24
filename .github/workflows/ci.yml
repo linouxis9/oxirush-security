@@ -388,7 +388,7 @@ jobs:
       - run: cargo clippy --manifest-path benches/Cargo.toml --all-targets -- -D warnings
 
   # The block of the README that uses oxirush-nas: `family/` is a package of its own,
-  # which takes oxirush-nas at the revision of its manifest, so that the crate depends on
+  # which takes oxirush-nas at the version of its manifest, so that the crate depends on
   # none of the other crates. It compares what the block prints with the README.
   family:
     name: The README block with oxirush-nas
