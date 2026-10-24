@@ -55,7 +55,7 @@
 //! ciphered b57dd5, MAC 83e4d009
 //! ```
 //!
-//! The text under a block is what the block prints.
+//! Each example is followed by its output.
 //!
 //! A key has a type of its own, which is wiped when it is dropped: KNASenc
 //! does not compile where KNASint is expected. The crate stores no key and

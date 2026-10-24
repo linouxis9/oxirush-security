@@ -69,9 +69,9 @@ hex = "0.4" # for the examples of this page
 | `nai` | The SUCI in NAI form, and the SUCI of a SUPI that is a NAI (RFC 7542) | `suci` |
 | `idna` | The realm and the username of a NAI are checked as internationalized names too | `nai`, and the Unicode tables of `idna` and `unicode-normalization` |
 
-The identities (`Plmn`, `Guti`, `Supi`, …) are oxirush-utils' types,
-re-exported in `oxirush_security::identity`; `tbcd` encodes the digits of an
-IMSI.
+The identities are oxirush-utils' types: `oxirush_security::identity` is its
+module (`Plmn`, `Supi`, `Guti5g`, …), and `nas_5gs` names those of 5GS `Supi`,
+`Guti` and `STmsi`. `tbcd` encodes the digits of an IMSI.
 
 `std`, `suci` and `nai` are on by default. Without `std` the crate is
 `no_std`, and it still runs the vector and AES instructions where the
