@@ -1,8 +1,7 @@
 # The blocks of the README that use other crates of the family: oxirush-security with them,
 # at the revisions that this manifest names. A package of its own, so that the crate
 # depends on none of them: nothing here is published. `cargo test` here runs the
-# blocks and compares what they print with the README. oxirush-utils comes from the
-# revision of `.cargo/config.toml` of the repository, as for the crate.
+# blocks and compares what they print with the README.
 [package]
 name = "oxirush-security-family"
 version = "0.0.0"
@@ -18,6 +17,6 @@ hex = "0.4"
 # Not a member of a workspace that the crate may be in.
 [workspace]
 
-# oxirush-nas takes this oxirush-security, which is not on crates.io yet.
+# oxirush-nas takes this oxirush-security.
 [patch.crates-io]
 oxirush-security = { path = ".." }

@@ -27,8 +27,7 @@ target=${CARGO_TARGET_DIR:-$here/target}
 out=$target/compare
 mkdir -p "$out"
 
-# The programs. Cargo reads the configuration of the repository, which
-# takes oxirush-utils at its revision, from the directory it runs in.
+# The programs.
 cd "$here"
 cargo build --quiet --release --manifest-path "$here/Cargo.toml"
 rust=$target/release/oxirush-security-compare

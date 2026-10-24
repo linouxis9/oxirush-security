@@ -46,8 +46,6 @@ ciphered b57dd5, MAC 83e4d009
 
 Each example is followed by its output.
 
-This page describes oxirush-security 0.3.0, which is not on crates.io yet.
-
 The keys that the examples print are values of 3GPP test sets, or derived
 from them, to compare with the specifications. `{:?}` of a key prints only
 its name, as `KAmf(..)`.
@@ -83,23 +81,6 @@ each algorithm: log it when the program starts.
 ```toml
 # no_std, without an allocator
 oxirush-security = { version = "0.3", default-features = false }
-```
-
-Until 0.3.0 is on crates.io, a program takes the crate from its
-repository, and oxirush-utils at the revision that it is tested with:
-
-```toml
-[dependencies]
-oxirush-security = { git = "https://github.com/linouxis9/oxirush-security" }
-
-[patch.crates-io]
-oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "1fb4d2720fa0b1c036e54d3e9907b278adac0f80" }
-```
-
-In a clone, cargo takes oxirush-utils from `.cargo/config.toml`, as CI does:
-
-```sh
-cargo test
 ```
 
 The minimum supported Rust version is 1.88. Cargo's resolver 3, the

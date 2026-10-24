@@ -1,7 +1,0 @@
-# oxirush-utils 0.1.0 is not on crates.io yet. Every build in this repository, of the
-# crate and of the packages beside it, takes it from its repository at this revision,
-# the name of a commit and no branch, so that a change there changes nothing here
-# until the revision is changed here. The published crate has no such file: once
-# oxirush-utils 0.1.0 is published, this file goes.
-[patch.crates-io]
-oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "1fb4d2720fa0b1c036e54d3e9907b278adac0f80" }
