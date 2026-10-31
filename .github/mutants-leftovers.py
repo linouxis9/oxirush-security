@@ -4,7 +4,9 @@ and the tree is put back. A mutant is caught when the program fails, unviable wh
 does not build, and missed when it passes. The missed ones are written to
 `leftovers-missed.txt`, and the program exits with 1 when there is one.
 
-    python3 .github/mutants-leftovers.py mutants.json
+    python3 .github/mutants-leftovers.py mutants.json [SHARD SHARDS]
+
+The shard SHARD of SHARDS takes every SHARDS-th mutant from the SHARD-th.
 """
 
 import json
@@ -13,7 +15,8 @@ import sys
 
 counts = {"caught": 0, "missed": 0, "unviable": 0}
 missed = []
-for mutant in json.load(open(sys.argv[1])):
+shard, shards = (int(sys.argv[2]), int(sys.argv[3])) if len(sys.argv) > 3 else (0, 1)
+for mutant in json.load(open(sys.argv[1]))[shard::shards]:
     diff = mutant["diff"].encode()
     file = mutant["file"]
     subprocess.run(["patch", "--quiet", file], input=diff, check=True)

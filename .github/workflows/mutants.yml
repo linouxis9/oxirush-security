@@ -7,7 +7,9 @@ name: Mutants
 # day with a commit, and when it is started by hand without `full`, the mutants of the
 # code that the commits of the last day changed. Each job keeps its mutants.out, and a
 # missed mutant fails it. The crates of the family start at times of their own, the
-# longest first, and few jobs of each run at once, to leave runners to the other CI.
+# longest first, and few jobs of each run at once, to leave runners to the other CI;
+# started by hand, `parallel` says how many. A shard takes every n-th mutant, so that
+# the shards of a job last alike, and they are as many as keep each to 2 hours or less.
 on:
   schedule:
     - cron: "43 21 * * 6"
@@ -18,6 +20,10 @@ on:
         description: Every mutant, rather than those of the last day's changes
         type: boolean
         default: false
+      parallel:
+        description: The shards of each job that run at once, rather than the weekly number
+        type: string
+        default: ""
 
 # A run is never cancelled by another: a newer one waits until it ends.
 concurrency:
@@ -105,7 +111,7 @@ jobs:
     timeout-minutes: 300
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: ${{ fromJSON(inputs.parallel || '2') }}
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
@@ -118,7 +124,7 @@ jobs:
       # before it says whether a mutant was missed: a mutant that makes a test loop
       # forever is one that the tests see, and missed.txt has those that they do not.
       - run: |
-          cargo mutants --shard ${{ matrix.shard }}/8 -j 2 || [ $? -eq 3 ]
+          cargo mutants --shard ${{ matrix.shard }}/8 --sharding round-robin -j 2 || [ $? -eq 3 ]
           test ! -s mutants.out/missed.txt
       - uses: actions/upload-artifact@v4
         if: always()
@@ -184,10 +190,16 @@ jobs:
   # leftovers/ alone sees them. Each mutant is made in the tree, the program is built
   # and run with it, and the tree is put back.
   leftovers:
-    name: Mutants of the clearing, with leftovers/
+    name: Mutants of the clearing, with leftovers/ (shard ${{ matrix.shard }} of 2)
     needs: [plan, mutants]
     if: always() && needs.plan.outputs.mode == 'full'
     runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.parallel || '2') }}
+      matrix:
+        shard: [0, 1]
     env:
       RUSTFLAGS: --cfg oxirush_security_hooks
     steps:
@@ -202,11 +214,11 @@ jobs:
           -F 'Clear<DEPTH>|in after$|hooks::|allowed::'
           -E 'replace Clear<DEPTH>::now with|wipe\.rs:242:16:'
           > leftovers-mutants.json
-      - run: python3 .github/mutants-leftovers.py leftovers-mutants.json
+      - run: python3 .github/mutants-leftovers.py leftovers-mutants.json ${{ matrix.shard }} 2
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mutants-leftovers
+          name: mutants-leftovers-${{ matrix.shard }}
           path: |
             leftovers-mutants.json
             leftovers-missed.txt
