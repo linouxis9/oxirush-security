@@ -49,6 +49,7 @@ compile_error!("the scan reads the registers of x86-64");
 mod cases;
 mod values;
 
+use oxirush_security::Implementation;
 use oxirush_security::hooks::{cleared, narrow, scalar, unwiped};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -472,6 +473,20 @@ fn main() -> ExitCode {
     println!("{}", processor());
     let implementation = oxirush_security::implementation();
     println!("oxirush-security runs: {implementation:?} ({implementation})");
+    // Each form runs the code that it names: the 128-bit vectors alone, and the
+    // scalar code, on a processor that has the vector code, also once a form inside
+    // it has ended
+    if implementation != Implementation::Scalar {
+        let narrowed = in_form(1, oxirush_security::implementation);
+        let scalar = in_form(2, || {
+            in_form(1, || ());
+            oxirush_security::implementation()
+        });
+        if narrowed == Implementation::Vector256 || scalar != Implementation::Scalar {
+            println!("FAILED: the forms run {narrowed:?} and {scalar:?}, not the code they name");
+            return ExitCode::FAILURE;
+        }
+    }
     println!(
         "{:<58} {:>22} {:>6} {:>8} {:>6}",
         "operation", "form", "depth", "cleared", "areas"
