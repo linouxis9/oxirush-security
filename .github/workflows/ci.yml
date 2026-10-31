@@ -4,8 +4,7 @@ on:
   push:
     branches: [master]
   pull_request:
-  # Each Monday: an advisory may be new although nothing has changed here,
-  # and the fuzz targets then run for half an hour each
+  # Each Monday: an advisory may be new although nothing has changed here
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
@@ -348,7 +347,8 @@ jobs:
       - run: cargo fmt --check --manifest-path leftovers/Cargo.toml
       - run: cargo fmt --check --manifest-path family/Cargo.toml
 
-  # A minute for each target at a push, half an hour each Monday
+  # A minute for each target; .github/workflows/fuzz.yml runs them longer each night
+  # after a day with a commit, and each Sunday
   fuzz:
     name: Fuzz ${{ matrix.target }}
     runs-on: ubuntu-latest
@@ -373,7 +373,7 @@ jobs:
           cargo fuzz run ${{ matrix.target }}
           fuzz/corpus/${{ matrix.target }} fuzz/seeds/${{ matrix.target }}
           --
-          -max_total_time=${{ github.event_name == 'schedule' && 1800 || 60 }}
+          -max_total_time=60
           -max_len=512
 
   bench:
