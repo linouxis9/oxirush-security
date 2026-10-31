@@ -1,0 +1,127 @@
+name: Mutants
+
+# cargo-mutants changes the code of the crate at one place at a time, a mutant, and
+# runs the tests on each: a mutant that every test passes is code that no test
+# checks. .cargo/mutants.toml says what it leaves alone, and why. The mutants are
+# split in shards that run beside each other, each of which keeps its mutants.out;
+# a missed mutant fails its shard.
+on:
+  schedule:
+    - cron: "53 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Without debug information each mutant builds and links faster.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  # The runners have AVX2: tests/implementation.rs fails when another code runs.
+  OXIRUSH_SECURITY_EXPECT: Vector256
+
+jobs:
+  # A night after a day without a commit has no new code to mutate: the scheduled
+  # run stops here. A run started by hand always runs.
+  changed:
+    name: A commit of the last day
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          age=$(( $(date +%s) - $(git log -1 --format=%ct) ))
+          if [ "$GITHUB_EVENT_NAME" != schedule ] || [ "$age" -lt 86400 ]; then
+            echo run=true >> "$GITHUB_OUTPUT"
+          fi
+
+  mutants:
+    name: Mutants (shard ${{ matrix.shard }} of 8)
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    env:
+      # A test of a mutant that allocates without end fails once it has 4 GiB of
+      # address space, instead of taking the memory of the runner, which then dies.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: prlimit --as=4294967296
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@27.1.0
+      # cargo-mutants exits with 3 when a mutant made a test run until its timeout,
+      # before it says whether a mutant was missed: a mutant that makes a test loop
+      # forever is one that the tests see, and missed.txt has those that they do not.
+      - run: |
+          cargo mutants --shard ${{ matrix.shard }}/8 -j 2 || [ $? -eq 3 ]
+          test ! -s mutants.out/missed.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants.out-${{ matrix.shard }}
+          path: mutants.out
+
+  # The vector code of AArch64, which .cargo/mutants.toml leaves out on x86-64: its
+  # detection answering false runs the scalar code, which tests/implementation.rs
+  # refuses on a processor that has the instructions.
+  aarch64:
+    name: Mutants of the AArch64 code
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    runs-on: ubuntu-24.04-arm
+    env:
+      OXIRUSH_SECURITY_EXPECT: Vector128
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@27.1.0
+      - run: >-
+          cargo mutants --no-config --all-features -j 2 -f src/common/simd/mod.rs
+          -F 'mod\.rs:172:5: replace detected -> bool with false$'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants.out-aarch64
+          path: mutants.out
+
+  # What is cleared after a piece of work, and the hooks that only leftovers/ and the
+  # fuzz targets build, which .cargo/mutants.toml leaves out: leftovers/ alone sees
+  # them. Each mutant is made in the tree, the program is built and run with it, and
+  # the tree is put back.
+  leftovers:
+    name: Mutants of the clearing, with leftovers/
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: --cfg oxirush_security_hooks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@27.1.0
+      - run: >-
+          cargo mutants --no-config --all-features --list --json --diff
+          -f src/common/wipe.rs -f src/lib.rs -f src/common/simd/mod.rs
+          -F 'Clear<DEPTH>|in after$|hooks::|allowed::'
+          -E 'replace Clear<DEPTH>::now with|wipe\.rs:242:16:'
+          > leftovers-mutants.json
+      - run: python3 .github/mutants-leftovers.py leftovers-mutants.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-leftovers
+          path: |
+            leftovers-mutants.json
+            leftovers-missed.txt

@@ -1,0 +1,47 @@
+# What cargo-mutants 27.1.0 (https://mutants.rs) changes in the crate, and what it
+# leaves alone. .github/workflows/mutants.yml runs every mutant in shards; here, a
+# file or a function at a time:
+#
+#     OXIRUSH_SECURITY_EXPECT=Vector256 cargo mutants -f src/nas_5gs/kdf.rs
+#
+# The tests run the vector code on a processor that has its instructions, and
+# tests/implementation.rs fails when the code that runs is not the one that
+# OXIRUSH_SECURITY_EXPECT names: the workflow sets it, so that a mutant that turns
+# the vector code off is seen.
+
+# Every feature, so that the code of `suci`, `nai` and `idna` is in the build that
+# the tests run on: without its feature, a mutant of that code would build without
+# it and pass.
+all_features = true
+
+# Mutants that `cargo test` on x86-64 cannot see, each with why, and which job of
+# the workflow runs them where they are seen.
+exclude_re = [
+    # What is set to zero after a piece of work, on the stack and in the registers:
+    # leftovers/ alone sees it, a program of its own that reads its stack. The job
+    # `leftovers` of .github/workflows/mutants.yml runs these mutants with it.
+    'src/common/wipe\.rs:.*: replace (Clear<DEPTH>::clear|<impl Drop for Clear<DEPTH>>::drop) with \(\)$',
+    'src/common/wipe\.rs:.* in (Clear<DEPTH>::clear|after)$',
+    # `Clear::now` without its body drops the value it takes, whose `Drop` clears: the
+    # mutant clears at the same place.
+    'src/common/wipe\.rs:.*: replace Clear<DEPTH>::now with \(\)$',
+    # The clearing of the stack of the targets other than x86-64 and AArch64, which a
+    # build for them alone has: leftovers/ reads the stack of x86-64 Linux. Its hook is
+    # named by its line, for that of x86-64 has a mutant of the same name.
+    'src/common/wipe\.rs:.*: replace stack with \(\)$',
+    'src/common/wipe\.rs:242:16: delete ! in Clear<DEPTH>::clear$',
+    # The hooks of `--cfg oxirush_security_hooks`, which only the fuzz targets, the
+    # emulated AArch64 program and leftovers/ build: `cargo test` has its own ones.
+    # The job `leftovers` runs these mutants too.
+    'src/(lib|common/wipe)\.rs:.* hooks::',
+    'src/common/simd/mod\.rs:.*: replace .* in allowed::(get|replace)$',
+    'src/common/simd/mod\.rs:.*: replace allowed::(get|replace) ',
+    # The detection of AArch64, which x86-64 does not build: the job `aarch64` runs its
+    # mutant `false` on an AArch64 runner. There the instructions are found before the
+    # standard library is asked (line 181), and `true` is what it answers.
+    'src/common/simd/mod\.rs:(172|181):',
+    # The detection of the instructions answers true on a runner that has them,
+    # which every runner of the workflow has: `true` is what it gives there. On a
+    # processor without them the vector code would fault, which none can show.
+    'src/common/simd/mod\.rs:.*: replace detected -> bool with true$',
+]
