@@ -238,6 +238,38 @@ mod tests {
             Implementation::Vector256.ciphering(CipheringAlgorithm::NEA3),
             Code::Vector
         );
+        // Scalar code runs SNOW 3G and ZUC, and the `aes` crate AES, for
+        // ciphering and integrity
+        for (ciphering, integrity, code) in [
+            (
+                CipheringAlgorithm::NEA1,
+                IntegrityAlgorithm::NIA1,
+                Code::Scalar,
+            ),
+            (
+                CipheringAlgorithm::NEA2,
+                IntegrityAlgorithm::NIA2,
+                Code::AesCrate,
+            ),
+            (
+                CipheringAlgorithm::NEA3,
+                IntegrityAlgorithm::NIA3,
+                Code::Scalar,
+            ),
+        ] {
+            assert_eq!(Implementation::Scalar.ciphering(ciphering), code);
+            assert_eq!(Implementation::Scalar.integrity(integrity), code);
+        }
+        for implementation in [Implementation::Scalar, Implementation::Vector256] {
+            assert_eq!(
+                implementation.integrity(IntegrityAlgorithm::NIA0),
+                Code::Null
+            );
+        }
+        assert_eq!(
+            Implementation::Vector256.ciphering(CipheringAlgorithm::NEA2),
+            Code::AesInstructions
+        );
         assert_eq!(Implementation::Scalar.milenage(), Code::AesCrate);
         assert_eq!(Implementation::Vector128.milenage(), Code::AesInstructions);
         assert_eq!(Implementation::Scalar.milenage_side_by_side(), 1);

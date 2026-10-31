@@ -611,6 +611,17 @@ fn a_batch_gives_each_job_what_one_call_gives_it() {
                     (response, alone) => panic!("{response:?} and {alone:?}, {form}"),
                 }
             }
+            // Taken out of its job, a response is the one that the job gives
+            for (job, ((subscriber, rand, ..), autn)) in
+                checks.into_iter().zip(drawn.iter().zip(&autns))
+            {
+                let alone = subscriber.check_autn(rand, autn);
+                match (job.into_response().expect("a response"), alone) {
+                    (Ok(response), Ok(alone)) => assert_eq!(response.res(), alone.res()),
+                    (Err(error), Err(alone)) => assert_eq!(error, alone),
+                    (response, alone) => panic!("{response:?} and {alone:?}, {form}"),
+                }
+            }
         }
     });
 }

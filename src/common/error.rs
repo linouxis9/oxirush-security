@@ -137,6 +137,17 @@ impl From<oxirush_utils::identity::Error> for SecurityError {
 mod tests {
     use super::*;
 
+    /// An error of an identity has it as its source, and no other has one.
+    #[test]
+    fn an_error_of_an_identity_has_it_as_its_source() {
+        use core::error::Error;
+        let identity = crate::Plmn::new("208", "9").unwrap_err();
+        let error = SecurityError::from(identity);
+        let source = error.source().map(ToString::to_string);
+        assert_eq!(source, Some(identity.to_string()));
+        assert!(SecurityError::MacFailure.source().is_none());
+    }
+
     /// The text of each variant.
     #[test]
     fn each_error_says_what_was_refused() {
