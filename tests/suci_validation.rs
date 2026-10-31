@@ -311,3 +311,108 @@ fn ecies_profiles_refuse_an_empty_identity_and_its_output() {
         assert_eq!(Suci::from_nas_octets(&nas), Err(SuciError::Truncated));
     }
 }
+
+/// A SUCI in the NAI format of each SUPI type (TS 23.003 §28.7.3): the SUPI of the
+/// null scheme, and the mobile identity, which an IMSI has not from its realm.
+#[cfg(feature = "nai")]
+#[test]
+fn a_suci_in_the_nai_format_gives_its_supi_and_its_mobile_identity() {
+    use oxirush_security::nas_5gs::Supi;
+    let imsi = "type0.rid678.schid0.userid0123456789@5gc.mnc093.mcc208.3gppnetwork.org";
+    let imsi = Suci::from_nai(imsi).unwrap();
+    assert_eq!(imsi.to_nas_octets(), Err(SuciError::MncLengthUnknown));
+    assert_eq!(imsi.deconceal(None), Err(SuciError::MncLengthUnknown));
+    for (nai, supi) in [
+        (
+            "type1.rid678.schid0.useriduser17@example.com",
+            "nai-user17@example.com",
+        ),
+        (
+            "type2.rid0.schid0.useridQUJDRA==@operator.com",
+            "gli-QUJDRA==@operator.com",
+        ),
+        (
+            "type3.rid0.schid0.useriduser17@operator.com",
+            "gci-user17@operator.com",
+        ),
+    ] {
+        let suci = Suci::from_nai(nai).unwrap();
+        assert_eq!(
+            suci.deconceal(None),
+            Ok(Supi::parse(supi).unwrap()),
+            "{nai}"
+        );
+        // The mobile identity carries the NAI after the octet of its SUPI format
+        let octets = suci.to_nas_octets().unwrap();
+        assert_eq!(&octets[1..], nai.as_bytes(), "{nai}");
+        assert_eq!(
+            Suci::from_nas_octets(&octets).unwrap().to_nai(),
+            Ok(nai.to_string())
+        );
+    }
+}
+
+/// What is wrong in a SUCI that oxirush-utils refuses is said as a `SuciError`.
+#[cfg(feature = "nai")]
+#[test]
+fn a_suci_that_is_not_one_says_what_is_wrong() {
+    // Another mobile identity: a 5G-GUTI
+    assert_eq!(
+        Suci::from_nas_octets(&[0x02, 0xf8, 0x39]).map(|_| ()),
+        Err(SuciError::NotASuci)
+    );
+    // What oxirush-utils refuses of a SUCI, which is no SUCI: a text that is not
+    // its form, and a NAI of a SUPI format that a NAI has not
+    use oxirush_utils::identity::{ImsiSuci, NaiSuci};
+    let text = "suci".parse::<ImsiSuci>().unwrap_err();
+    assert_eq!(SuciError::from(text), SuciError::NotASuci);
+    let mut octets = vec![0x41];
+    octets.extend_from_slice(b"type1.rid678.schid0.useriduser17@example.com");
+    let format = NaiSuci::from_nas_octets(&octets).unwrap_err();
+    assert_eq!(SuciError::from(format), SuciError::NotASuci);
+    // A SUPI type of the NAI format that is not defined
+    let undefined = "type5.rid0.schid0.useriduser@operator.com";
+    assert_eq!(
+        Suci::from_nai(undefined).map(|_| ()),
+        Err(SuciError::SupiType(5))
+    );
+    // A GLI under the scheme of profile A, or of the operator: a GLI and a GCI have
+    // the null scheme alone
+    let key = "a".repeat(64);
+    for concealed in [
+        format!("type2.rid0.schid1.hnkey1.ecckey{key}.cip00.mac0011223344556677@operator.com"),
+        "type2.rid0.schid12.hnkey1.out0011@operator.com".to_string(),
+    ] {
+        let refused = Suci::from_nai(&concealed).map(|_| ());
+        assert_eq!(refused, Err(SuciError::NullSchemeRequired), "{concealed}");
+    }
+    // A GLI whose SUPI format says GCI (011 is a GLI, 010 a GCI)
+    let mut octets = vec![0x21];
+    octets.extend_from_slice(b"type2.rid0.schid0.useridQUJDRA==@operator.com");
+    assert_eq!(
+        Suci::from_nas_octets(&octets).map(|_| ()),
+        Err(SuciError::SupiTypeMismatch)
+    );
+}
+
+/// The SUCI of a GLI or a GCI has the routing indicator 0 alone.
+#[cfg(feature = "nai")]
+#[test]
+fn a_gli_or_a_gci_is_concealed_with_the_routing_indicator_0() {
+    use oxirush_security::nas_5gs::Supi;
+    for supi in ["gli-QUJDRA==@operator.com", "gci-user17@operator.com"] {
+        let supi = Supi::parse(supi).unwrap();
+        let routing = RoutingIndicator::new("12").unwrap();
+        let refused = Suci::conceal_nai(&supi, routing, Protection::Null);
+        assert_eq!(
+            refused.map(|_| ()),
+            Err(SuciError::RoutingIndicator),
+            "{supi}"
+        );
+        let zero = RoutingIndicator::new("0").unwrap();
+        assert!(
+            Suci::conceal_nai(&supi, zero, Protection::Null).is_ok(),
+            "{supi}"
+        );
+    }
+}
