@@ -362,6 +362,22 @@ impl Scalar {
 mod tests {
     use super::*;
 
+    /// The scalar generator is wiped whole: its stages, where they start, R1 and R2,
+    /// whether it started, and the state of the S-boxes.
+    #[test]
+    fn the_scalar_generator_is_zero_once_wiped() {
+        let mut scalar = Scalar::new(load(&[1; 16], &[2; 16]));
+        let mut words = [0; 4];
+        scalar.fill(&mut words);
+        zeroize::Zeroize::zeroize(&mut scalar);
+        assert_eq!(
+            (scalar.s, scalar.head, scalar.r1, scalar.r2),
+            ([0; 16], 0, 0, 0)
+        );
+        assert!(!scalar.started);
+        assert_eq!(scalar.block, [0; 16]);
+    }
+
     // ── S-boxes ────────────────────────────────────────────────────────────────────
 
     const S0: [u8; 256] = [

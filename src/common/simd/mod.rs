@@ -769,6 +769,19 @@ mod tests {
     use crate::common::snow3g::Snow3G;
     use crate::common::zuc::Zuc;
 
+    /// The vector generator of ZUC is wiped whole: its stages, where they start, and
+    /// R1 and R2.
+    #[test]
+    fn the_vector_generator_of_zuc_is_zero_once_wiped() {
+        let Some(mut zuc) = super::Zuc::new([0x1234_5678; 16]) else {
+            return;
+        };
+        let mut words = [0; 4];
+        zuc.fill(&mut words);
+        zeroize::Zeroize::zeroize(&mut zuc);
+        assert_eq!((zuc.lfsr, zuc.at, zuc.r), ([0; 32], 0, [0; 2]));
+    }
+
     /// Numbers that look random, the same at every run.
     fn random(seed: u64) -> impl FnMut() -> u64 {
         let mut state = seed;

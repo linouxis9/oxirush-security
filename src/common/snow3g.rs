@@ -425,6 +425,19 @@ impl Scalar {
 mod tests {
     use super::*;
 
+    /// The scalar generator is wiped whole: its stages, where they start, its three
+    /// registers, whether it started, and the state of S1.
+    #[test]
+    fn the_scalar_generator_is_zero_once_wiped() {
+        let mut scalar = Scalar::new(load(&[1, 2, 3, 4], &[5, 6, 7, 8]));
+        scalar.next_word();
+        zeroize::Zeroize::zeroize(&mut scalar);
+        assert_eq!(scalar.lfsr, [0; 16]);
+        assert_eq!((scalar.head, scalar.r1, scalar.r2, scalar.r3), (0, 0, 0, 0));
+        assert!(!scalar.started);
+        assert_eq!(scalar.block, [0; 16]);
+    }
+
     // ── AES S-box (SR) used by S1 ──────────────────────────────────────────────────
 
     const SR: [u8; 256] = [

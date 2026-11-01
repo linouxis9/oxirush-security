@@ -637,3 +637,71 @@ fn eia2_all_byte_aligned_sets_via_nia_mac() {
         0xb93787e6
     );
 }
+
+/// 128-EIA1 as UIA2 (UEA2&UIA2 Document 1 §4.4, TS 33.401 Annex B.2.2) writes it, on the
+/// keystream of SNOW 3G: K3 to K0 the integrity key from its first word, IV3 = COUNT,
+/// IV2 = FRESH = BEARER << 27, IV1 = COUNT ⊕ DIRECTION << 31, IV0 = FRESH ⊕
+/// DIRECTION << 15; then the message as a polynomial at P = z1 || z2, the length,
+/// times Q = z3 || z4, and z5.
+fn uia2(key: &[u8], count: u32, bearer: u8, dir: u8, message: &[u8], length: u64) -> u32 {
+    let word = |at: usize| u32::from_be_bytes(key[at..at + 4].try_into().unwrap());
+    let k = [word(12), word(8), word(4), word(0)];
+    let (fresh, dir) = (u32::from(bearer) << 27, u32::from(dir));
+    let iv = [fresh ^ (dir << 15), count ^ (dir << 31), fresh, count];
+    let mut z = [0u32; 5];
+    Snow3G::new(&k, &iv).fill(&mut z);
+    let (p, q) = (
+        u64::from(z[0]) << 32 | u64::from(z[1]),
+        u64::from(z[2]) << 32 | u64::from(z[3]),
+    );
+    // MUL64 of the specification, with c = 0x1b
+    let mul = |mut v: u64, p: u64| {
+        let mut product = 0;
+        for bit in 0..64 {
+            if p >> bit & 1 == 1 {
+                product ^= v;
+            }
+            v = v << 1 ^ if v >> 63 == 1 { 0x1b } else { 0 };
+        }
+        product
+    };
+    let mut eval = 0;
+    for block in 0..length.div_ceil(64) as usize {
+        let mut octets = [0u8; 8];
+        for (at, octet) in octets.iter_mut().enumerate() {
+            let bits = (length - 64 * block as u64).min(64);
+            let kept = bits.saturating_sub(8 * at as u64).min(8) as u32;
+            let mask = if kept == 0 { 0 } else { 0xffu8 << (8 - kept) };
+            *octet = message.get(8 * block + at).copied().unwrap_or(0) & mask;
+        }
+        eval = mul(eval ^ u64::from_be_bytes(octets), p);
+    }
+    ((mul(eval ^ length, q) >> 32) as u32) ^ z[4]
+}
+
+/// The reference above gives each 128-EIA1 set its MAC, and 128-EIA1 gives what the
+/// reference gives for a downlink COUNT whose most significant bit is set, which no set
+/// has: DIRECTION is added to COUNT and to FRESH, not joined to them.
+#[test]
+fn eia1_is_uia2_for_a_downlink_count_of_the_high_bit() {
+    let sets = MAC.iter().chain(MAC_SETS_1_TO_5);
+    for v in sets.filter(|v| v.name.starts_with("eia1")) {
+        let (key, msg) = (h(v.key), h(v.msg));
+        let mac = uia2(&key, v.count, v.bearer, v.dir, &msg, v.len as u64);
+        assert_eq!(mac, v.mac, "{}", v.name);
+    }
+    let v = MAC_SETS_1_TO_5.iter().find(|v| v.name == "eia1_3").unwrap();
+    assert!(v.count >> 31 == 1);
+    let (key, msg) = (integrity_key(v), h(v.msg));
+    let (bits, algorithm) = (v.len as u64, IntegrityAlgorithm::EIA1);
+    let mac = nia_mac_bits(
+        &key,
+        v.count,
+        bearer(v.bearer),
+        direction(1),
+        &msg,
+        bits,
+        algorithm,
+    );
+    assert_eq!(mac, Ok(uia2(&h(v.key), v.count, v.bearer, 1, &msg, bits)));
+}

@@ -416,3 +416,23 @@ fn a_gli_or_a_gci_is_concealed_with_the_routing_indicator_0() {
         );
     }
 }
+
+/// The anonymous identifier of a NAI has no username, and so no SUCI that conceals
+/// it: the identity is refused, before a key is drawn, and the null scheme writes it.
+#[cfg(feature = "nai")]
+#[test]
+fn an_anonymous_nai_is_concealed_with_the_null_scheme_alone() {
+    use oxirush_security::nas_5gs::Supi;
+    let anonymous = Supi::parse("nai-@example.com").unwrap();
+    let public = HomeNetworkPublicKey::profile_a(&octets(PROFILE_A_PUBLIC));
+    let protection = Protection::Ecies {
+        key_id: 1,
+        key: &public,
+    };
+    let routing = RoutingIndicator::default();
+    assert_eq!(
+        Suci::conceal_nai(&anonymous, routing, protection).map(|_| ()),
+        Err(SuciError::Identity)
+    );
+    assert!(Suci::conceal_nai(&anonymous, routing, Protection::Null).is_ok());
+}
