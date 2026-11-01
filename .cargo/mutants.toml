@@ -25,6 +25,10 @@ exclude_re = [
     # And the clearing of the vector registers and the stack after a piece of work on
     # x86-64, which leftovers/ finds left as they were.
     'src/common/simd/mod\.rs:221:5: replace clear with \(\)$',
+    # The same clearing on AArch64, which x86-64 does not build: the job
+    # `emulated-aarch64` runs its mutant with emulated-aarch64/, which finds the
+    # areas that the crate cleared, and the vector registers, not zero.
+    'src/common/simd/mod\.rs:340:5: replace clear with \(\)$',
     # `Clear::now` without its body drops the value it takes, whose `Drop` clears: the
     # mutant clears at the same place.
     'src/common/wipe\.rs:.*: replace Clear<DEPTH>::now with \(\)$',
@@ -37,6 +41,7 @@ exclude_re = [
     # emulated AArch64 program and leftovers/ build: `cargo test` has its own ones.
     # The job `leftovers` runs these mutants too.
     'src/(lib|common/wipe)\.rs:.* hooks::',
+    'src/common/simd/mod\.rs:.*: replace stack_pointer -> usize with ',
     'src/common/simd/mod\.rs:.*: replace .* in allowed::(get|replace)$',
     'src/common/simd/mod\.rs:.*: replace allowed::(get|replace) ',
     # The detection of AArch64, which x86-64 does not build: the job `aarch64` runs its

@@ -189,8 +189,8 @@ jobs:
           path: mutants.out
 
   # After the shards, what is cleared after a piece of work, and the hooks that only
-  # leftovers/ and the fuzz targets build, which .cargo/mutants.toml leaves out:
-  # leftovers/ alone sees them. Each mutant is made in the tree, the program is built
+  # leftovers/ and the fuzz targets build (the stack pointer that leftovers/ reads
+  # among them), which .cargo/mutants.toml leaves out: leftovers/ alone sees them. Each mutant is made in the tree, the program is built
   # and run with it, and the tree is put back.
   leftovers:
     name: Mutants of the clearing, with leftovers/ (shard ${{ matrix.shard }} of 2)
@@ -214,7 +214,7 @@ jobs:
       - run: >-
           cargo mutants --no-config --all-features --list --json --diff
           -f src/common/wipe.rs -f src/lib.rs -f src/common/simd/mod.rs
-          -F 'Clear<DEPTH>|in after$|hooks::|allowed::|mod\.rs:221:5: replace clear with \(\)$'
+          -F 'Clear<DEPTH>|in after$|hooks::|allowed::|stack_pointer|mod\.rs:221:5: replace clear with \(\)$'
           -E 'replace Clear<DEPTH>::now with|wipe\.rs:242:16:'
           > leftovers-mutants.json
       - run: python3 .github/mutants-leftovers.py leftovers-mutants.json ${{ matrix.shard }} 2
@@ -224,4 +224,34 @@ jobs:
           name: mutants-leftovers-${{ matrix.shard }}
           path: |
             leftovers-mutants.json
+            leftovers-missed.txt
+
+  # After the shards, the clearing of AArch64, which .cargo/mutants.toml leaves out:
+  # x86-64 does not build it. emulated-aarch64/ runs the crate on an emulated AArch64
+  # processor, and fails when an area that the crate cleared, or a vector register,
+  # is not zero. The mutant is made in the tree as in the job `leftovers`.
+  emulated-aarch64:
+    name: Mutants of the AArch64 clearing, on an emulated processor
+    needs: [plan, mutants]
+    if: always() && needs.plan.outputs.mode == 'full'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-none
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@27.1.0
+      - run: >-
+          cargo mutants --no-config --all-features --list --json --diff
+          -f src/common/simd/mod.rs -F 'mod\.rs:340:5: replace clear with \(\)$'
+          > emulated-mutants.json
+      - run: python3 .github/mutants-leftovers.py emulated-mutants.json 0 1 emulated-aarch64
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-emulated-aarch64
+          path: |
+            emulated-mutants.json
             leftovers-missed.txt
