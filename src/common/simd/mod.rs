@@ -28,7 +28,7 @@
 //! instructions that set to zero registers and the stack below the stack
 //! pointer, where what has returned was. The rest is inside
 //! `cpufeatures::new!`, which asks the processor or the system what it
-//! has.
+//! has. The tests drop values in place, to read what their drop leaves.
 //!
 //! The scalar generators of `snow3g` and `zuc` are used where the
 //! instructions are missing, and the tests compare the two.
@@ -760,6 +760,22 @@ pub(crate) fn carry_less_product(x: u64, y: u64) -> Option<(u64, u64)> {
 }
 
 #[cfg(test)]
+impl Snow3g {
+    /// Whether every field is zero, as wiping leaves them.
+    pub(crate) fn is_wiped(&self) -> bool {
+        (self.lfsr, self.at, self.r, self.ready, self.pending) == ([0; 32], 0, [0; 3], [0; 3], 0)
+    }
+}
+
+#[cfg(test)]
+impl Zuc {
+    /// Whether every field is zero, as wiping leaves them.
+    pub(crate) fn is_wiped(&self) -> bool {
+        (self.lfsr, self.at, self.r) == ([0; 32], 0, [0; 2])
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::{available, scalar};
     use crate::common::ct::{clmul64, clmul128};
@@ -780,6 +796,73 @@ mod tests {
         zuc.fill(&mut words);
         zeroize::Zeroize::zeroize(&mut zuc);
         assert_eq!((zuc.lfsr, zuc.at, zuc.r), ([0; 32], 0, [0; 2]));
+    }
+
+    /// The vector generator of SNOW 3G is wiped whole: its stages, where they
+    /// start, R1 to R3, and the words that no call has taken yet.
+    #[test]
+    fn the_vector_generator_of_snow_3g_is_zero_once_wiped() {
+        let Some(mut snow3g) = super::Snow3g::new([0x1234_5678; 16]) else {
+            return;
+        };
+        let mut words = [0; 4];
+        snow3g.fill(&mut words);
+        assert_ne!(snow3g.pending, 0);
+        zeroize::Zeroize::zeroize(&mut snow3g);
+        assert_eq!((snow3g.lfsr, snow3g.at, snow3g.r), ([0; 32], 0, [0; 3]));
+        assert_eq!((snow3g.ready, snow3g.pending), ([0; 3], 0));
+    }
+
+    /// What wipes itself when it is dropped is zero after its drop: the
+    /// generators of SNOW 3G and ZUC, and the tag and the window of
+    /// 128-EIA3.
+    #[test]
+    fn what_wipes_itself_is_zero_once_dropped() {
+        use crate::common::nia::{BitString, Eia3};
+        use core::mem::ManuallyDrop;
+        let mut words = [0; 4];
+        let mut snow3g = ManuallyDrop::new(Snow3G::new(&[1, 2, 3, 4], &[5, 6, 7, 8]));
+        snow3g.fill(&mut words);
+        let mut zuc = ManuallyDrop::new(Zuc::new(&[1; 16], &[2; 16]));
+        zuc.fill(&mut words);
+        let message = [0x5a; 9];
+        let mut eia3 = ManuallyDrop::new(Eia3::new(BitString::whole(&message)));
+        let keystream: Vec<u32> = (1..=eia3.words() as u32)
+            .map(|i| 0x9e37_79b9u32.wrapping_mul(i))
+            .collect();
+        eia3.take(&keystream);
+        assert!(!snow3g.is_wiped() && !zuc.is_wiped() && !eia3.is_wiped());
+        // SAFETY: each value is dropped once and only read after: its fields
+        // are integers, which its drop sets to zero and leaves in place.
+        unsafe {
+            ManuallyDrop::drop(&mut snow3g);
+            ManuallyDrop::drop(&mut zuc);
+            ManuallyDrop::drop(&mut eia3);
+        }
+        assert!(snow3g.is_wiped());
+        assert!(zuc.is_wiped());
+        assert!(eia3.is_wiped());
+    }
+
+    /// The instructions are found where the vector paths are, and not where
+    /// `scalar` turns those off.
+    #[test]
+    fn the_instructions_are_found_where_the_vector_paths_are() {
+        assert_eq!(super::Instructions::detect().is_some(), available());
+        assert!(scalar(|| super::Instructions::detect().is_none()));
+    }
+
+    /// The instruction gives the carry-less product where the vector paths
+    /// are, and nothing where they are not.
+    #[test]
+    fn the_instruction_gives_the_carry_less_product_where_the_vector_paths_are() {
+        let (x, y) = (0x8000_0000_0000_0001, u64::MAX);
+        let product = scalar(|| clmul128(x, y));
+        assert_eq!(
+            super::carry_less_product(x, y),
+            available().then_some(product)
+        );
+        assert_eq!(scalar(|| super::carry_less_product(x, y)), None);
     }
 
     /// Numbers that look random, the same at every run.

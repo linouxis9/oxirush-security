@@ -594,6 +594,12 @@ fn snow3g_set4_z2500() {
     assert_eq!(z[2499], 0x9c0db3aa);
 }
 #[test]
+fn zuc_set1_word_by_word() {
+    // The first test set of the ZUC specification: a key and an IV of zeros
+    let mut zuc = Zuc::new(&[0; 16], &[0; 16]);
+    assert_eq!([zuc.next_word(), zuc.next_word()], [0x27bede74, 0x018082da]);
+}
+#[test]
 fn zuc_set4_z2000() {
     let key = h("4d320bfad4c285bfd6b8bd00f39d8b41");
     let iv = h("52959daba0bf176ece2dc315049eb574");

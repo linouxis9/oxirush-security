@@ -417,6 +417,30 @@ fn a_gli_or_a_gci_is_concealed_with_the_routing_indicator_0() {
     }
 }
 
+/// A GLI or a GCI under a scheme that conceals is refused for its scheme, before
+/// its key identifier is looked at.
+#[cfg(feature = "nai")]
+#[test]
+fn a_gli_or_a_gci_is_concealed_with_the_null_scheme_alone() {
+    use oxirush_security::nas_5gs::Supi;
+    let public = HomeNetworkPublicKey::profile_a(&octets(PROFILE_A_PUBLIC));
+    let zero = RoutingIndicator::new("0").unwrap();
+    for supi in ["gli-QUJDRA==@operator.com", "gci-user17@operator.com"] {
+        let supi = Supi::parse(supi).unwrap();
+        for key_id in [0, 1] {
+            let protection = Protection::Ecies {
+                key_id,
+                key: &public,
+            };
+            assert_eq!(
+                Suci::conceal_nai(&supi, zero, protection).map(|_| ()),
+                Err(SuciError::NullSchemeRequired),
+                "{supi}, key identifier {key_id}"
+            );
+        }
+    }
+}
+
 /// The anonymous identifier of a NAI has no username, and so no SUCI that conceals
 /// it: the identity is refused, before a key is drawn, and the null scheme writes it.
 #[cfg(feature = "nai")]

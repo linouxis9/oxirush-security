@@ -783,6 +783,16 @@ fn eia3_groups(mut tag: u32, mut window: u64, groups: &[[u8; 4]], words: &[u32])
 }
 
 #[cfg(test)]
+impl Eia3<'_> {
+    /// Whether the tag and the window are zero: for the tests of `simd`,
+    /// which drop the state in place.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(crate) fn is_wiped(&self) -> bool {
+        (self.tag, self.window) == (0, 0)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

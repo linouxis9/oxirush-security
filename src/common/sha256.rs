@@ -147,9 +147,15 @@ mod tests {
     }
 
     /// A key of exactly one block is used as it is, and one octet more is
-    /// hashed first (RFC 2104 §2).
+    /// hashed first (RFC 2104 §2). The key of one block is that of the HMAC
+    /// example of NIST for "keylen=blocklen", the octets 0 to 63.
     #[test]
     fn hmac_sha256_hashes_only_a_key_longer_than_a_block() {
+        let key: [u8; 64] = core::array::from_fn(|i| i as u8);
+        assert_eq!(
+            hex::encode(hmac_sha256(&key, b"Sample message for keylen=blocklen")),
+            "8bb9a1db9806f20df7f77b82138c7914d174d59e13dc4d0169c9057b133e1d62"
+        );
         let block = [0x5a; 64];
         let longer = [0x5a; 65];
         let hashed = sha256(&[&longer]);

@@ -401,6 +401,19 @@ pub(super) mod tests {
         assert_eq!(keystream[16..], block(second)[..]);
     }
 
+    /// An ephemeral public key and a MAC tag with no octet of ciphertext
+    /// between them are too short, under either profile.
+    #[test]
+    fn a_scheme_output_without_ciphertext_is_truncated() {
+        let a = HomeNetworkPrivateKey::profile_a(&[0x42; 32]);
+        let b = HomeNetworkPrivateKey::profile_b(&[0x42; 32]).unwrap();
+        for (key, public_key_len) in [(a, PROFILE_A_PUBLIC_KEY_LEN), (b, PROFILE_B_PUBLIC_KEY_LEN)]
+        {
+            let output = vec![0x5a; public_key_len + MAC_LEN];
+            assert_eq!(deconceal(&key, &output).err(), Some(SuciError::Truncated));
+        }
+    }
+
     #[test]
     fn a_private_key_shows_its_profile_alone() {
         let a = HomeNetworkPrivateKey::profile_a(&[0x42; 32]);

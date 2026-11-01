@@ -837,6 +837,8 @@ mod tests {
     fn bearer_is_five_bits() {
         assert_eq!(Bearer::new(31), Ok(Bearer::MAX));
         assert_eq!(Bearer::try_from(0), Ok(Bearer::ZERO));
+        assert_eq!(Bearer::try_from(5).map(Bearer::get), Ok(5));
+        assert!(Bearer::try_from(32).is_err());
         assert_eq!(u8::from(Bearer::MAX), 31);
         assert_eq!(
             Bearer::new(32),

@@ -1339,6 +1339,15 @@ mod tests {
         }
         assert!(ProtectionScheme::new(15).is_ok());
         assert!(ProtectionScheme::new(16).is_err());
+        // The null scheme where one that conceals was to be is a scheme of no
+        // use there, and not one of the schemes that only the null one replaces
+        let plmn = Plmn::new("208", "93").unwrap();
+        let null = ProtectionScheme::NULL;
+        let error = ImsiSuci::concealed(plmn, RoutingIndicator::default(), null, 1, vec![1]);
+        assert_eq!(
+            SuciError::from(error.unwrap_err()),
+            SuciError::UnknownScheme(0)
+        );
     }
 
     /// One data set of TS 33.501 Annex C.4 step by step on the UE side:

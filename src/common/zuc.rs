@@ -359,6 +359,22 @@ impl Scalar {
 }
 
 #[cfg(test)]
+impl Zuc {
+    /// Whether every field of the generator, scalar or vector, is zero.
+    pub(crate) fn is_wiped(&self) -> bool {
+        match &self.0 {
+            Generator::Scalar(scalar) => {
+                let registers = (scalar.head, scalar.r1, scalar.r2);
+                (scalar.s, registers, scalar.started, scalar.block)
+                    == ([0; 16], (0, 0, 0), false, [0; 16])
+            }
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            Generator::Vector(vector) => vector.is_wiped(),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -376,6 +392,18 @@ mod tests {
         );
         assert!(!scalar.started);
         assert_eq!(scalar.block, [0; 16]);
+    }
+
+    /// The generator, on the code that runs, is zero once wiped. Its drop
+    /// wipes it too: the tests of `simd` see that.
+    #[test]
+    fn the_generator_is_zero_once_wiped() {
+        let mut words = [0; 4];
+        let mut zuc = Zuc::new(&[1; 16], &[2; 16]);
+        zuc.fill(&mut words);
+        assert!(!zuc.is_wiped());
+        zeroize::Zeroize::zeroize(&mut zuc);
+        assert!(zuc.is_wiped());
     }
 
     // ── S-boxes ────────────────────────────────────────────────────────────────────
