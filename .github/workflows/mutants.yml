@@ -162,7 +162,9 @@ jobs:
 
   # After the shards, the vector code of AArch64, which .cargo/mutants.toml leaves out
   # on x86-64: its detection answering false runs the scalar code, which
-  # tests/implementation.rs refuses on a processor that has the instructions.
+  # tests/implementation.rs refuses on a processor that has the instructions; and the
+  # shuffle of ShiftRows of indices above 15, which TBL reads as zeros where PSHUFB of
+  # x86-64 reads their four low bits.
   aarch64:
     name: Mutants of the AArch64 code
     needs: [plan, mutants]
@@ -178,7 +180,8 @@ jobs:
           tool: cargo-mutants@27.1.0
       - run: >-
           cargo mutants --no-config --all-features -j 2 -f src/common/simd/mod.rs
-          -F 'mod\.rs:172:5: replace detected -> bool with false$'
+          -f src/common/simd/tables.rs
+          -F 'mod\.rs:172:5: replace detected -> bool with false$|tables\.rs:88:60: replace % with \+$'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -211,7 +214,7 @@ jobs:
       - run: >-
           cargo mutants --no-config --all-features --list --json --diff
           -f src/common/wipe.rs -f src/lib.rs -f src/common/simd/mod.rs
-          -F 'Clear<DEPTH>|in after$|hooks::|allowed::'
+          -F 'Clear<DEPTH>|in after$|hooks::|allowed::|mod\.rs:221:5: replace clear with \(\)$'
           -E 'replace Clear<DEPTH>::now with|wipe\.rs:242:16:'
           > leftovers-mutants.json
       - run: python3 .github/mutants-leftovers.py leftovers-mutants.json ${{ matrix.shard }} 2
