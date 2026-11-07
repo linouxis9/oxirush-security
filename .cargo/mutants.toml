@@ -9,7 +9,7 @@
 # OXIRUSH_SECURITY_EXPECT names: the workflow sets it, so that a mutant that turns
 # the vector code off is seen.
 
-# Every feature, so that the code of `suci`, `nai` and `idna` is in the build that
+# Every feature, so that the code of `suci` and `idna` is in the build that
 # the tests run on: without its feature, a mutant of that code would build without
 # it and pass.
 all_features = true

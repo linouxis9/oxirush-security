@@ -4,6 +4,9 @@ All notable changes to `oxirush-security` are recorded here.
 
 ## Unreleased
 
+- The default features are `std` alone: a program that conceals or reads a
+  SUCI asks for `suci`. The feature `nai` is part of `suci`, which has the NAI
+  format and the SUPIs that are a NAI.
 - The keys of a change between 5GS and EPS are tested against another
   implementation: `tests/interworking_keys.py` derives KASME' and KAMF' of
   idle mobility and of a handover (TS 33.501 Annex A.14 and A.15), KeNB at

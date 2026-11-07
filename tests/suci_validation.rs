@@ -314,7 +314,6 @@ fn ecies_profiles_refuse_an_empty_identity_and_its_output() {
 
 /// A SUCI in the NAI format of each SUPI type (TS 23.003 §28.7.3): the SUPI of the
 /// null scheme, and the mobile identity, which an IMSI has not from its realm.
-#[cfg(feature = "nai")]
 #[test]
 fn a_suci_in_the_nai_format_gives_its_supi_and_its_mobile_identity() {
     use oxirush_security::nas_5gs::Supi;
@@ -353,7 +352,6 @@ fn a_suci_in_the_nai_format_gives_its_supi_and_its_mobile_identity() {
 }
 
 /// What is wrong in a SUCI that oxirush-utils refuses is said as a `SuciError`.
-#[cfg(feature = "nai")]
 #[test]
 fn a_suci_that_is_not_one_says_what_is_wrong() {
     // Another mobile identity: a 5G-GUTI
@@ -396,7 +394,6 @@ fn a_suci_that_is_not_one_says_what_is_wrong() {
 }
 
 /// The SUCI of a GLI or a GCI has the routing indicator 0 alone.
-#[cfg(feature = "nai")]
 #[test]
 fn a_gli_or_a_gci_is_concealed_with_the_routing_indicator_0() {
     use oxirush_security::nas_5gs::Supi;
@@ -419,7 +416,6 @@ fn a_gli_or_a_gci_is_concealed_with_the_routing_indicator_0() {
 
 /// A GLI or a GCI under a scheme that conceals is refused for its scheme, before
 /// its key identifier is looked at.
-#[cfg(feature = "nai")]
 #[test]
 fn a_gli_or_a_gci_is_concealed_with_the_null_scheme_alone() {
     use oxirush_security::nas_5gs::Supi;
@@ -443,7 +439,6 @@ fn a_gli_or_a_gci_is_concealed_with_the_null_scheme_alone() {
 
 /// The anonymous identifier of a NAI has no username, and so no SUCI that conceals
 /// it: the identity is refused, before a key is drawn, and the null scheme writes it.
-#[cfg(feature = "nai")]
 #[test]
 fn an_anonymous_nai_is_concealed_with_the_null_scheme_alone() {
     use oxirush_security::nas_5gs::Supi;

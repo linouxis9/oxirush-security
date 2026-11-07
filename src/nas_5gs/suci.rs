@@ -35,8 +35,8 @@
 //!   [`HomeNetworkPrivateKey`] that they name, and has the [`Supi`] from
 //!   [`Suci::deconceal`], or a [`SuciError`] that says which step failed.
 //!
-//! This module is the `suci` feature. The NAI format, and with it the
-//! SUPIs that are not an IMSI, are the `nai` feature beside it.
+//! This module is the `suci` feature, with the NAI format, and with it the
+//! SUPIs that are not an IMSI.
 
 mod ecies;
 
@@ -45,12 +45,10 @@ pub use oxirush_utils::identity::{ProtectionScheme, RoutingIndicator};
 
 use crate::common::wipe;
 use crate::nas_5gs::{MobileIdentityType, Supi, SupiType};
-#[cfg(feature = "nai")]
 use alloc::string::{String, ToString};
 use alloc::{format, vec::Vec};
 use core::fmt;
 use ecies::{MAC_LEN, PROFILE_A_PUBLIC_KEY_LEN, PROFILE_B_PUBLIC_KEY_LEN};
-#[cfg(feature = "nai")]
 use oxirush_utils::identity::NaiSuci;
 use oxirush_utils::identity::{self, Fault, ImsiSuci, Plmn, tbcd};
 
@@ -158,8 +156,6 @@ pub enum SuciError {
     /// A SUCI in the NAI format, or the NAI of a SUPI, that is not one:
     /// the field at fault, and why (TS 23.003 §28.7.3, RFC 7542 §2.2).
     Nai(identity::Error),
-    /// A SUCI in the NAI format, in a build without the `nai` feature.
-    NaiNotSupported,
     /// An IMSI of a SUCI that came in the NAI format: its realm writes the
     /// MNC with three digits, of which an MNC of two has one in front, so
     /// the IMSI is not known from it. Its home network, which knows its
@@ -227,9 +223,6 @@ impl fmt::Display for SuciError {
                 f.write_str("a GCI or a GLI has the null scheme and no other")
             }
             Self::Nai(error) => write!(f, "the NAI is not one: {error}"),
-            Self::NaiNotSupported => {
-                f.write_str("a SUCI in the NAI format needs the `nai` feature")
-            }
             Self::MncLengthUnknown => {
                 f.write_str("the realm of an IMSI does not say how many digits its MNC has")
             }
@@ -317,7 +310,6 @@ enum Form {
     /// In the form of a mobile identity, whose SUPI is an IMSI.
     Imsi(ImsiSuci),
     /// In the NAI format.
-    #[cfg(feature = "nai")]
     Nai(NaiSuci),
 }
 
@@ -385,8 +377,7 @@ impl Suci {
     /// The spare bits are ignored, and a SUPI format of 4 to 7 is read as
     /// an IMSI, as that clause has a receiver do: the tolerant readers of
     /// oxirush-utils read them. A SUCI in the NAI format is read as
-    /// `Suci::from_nai` reads it, with the `nai` feature, and is
-    /// [`SuciError::NaiNotSupported`] without it.
+    /// [`Suci::from_nai`] reads it.
     pub fn from_nas_octets(identity: &[u8]) -> Result<Self, SuciError> {
         let Some(&first) = identity.first() else {
             return Err(SuciError::Truncated);
@@ -395,12 +386,9 @@ impl Suci {
             return Err(SuciError::NotASuci);
         }
         if matches!((first >> 4) & 0x07, 1..=3) {
-            #[cfg(feature = "nai")]
             return Ok(Self(Form::Nai(
                 NaiSuci::from_nas_octets_tolerant(identity)?.0,
             )));
-            #[cfg(not(feature = "nai"))]
-            return Err(SuciError::NaiNotSupported);
         }
         Self::of_imsi(ImsiSuci::from_nas_octets_tolerant(identity)?.0)
     }
@@ -413,11 +401,9 @@ impl Suci {
     pub fn to_nas_octets(&self) -> Result<Vec<u8>, SuciError> {
         match &self.0 {
             Form::Imsi(suci) => Ok(suci.to_nas_octets()),
-            #[cfg(feature = "nai")]
             Form::Nai(suci) if suci.supi_type() == SupiType::Imsi => {
                 Err(SuciError::MncLengthUnknown)
             }
-            #[cfg(feature = "nai")]
             Form::Nai(suci) => Ok(suci.to_nas_octets()?),
         }
     }
@@ -428,8 +414,6 @@ impl Suci {
     ///
     /// A text longer than a SUCI can be is refused before anything else
     /// of it is looked at, and so is a realm of more than 253 octets.
-    #[cfg(feature = "nai")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "nai")))]
     pub fn from_nai(nai: &str) -> Result<Self, SuciError> {
         Ok(Self(Form::Nai(NaiSuci::parse(nai)?)))
     }
@@ -441,8 +425,6 @@ impl Suci {
     /// The SUCI of an IMSI under a scheme of the operator whose output is
     /// longer than a NAI can hold, 3253 octets, is
     /// [`SuciError::SchemeOutput`].
-    #[cfg(feature = "nai")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "nai")))]
     pub fn to_nai(&self) -> Result<String, SuciError> {
         match &self.0 {
             Form::Nai(suci) => Ok(suci.to_string()),
@@ -504,8 +486,6 @@ impl Suci {
     /// [`SuciError::Identity`]: [`conceal_imsi`](Self::conceal_imsi) takes
     /// it with its PLMN, and so is the anonymous identifier, which has no
     /// username, under a scheme that conceals.
-    #[cfg(feature = "nai")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "nai")))]
     pub fn conceal_nai(
         supi: &Supi<'_>,
         routing_indicator: RoutingIndicator,
@@ -561,7 +541,6 @@ impl Suci {
     pub fn supi_type(&self) -> SupiType {
         match &self.0 {
             Form::Imsi(_) => SupiType::Imsi,
-            #[cfg(feature = "nai")]
             Form::Nai(suci) => suci.supi_type(),
         }
     }
@@ -570,7 +549,6 @@ impl Suci {
     pub fn home_network(&self) -> HomeNetwork<'_> {
         match &self.0 {
             Form::Imsi(suci) => HomeNetwork::Plmn(suci.plmn()),
-            #[cfg(feature = "nai")]
             Form::Nai(suci) => HomeNetwork::Realm(suci.realm()),
         }
     }
@@ -580,7 +558,6 @@ impl Suci {
     pub fn routing_indicator(&self) -> RoutingIndicator {
         match &self.0 {
             Form::Imsi(suci) => suci.routing_indicator(),
-            #[cfg(feature = "nai")]
             Form::Nai(suci) => suci.routing_indicator(),
         }
     }
@@ -589,7 +566,6 @@ impl Suci {
     pub fn protection_scheme(&self) -> ProtectionScheme {
         match &self.0 {
             Form::Imsi(suci) => suci.protection_scheme(),
-            #[cfg(feature = "nai")]
             Form::Nai(suci) => suci.protection_scheme(),
         }
     }
@@ -600,7 +576,6 @@ impl Suci {
     pub fn home_network_public_key_id(&self) -> u8 {
         match &self.0 {
             Form::Imsi(suci) => suci.home_network_public_key_identifier(),
-            #[cfg(feature = "nai")]
             Form::Nai(suci) => suci.home_network_public_key_identifier(),
         }
     }
@@ -613,7 +588,6 @@ impl Suci {
                 (Some(msin), _) => SchemeOutput::Clear(msin),
                 (None, output) => concealed(scheme, output.unwrap_or_default()),
             },
-            #[cfg(feature = "nai")]
             Form::Nai(suci) => match (suci.clear(), suci.concealed_output()) {
                 (Some(clear), _) => SchemeOutput::Clear(clear),
                 (None, output) => concealed(scheme, output.unwrap_or_default()),
@@ -633,7 +607,6 @@ impl Suci {
                 let imsi = format!("{}{msin}", suci.plmn().digits());
                 Some(Supi::imsi(&imsi).ok()?.into_owned())
             }
-            #[cfg(feature = "nai")]
             Form::Nai(suci) => {
                 let username = core::str::from_utf8(plaintext).ok()?;
                 let (kind, routing, realm) =
@@ -669,7 +642,6 @@ impl Suci {
         wipe::suci(|| {
             let scheme = self.protection_scheme();
             match (&self.0, self.scheme_output()) {
-                #[cfg(feature = "nai")]
                 (Form::Nai(suci), _) if suci.supi_type() == SupiType::Imsi => {
                     Err(SuciError::MncLengthUnknown)
                 }
@@ -677,7 +649,6 @@ impl Suci {
                     let imsi = format!("{}{msin}", suci.plmn().digits());
                     Ok(Supi::imsi(&imsi)?.into_owned())
                 }
-                #[cfg(feature = "nai")]
                 (Form::Nai(suci), SchemeOutput::Clear(clear)) => {
                     let nai = format!("{clear}@{}", suci.realm());
                     supi_of_nai(suci.supi_type(), &nai)
@@ -694,7 +665,6 @@ impl Suci {
                     }
                     let output = match &self.0 {
                         Form::Imsi(suci) => suci.concealed_output(),
-                        #[cfg(feature = "nai")]
                         Form::Nai(suci) => suci.concealed_output(),
                     };
                     let plaintext = ecies::deconceal(key, output.unwrap_or_default())?;
@@ -707,7 +677,6 @@ impl Suci {
 }
 
 /// The SUPI of a type that is a NAI.
-#[cfg(feature = "nai")]
 fn supi_of_nai(kind: SupiType, nai: &str) -> Option<Supi<'_>> {
     match kind {
         SupiType::NetworkSpecific => Supi::network_specific(nai).ok(),
@@ -732,7 +701,6 @@ impl fmt::Display for Suci {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
             Form::Imsi(suci) => write!(f, "{suci}"),
-            #[cfg(feature = "nai")]
             Form::Nai(suci) => {
                 let (kind, realm) = (suci.supi_type().type_number(), suci.realm());
                 let (routing, scheme) = (suci.routing_indicator(), suci.protection_scheme());
@@ -1282,18 +1250,6 @@ mod tests {
         );
     }
 
-    /// A SUCI in the NAI format needs the `nai` feature.
-    #[cfg(not(feature = "nai"))]
-    #[test]
-    fn a_nai_suci_is_not_read_without_the_nai_feature() {
-        let mut suci = vec![0x11];
-        suci.extend_from_slice(b"type1.rid0.schid0.useriduser17@example.com");
-        assert_eq!(
-            Suci::from_nas_octets(&suci),
-            Err(SuciError::NaiNotSupported)
-        );
-    }
-
     #[test]
     fn each_error_says_what_failed() {
         for (error, text) in [
@@ -1319,7 +1275,6 @@ mod tests {
             assert_eq!(error.to_string(), text);
         }
         // A field of the NAI format, with what oxirush-utils says of it
-        #[cfg(feature = "nai")]
         assert_eq!(
             SuciError::from(NaiSuci::parse("type1.rid0.schid1.hnkey1.ecckey00@a.b").unwrap_err())
                 .to_string(),

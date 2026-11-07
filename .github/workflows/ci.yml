@@ -33,8 +33,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --test implementation -- --nocapture
-      - run: cargo test
-      - run: cargo test --release
+      - run: cargo test --features suci
+      - run: cargo test --release --features suci
       # Each set of features. The processor is asked without `std` too
       - run: cargo test --no-default-features
       - run: cargo test --no-default-features --features alloc
@@ -51,7 +51,7 @@ jobs:
       - name: Test without the clearing
         env:
           RUSTFLAGS: --cfg oxirush_security_unwiped
-        run: cargo test
+        run: cargo test --features suci
 
   # The code on the vector and AES instructions of AArch64, which the tests
   # compare with the scalar one: with the processor asked, with and without
@@ -66,8 +66,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --test implementation -- --nocapture
-      - run: cargo test
-      - run: cargo test --release
+      - run: cargo test --features suci
+      - run: cargo test --release --features suci
       - run: cargo test --no-default-features
       - name: Test with the instructions enabled by the build
         env:
@@ -230,7 +230,6 @@ jobs:
       - run: cargo build --target ${{ matrix.target }} --no-default-features
       - run: cargo build --target ${{ matrix.target }} --no-default-features --features alloc
       - run: cargo build --target ${{ matrix.target }} --no-default-features --features suci
-      - run: cargo build --target ${{ matrix.target }} --no-default-features --features nai
       - run: cargo build --target ${{ matrix.target }} --no-default-features --features idna
 
   # A target that has the scalar code alone, and 32-bit lengths
@@ -247,7 +246,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y gcc-multilib
       - run: cargo test --target i686-unknown-linux-gnu --test implementation -- --nocapture
-      - run: cargo test --target i686-unknown-linux-gnu
+      - run: cargo test --target i686-unknown-linux-gnu --features suci
 
   msrv:
     name: MSRV (1.88)
@@ -258,8 +257,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test
-      - run: cargo test --release
+      - run: cargo test --features suci
+      - run: cargo test --release --features suci
       - run: cargo test --no-default-features
 
   # The lowest version of each dependency that Cargo.toml allows: each set
@@ -273,7 +272,7 @@ jobs:
         with:
           targets: thumbv7em-none-eabihf
       - run: cargo update -Z direct-minimal-versions
-      - run: cargo test
+      - run: cargo test --features suci
       - run: cargo test --no-default-features
       - run: cargo test --no-default-features --features alloc
       - run: cargo test --no-default-features --features std
@@ -285,7 +284,6 @@ jobs:
           cargo build --target thumbv7em-none-eabihf --no-default-features
           cargo build --target thumbv7em-none-eabihf --no-default-features --features alloc
           cargo build --target thumbv7em-none-eabihf --no-default-features --features suci
-          cargo build --target thumbv7em-none-eabihf --no-default-features --features nai
           cargo build --target thumbv7em-none-eabihf --no-default-features --features idna
 
   clippy:
@@ -297,13 +295,13 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --features suci -- -D warnings
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
       - run: cargo clippy --all-targets --no-default-features --features suci -- -D warnings
       - name: Clippy without the clearing
         env:
           RUSTFLAGS: --cfg oxirush_security_unwiped
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --features suci -- -D warnings
       # The fuzz targets, with the hooks of the crate that they use
       - name: Clippy of the fuzz targets
         env:
@@ -326,7 +324,7 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: |
-          for features in "" alloc std suci nai idna; do
+          for features in "" alloc std suci idna; do
             echo "::group::--no-default-features --features \"$features\""
             cargo doc --no-deps --no-default-features --features "$features"
             echo "::endgroup::"

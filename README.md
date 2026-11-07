@@ -54,7 +54,7 @@ its name, as `KAmf(..)`.
 
 ```toml
 [dependencies]
-oxirush-security = "0.3"
+oxirush-security = { version = "0.3", features = ["suci"] }
 hex = "0.4" # for the examples of this page
 ```
 
@@ -63,15 +63,14 @@ hex = "0.4" # for the examples of this page
 | none | The algorithms, their contexts and batches, MILENAGE, the key derivations, NAS integrity and ciphering, the choice of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone, no allocator |
 | `alloc` | What returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | An allocator |
 | `std` | On AArch64 outside Linux, Android and Apple systems, the choice of the vector code at run time | The standard library |
-| `suci` | The SUCI of an IMSI: the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, and a source of random numbers that `getrandom` has for the target |
-| `nai` | The SUCI in NAI form, and the SUCI of a SUPI that is a NAI (RFC 7542) | `suci` |
-| `idna` | The realm and the username of a NAI are checked as internationalized names too | `nai`, and the Unicode tables of `idna` and `unicode-normalization` |
+| `suci` | The SUCI of an IMSI and of a SUPI that is a NAI (RFC 7542), in either form: the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, and a source of random numbers that `getrandom` has for the target |
+| `idna` | The realm and the username of a NAI are checked as internationalized names too | `suci`, and the Unicode tables of `idna` and `unicode-normalization` |
 
 The identities are oxirush-utils' types: `oxirush_security::identity` is its
 module (`Plmn`, `Supi`, `Guti5g`, …), and `nas_5gs` names those of 5GS `Supi`,
 `Guti` and `STmsi`. `tbcd` encodes the digits of an IMSI.
 
-`std`, `suci` and `nai` are on by default. Without `std` the crate is
+`std` is on by default. Without `std` the crate is
 `no_std`, and it still runs the vector and AES instructions where the
 processor has them. On a target without an operating system, the build
 enables them (`-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq`, or
@@ -539,9 +538,9 @@ and `derive_mapped_kamf_idle`, and those of a handover.
 The home network's key pair is the one of Profile A in TS 33.501
 Annex C.4. `HomeNetworkPrivateKey::profile_b` makes one of Profile B, and
 the rest is the same. A SIDF with several keys picks one by the protection
-scheme and the home network public key identifier of the SUCI it read. With
-the `nai` feature, a SUPI that is a NAI is concealed as a NAI (TS 23.003,
-28.7.3).
+scheme and the home network public key identifier of the SUCI it read. A
+SUPI that is a NAI is concealed as a NAI (TS 23.003, 28.7.3). This needs the
+`suci` feature.
 
 ```rust
 use oxirush_security::Plmn;
@@ -779,7 +778,7 @@ and fuzzes the four targets of
 The only `unsafe` code calls the vector code and clears the stack and the
 registers. `examples/` has five programs: `key_derivation_nas_5gs`,
 `key_derivation_nas_eps`, `integrity_nas_5gs`, `integrity_nas_eps` and
-`suci_conceal`. Run one with `cargo run --example suci_conceal`.
+`suci_conceal`. Run one with `cargo run --example suci_conceal --features suci`.
 
 Each Rust block of this page is checked with what it prints
 ([`tests/readme.rs`](tests/readme.rs) says how). The block that uses

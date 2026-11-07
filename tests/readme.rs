@@ -42,7 +42,7 @@
 //! cargo test --test readme
 //! ```
 // The blocks use every feature, which the default ones are.
-#![cfg(feature = "nai")]
+#![cfg(feature = "suci")]
 
 use std::fmt::Write;
 

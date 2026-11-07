@@ -445,7 +445,7 @@ pub mod nas_eps;
 
 // The examples of the README are compiled and run with the doctests. They
 // use every feature.
-#[cfg(all(doctest, feature = "nai"))]
+#[cfg(all(doctest, feature = "suci"))]
 #[doc = include_str!("../README.md")]
 struct Readme;
 

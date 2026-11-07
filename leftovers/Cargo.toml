@@ -9,7 +9,7 @@ publish = false
 license = "Apache-2.0"
 
 [dependencies]
-oxirush-security = { path = ".." }
+oxirush-security = { path = "..", features = ["suci"] }
 # The values to look for are computed apart from the crate
 aes = "0.9.2"
 sha2 = "0.11"

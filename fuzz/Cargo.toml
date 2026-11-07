@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-oxirush-security = { path = ".." }
+oxirush-security = { path = "..", features = ["suci"] }
 
 # Not part of any parent workspace.
 [workspace]

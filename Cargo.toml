@@ -13,7 +13,7 @@ readme = "README.md"
 exclude = [".cargo/", ".github/", ".gitignore", "benches/", "differential/", "emulated-aarch64/", "family/", "fuzz/", "leftovers/"]
 
 [features]
-default = ["std", "suci", "nai"]
+default = ["std"]
 # The standard library. On AArch64 systems other than Linux, Android and
 # Apple's, it is what asks the processor for its instructions when the
 # program runs. Without it the crate is `no_std`.
@@ -23,18 +23,17 @@ std = ["alloc"]
 # keys and their derivations need none.
 alloc = ["zeroize/alloc", "oxirush-utils/alloc"]
 # SUCI concealment and deconcealment with the null scheme, Profile A (X25519)
-# and Profile B (P-256), TS 33.501 Annex C. Concealment draws a key with
-# `getrandom`, which needs a source of random numbers for the target.
+# and Profile B (P-256), TS 33.501 Annex C, of an IMSI and of a SUPI that is a
+# NAI: a network specific identifier, a GCI or a GLI, in the NAI format of
+# TS 23.003 clause 28.7.3, whose realm and username are checked by the grammar
+# of RFC 7542. Concealment draws a key with `getrandom`, which needs a source
+# of random numbers for the target.
 suci = ["alloc", "dep:x25519-dalek", "dep:p256", "dep:getrandom"]
-# The SUCI in the NAI format, TS 23.003 clause 28.7.3, and the SUCI of a SUPI
-# that is a NAI: a network specific identifier, a GCI or a GLI. Its realm and
-# its username are checked by the grammar of RFC 7542.
-nai = ["suci"]
 # The realm and the username of a NAI are also checked as internationalized
 # names: Unicode normalization form C, and a realm that IDNA takes as it is
 # written. It brings the Unicode tables of the `idna` of oxirush-utils, some
 # forty crates, as the feature `idna` of oxirush-nas does.
-idna = ["nai", "oxirush-utils/idna"]
+idna = ["suci", "oxirush-utils/idna"]
 
 [dependencies]
 # KDF and SUCI: SHA-256 whose state is wiped on drop
@@ -81,7 +80,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oxirush_security_hooks)', 
 
 [[example]]
 name = "suci_conceal"
-required-features = ["nai"]
+required-features = ["suci"]
 
 [[test]]
 name = "suci_validation"
