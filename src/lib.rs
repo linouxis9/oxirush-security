@@ -331,8 +331,8 @@
 //! algorithm takes any message at any length in bits and gives the same on
 //! vector instructions and in scalar code, alone and in a batch.
 //!
-//! `tests/readme.rs` runs each Rust block of the README and of this page
-//! and compares what it prints with the text under it.
+//! `readme/` runs each Rust block of the README and of this page and
+//! compares what it prints with the text under it.
 //!
 //! # Limits
 //!
