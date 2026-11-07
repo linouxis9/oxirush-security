@@ -44,11 +44,20 @@ fuzz_target!(|bytes: &[u8]| {
         }
     };
 
-    // The SUCI mobile identity of a NAS message, as a SIDF reads it
-    if let Ok((suci, _)) = Suci::from_nas_octets_tolerant(bytes) {
+    // The SUCI mobile identity of a NAS message, as a SIDF reads it: it is
+    // written back as octets that read as the same SUCI, with no departure
+    // that the first reading did not list. Those that the writer keeps, as a
+    // scheme output of another length than its profile gives it, which only
+    // the home network judges, are read by the tolerant reader alone
+    if let Ok((suci, faults)) = Suci::from_nas_octets_tolerant(bytes) {
         let _ = suci.to_string();
         let identity = suci.to_nas_octets().expect("a SUCI of a mobile identity");
-        assert_eq!(Suci::from_nas_octets(&identity).as_ref(), Ok(&suci));
+        let (again, kept) = Suci::from_nas_octets_tolerant(&identity).expect("a SUCI written");
+        assert_eq!(again, suci);
+        assert!(kept.iter().all(|fault| faults.contains(fault)), "{kept:?}");
+        if kept.is_empty() {
+            assert_eq!(Suci::from_nas_octets(&identity).as_ref(), Ok(&suci));
+        }
         deconceal_each(&suci);
     }
 
