@@ -17,11 +17,35 @@
 
 //! The SUCI through the public API, as a SIDF and a UE use it.
 
-use oxirush_security::identity::{Plmn, ProtectionScheme, RoutingIndicator, SupiType};
-use oxirush_security::nas_5gs::{
-    HomeNetwork, HomeNetworkPrivateKey, HomeNetworkPublicKey, KSeaf, Protection, SchemeOutput,
-    Suci, SuciError, derive_kamf,
+use oxirush_security::identity::{
+    NaiSuci, Plmn, ProtectionScheme, RoutingIndicator, Suci, Supi, SupiType,
 };
+use oxirush_security::nas_5gs::{
+    HomeNetworkPrivateKey, HomeNetworkPublicKey, KSeaf, Protection, SuciError, conceal_imsi,
+    conceal_nai, deconceal, derive_kamf,
+};
+
+/// The SUCI of a mobile identity, as a SIDF reads it: with the tolerant readers of
+/// oxirush-utils.
+fn read(octets: &[u8]) -> Result<Suci, SuciError> {
+    Ok(Suci::from_nas_octets_tolerant(octets)?.0)
+}
+
+/// A SUCI in the NAI format.
+fn from_nai(text: &str) -> Result<Suci, SuciError> {
+    Ok(Suci::Nai(NaiSuci::parse(text)?))
+}
+
+/// The de-concealment of a SUCI as a method, for the chains of these tests.
+trait Deconceal {
+    fn deconceal(&self, key: Option<&HomeNetworkPrivateKey>) -> Result<Supi, SuciError>;
+}
+
+impl Deconceal for Suci {
+    fn deconceal(&self, key: Option<&HomeNetworkPrivateKey>) -> Result<Supi, SuciError> {
+        deconceal(self, key)
+    }
+}
 
 // Home network keys of TS 33.501 Annex C.4.
 const PROFILE_A_PRIVATE: &str = "c53c22208b61860b06c62e5406a7b330c2b577aa5558981510d128247d38bd1d";
@@ -80,23 +104,19 @@ fn a_sidf_chooses_its_key_and_the_supi_gives_kamf() {
             HomeNetworkPrivateKey::profile_a(&[0x42; 32]),
         ),
     ];
-    let suci = Suci::from_nas_octets(&identity(1, 27, &annex_c4_profile_a())).unwrap();
+    let suci = read(&identity(1, 27, &annex_c4_profile_a())).unwrap();
     assert_eq!(suci.supi_type(), SupiType::Imsi);
-    assert_eq!(
-        suci.home_network(),
-        HomeNetwork::Plmn(Plmn::new("274", "012").unwrap())
-    );
+    let Suci::Imsi(imsi) = &suci else {
+        panic!("the SUCI of an IMSI");
+    };
+    assert_eq!(imsi.plmn(), Plmn::new("274", "012").unwrap());
     assert_eq!(suci.routing_indicator().as_str(), "0");
     assert_eq!(suci.protection_scheme(), ProtectionScheme::PROFILE_A);
-    assert_eq!(suci.home_network_public_key_id(), 27);
-    let SchemeOutput::Ecies {
-        ephemeral_public_key,
-        ciphertext,
-        mac_tag,
-    } = suci.scheme_output()
-    else {
-        panic!("the scheme output of a profile");
-    };
+    assert_eq!(suci.home_network_public_key_identifier(), 27);
+    // The ephemeral public key, the ciphertext and the MAC tag
+    let output = imsi.concealed_output().unwrap();
+    let (ephemeral_public_key, rest) = output.split_at(32);
+    let (ciphertext, mac_tag) = rest.split_at(rest.len() - 8);
     assert_eq!(ephemeral_public_key.len(), 32);
     assert_eq!(hex::encode(ciphertext), "cb02352410");
     assert_eq!(hex::encode(mac_tag), "cddd9e730ef3fa87");
@@ -111,7 +131,11 @@ fn a_sidf_chooses_its_key_and_the_supi_gives_kamf() {
     let key = keys
         .iter()
         .find(|(scheme, key_id, _)| {
-            (*scheme, *key_id) == (suci.protection_scheme(), suci.home_network_public_key_id())
+            (*scheme, *key_id)
+                == (
+                    suci.protection_scheme(),
+                    suci.home_network_public_key_identifier(),
+                )
         })
         .map(|(_, _, key)| key);
     let supi = suci.deconceal(key).unwrap();
@@ -121,7 +145,7 @@ fn a_sidf_chooses_its_key_and_the_supi_gives_kamf() {
     let kseaf = KSeaf::new(&octets(
         "e51039fe94eee5044488cde4ffd610ece389153baf7f6736ef41d998df11a149",
     ));
-    let kamf = derive_kamf(&kseaf, &supi, &[0x00, 0x00]).unwrap();
+    let kamf = derive_kamf(&kseaf, supi.identity(), &[0x00, 0x00]).unwrap();
     assert_eq!(
         hex::encode(kamf.as_octets()),
         "1df794e8213a60c9a9c80e4eb0d6132f86275620f455b323832d859dda7d7dfb"
@@ -133,14 +157,12 @@ fn a_sidf_chooses_its_key_and_the_supi_gives_kamf() {
 #[test]
 fn each_failure_of_a_sidf_has_its_error() {
     let nas = identity(1, 27, &annex_c4_profile_a());
-    let suci = Suci::from_nas_octets(&nas).unwrap();
+    let suci = read(&nas).unwrap();
 
     let mut tampered = nas.clone();
     *tampered.last_mut().unwrap() ^= 0x01;
     assert_eq!(
-        Suci::from_nas_octets(&tampered)
-            .unwrap()
-            .deconceal(Some(&private_a())),
+        read(&tampered).unwrap().deconceal(Some(&private_a())),
         Err(SuciError::MacMismatch)
     );
     assert_eq!(suci.deconceal(None), Err(SuciError::MissingKey));
@@ -151,27 +173,31 @@ fn each_failure_of_a_sidf_has_its_error() {
             key: ProtectionScheme::PROFILE_B,
         })
     );
-    for length in [0, 1, 7, 8, 20, nas.len() - 5] {
+    // Fewer octets than a SUCI has, and a scheme output shorter than its profile:
+    // that SUCI is read, as a receiver passes it on, and not de-concealed
+    for length in [0, 1, 7, 8] {
         assert_eq!(
-            Suci::from_nas_octets(&nas[..length]),
+            read(&nas[..length]),
+            Err(SuciError::Truncated),
+            "{length} octets"
+        );
+    }
+    for length in [20, nas.len() - 5] {
+        assert_eq!(
+            read(&nas[..length]).unwrap().deconceal(Some(&private_a())),
             Err(SuciError::Truncated),
             "{length} octets"
         );
     }
     let mut unknown = nas.clone();
     unknown[6] = 3;
-    assert_eq!(
-        Suci::from_nas_octets(&unknown),
-        Err(SuciError::UnknownScheme(3))
-    );
+    assert_eq!(read(&unknown), Err(SuciError::UnknownScheme(3)));
     // A SUCI of a scheme of the operator is read, for the SIDF that
     // knows the scheme
     let mut proprietary = nas.clone();
     proprietary[6] = 13;
     assert_eq!(
-        Suci::from_nas_octets(&proprietary)
-            .unwrap()
-            .deconceal(Some(&private_a())),
+        read(&proprietary).unwrap().deconceal(Some(&private_a())),
         Err(SuciError::ProprietaryScheme(13))
     );
 }
@@ -186,7 +212,7 @@ fn profile_b_rejects_uncompressed_ephemeral_public_key() {
         "46A33FC2716AC7DAE96AA30A4D",
     ))
     .unwrap();
-    let suci = Suci::from_nas_octets(&identity(2, 2, &uncompressed)).unwrap();
+    let suci = read(&identity(2, 2, &uncompressed)).unwrap();
     assert_eq!(
         suci.deconceal(Some(&private_b())),
         Err(SuciError::MalformedPoint)
@@ -199,7 +225,7 @@ fn profile_b_rejects_uncompressed_ephemeral_public_key() {
         "46A33FC2716AC7DAE96AA30A4D",
     ))
     .unwrap();
-    let suci = Suci::from_nas_octets(&identity(2, 2, &compressed)).unwrap();
+    let suci = read(&identity(2, 2, &compressed)).unwrap();
     assert_eq!(
         suci.deconceal(Some(&private_b())).unwrap().to_string(),
         "imsi-274012001002086"
@@ -220,13 +246,13 @@ fn profile_a_rejects_non_contributory_public_keys() {
             key: &key,
         };
         assert_eq!(
-            Suci::conceal_imsi(plmn, "001002086", RoutingIndicator::default(), protection),
+            conceal_imsi(plmn, "001002086", RoutingIndicator::default(), protection),
             Err(SuciError::InvalidKey)
         );
         let mut output = point.to_vec();
         output.extend_from_slice(&[0; 9]);
         assert_eq!(
-            Suci::from_nas_octets(&identity(1, 1, &output))
+            read(&identity(1, 1, &output))
                 .unwrap()
                 .deconceal(Some(&HomeNetworkPrivateKey::profile_a(&[0x55; 32]))),
             Err(SuciError::MalformedPoint)
@@ -250,7 +276,7 @@ fn profile_b_takes_a_compressed_or_an_uncompressed_home_network_key_only() {
             key: &key,
         };
         let suci =
-            Suci::conceal_imsi(plmn, "001002086", RoutingIndicator::default(), protection).unwrap();
+            conceal_imsi(plmn, "001002086", RoutingIndicator::default(), protection).unwrap();
         assert_eq!(
             suci.deconceal(Some(&private_b())).unwrap().identity(),
             "274012001002086",
@@ -295,12 +321,12 @@ fn ecies_profiles_refuse_an_empty_identity_and_its_output() {
             key: public,
         };
         assert_eq!(
-            Suci::conceal_imsi(plmn, "", RoutingIndicator::default(), protection),
+            conceal_imsi(plmn, "", RoutingIndicator::default(), protection),
             Err(SuciError::Identity)
         );
         // The ephemeral key and the MAC tag of a real output, with its one
         // octet of ciphertext taken out.
-        let suci = Suci::conceal_imsi(plmn, "1", RoutingIndicator::default(), protection).unwrap();
+        let suci = conceal_imsi(plmn, "1", RoutingIndicator::default(), protection).unwrap();
         assert_eq!(
             suci.deconceal(Some(&private)).unwrap().identity(),
             "2740121"
@@ -308,7 +334,10 @@ fn ecies_profiles_refuse_an_empty_identity_and_its_output() {
         let mut nas = suci.to_nas_octets().unwrap();
         assert_eq!(nas[6], scheme);
         nas.remove(8 + key_len);
-        assert_eq!(Suci::from_nas_octets(&nas), Err(SuciError::Truncated));
+        assert_eq!(
+            read(&nas).unwrap().deconceal(Some(&private)),
+            Err(SuciError::Truncated)
+        );
     }
 }
 
@@ -316,10 +345,9 @@ fn ecies_profiles_refuse_an_empty_identity_and_its_output() {
 /// null scheme, and the mobile identity, which an IMSI has not from its realm.
 #[test]
 fn a_suci_in_the_nai_format_gives_its_supi_and_its_mobile_identity() {
-    use oxirush_security::identity::Supi;
     let imsi = "type0.rid678.schid0.userid0123456789@5gc.mnc093.mcc208.3gppnetwork.org";
-    let imsi = Suci::from_nai(imsi).unwrap();
-    assert_eq!(imsi.to_nas_octets(), Err(SuciError::MncLengthUnknown));
+    let imsi = from_nai(imsi).unwrap();
+    assert_eq!(imsi.to_nas_octets().unwrap_err().member, "supi-type");
     assert_eq!(imsi.deconceal(None), Err(SuciError::MncLengthUnknown));
     for (nai, supi) in [
         (
@@ -335,7 +363,7 @@ fn a_suci_in_the_nai_format_gives_its_supi_and_its_mobile_identity() {
             "gci-user17@operator.com",
         ),
     ] {
-        let suci = Suci::from_nai(nai).unwrap();
+        let suci = from_nai(nai).unwrap();
         assert_eq!(
             suci.deconceal(None),
             Ok(Supi::parse(supi).unwrap()),
@@ -345,7 +373,7 @@ fn a_suci_in_the_nai_format_gives_its_supi_and_its_mobile_identity() {
         let octets = suci.to_nas_octets().unwrap();
         assert_eq!(&octets[1..], nai.as_bytes(), "{nai}");
         assert_eq!(
-            Suci::from_nas_octets(&octets).unwrap().to_nai(),
+            read(&octets).unwrap().to_nai().map(|nai| nai.to_string()),
             Ok(nai.to_string())
         );
     }
@@ -355,13 +383,13 @@ fn a_suci_in_the_nai_format_gives_its_supi_and_its_mobile_identity() {
 #[test]
 fn a_suci_that_is_not_one_says_what_is_wrong() {
     // Another mobile identity: a 5G-GUTI
-    assert_eq!(
-        Suci::from_nas_octets(&[0x02, 0xf8, 0x39]).map(|_| ()),
-        Err(SuciError::NotASuci)
-    );
+    let guti = [
+        0xf2, 0x02, 0xf8, 0x39, 0xca, 0xfe, 0x01, 0xde, 0xad, 0xbe, 0xef,
+    ];
+    assert_eq!(read(&guti).map(|_| ()), Err(SuciError::NotASuci));
     // What oxirush-utils refuses of a SUCI, which is no SUCI: a text that is not
     // its form, and a NAI of a SUPI format that a NAI has not
-    use oxirush_utils::identity::{ImsiSuci, NaiSuci};
+    use oxirush_utils::identity::ImsiSuci;
     let text = "suci".parse::<ImsiSuci>().unwrap_err();
     assert_eq!(SuciError::from(text), SuciError::NotASuci);
     let mut octets = vec![0x41];
@@ -370,10 +398,7 @@ fn a_suci_that_is_not_one_says_what_is_wrong() {
     assert_eq!(SuciError::from(format), SuciError::NotASuci);
     // A SUPI type of the NAI format that is not defined
     let undefined = "type5.rid0.schid0.useriduser@operator.com";
-    assert_eq!(
-        Suci::from_nai(undefined).map(|_| ()),
-        Err(SuciError::SupiType(5))
-    );
+    assert_eq!(from_nai(undefined).map(|_| ()), Err(SuciError::SupiType(5)));
     // A GLI under the scheme of profile A, or of the operator: a GLI and a GCI have
     // the null scheme alone
     let key = "a".repeat(64);
@@ -381,36 +406,29 @@ fn a_suci_that_is_not_one_says_what_is_wrong() {
         format!("type2.rid0.schid1.hnkey1.ecckey{key}.cip00.mac0011223344556677@operator.com"),
         "type2.rid0.schid12.hnkey1.out0011@operator.com".to_string(),
     ] {
-        let refused = Suci::from_nai(&concealed).map(|_| ());
+        let refused = from_nai(&concealed).map(|_| ());
         assert_eq!(refused, Err(SuciError::NullSchemeRequired), "{concealed}");
     }
     // A GLI whose SUPI format says GCI (011 is a GLI, 010 a GCI)
     let mut octets = vec![0x21];
     octets.extend_from_slice(b"type2.rid0.schid0.useridQUJDRA==@operator.com");
-    assert_eq!(
-        Suci::from_nas_octets(&octets).map(|_| ()),
-        Err(SuciError::SupiTypeMismatch)
-    );
+    assert_eq!(read(&octets).map(|_| ()), Err(SuciError::SupiTypeMismatch));
 }
 
 /// The SUCI of a GLI or a GCI has the routing indicator 0 alone.
 #[test]
 fn a_gli_or_a_gci_is_concealed_with_the_routing_indicator_0() {
-    use oxirush_security::identity::Supi;
     for supi in ["gli-QUJDRA==@operator.com", "gci-user17@operator.com"] {
         let supi = Supi::parse(supi).unwrap();
         let routing = RoutingIndicator::new("12").unwrap();
-        let refused = Suci::conceal_nai(&supi, routing, Protection::Null);
+        let refused = conceal_nai(&supi, routing, Protection::Null);
         assert_eq!(
             refused.map(|_| ()),
             Err(SuciError::RoutingIndicator),
             "{supi}"
         );
         let zero = RoutingIndicator::new("0").unwrap();
-        assert!(
-            Suci::conceal_nai(&supi, zero, Protection::Null).is_ok(),
-            "{supi}"
-        );
+        assert!(conceal_nai(&supi, zero, Protection::Null).is_ok(), "{supi}");
     }
 }
 
@@ -418,7 +436,6 @@ fn a_gli_or_a_gci_is_concealed_with_the_routing_indicator_0() {
 /// its key identifier is looked at.
 #[test]
 fn a_gli_or_a_gci_is_concealed_with_the_null_scheme_alone() {
-    use oxirush_security::identity::Supi;
     let public = HomeNetworkPublicKey::profile_a(&octets(PROFILE_A_PUBLIC));
     let zero = RoutingIndicator::new("0").unwrap();
     for supi in ["gli-QUJDRA==@operator.com", "gci-user17@operator.com"] {
@@ -429,7 +446,7 @@ fn a_gli_or_a_gci_is_concealed_with_the_null_scheme_alone() {
                 key: &public,
             };
             assert_eq!(
-                Suci::conceal_nai(&supi, zero, protection).map(|_| ()),
+                conceal_nai(&supi, zero, protection).map(|_| ()),
                 Err(SuciError::NullSchemeRequired),
                 "{supi}, key identifier {key_id}"
             );
@@ -441,7 +458,6 @@ fn a_gli_or_a_gci_is_concealed_with_the_null_scheme_alone() {
 /// it: the identity is refused, before a key is drawn, and the null scheme writes it.
 #[test]
 fn an_anonymous_nai_is_concealed_with_the_null_scheme_alone() {
-    use oxirush_security::identity::Supi;
     let anonymous = Supi::parse("nai-@example.com").unwrap();
     let public = HomeNetworkPublicKey::profile_a(&octets(PROFILE_A_PUBLIC));
     let protection = Protection::Ecies {
@@ -450,8 +466,8 @@ fn an_anonymous_nai_is_concealed_with_the_null_scheme_alone() {
     };
     let routing = RoutingIndicator::default();
     assert_eq!(
-        Suci::conceal_nai(&anonymous, routing, protection).map(|_| ()),
+        conceal_nai(&anonymous, routing, protection).map(|_| ()),
         Err(SuciError::Identity)
     );
-    assert!(Suci::conceal_nai(&anonymous, routing, Protection::Null).is_ok());
+    assert!(conceal_nai(&anonymous, routing, Protection::Null).is_ok());
 }

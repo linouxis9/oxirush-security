@@ -802,7 +802,11 @@ fn derivations(cases: &mut Cases) {
         Some(s_kamf),
         move || {
             crate::here();
-            let value = spare(nas_5gs::derive_kamf(black_box(kseaf), supi, &[0, 0]));
+            let value = spare(nas_5gs::derive_kamf(
+                black_box(kseaf),
+                supi.identity(),
+                &[0, 0],
+            ));
             crate::owned(&value);
         },
     );
@@ -1377,8 +1381,8 @@ fn milenage(cases: &mut Cases) {
 /// SUCI with the home network keys and the data of TS 33.501 Annex C.4,
 /// whose intermediate values the Annex gives.
 fn suci(cases: &mut Cases) {
-    use nas_5gs::{HomeNetworkPrivateKey, Protection, Suci};
-    use oxirush_security::identity::RoutingIndicator;
+    use nas_5gs::{HomeNetworkPrivateKey, Protection, conceal_imsi, deconceal};
+    use oxirush_security::identity::{NaiSuci, RoutingIndicator, Suci};
     let h = |hexadecimal: &str| hex::decode(hexadecimal).expect("hexadecimal digits");
     let plmn = Plmn::new("274", "012").expect("an MCC and an MNC");
     let identity = |scheme: u8, output: &str| -> &'static [u8] {
@@ -1414,20 +1418,15 @@ fn suci(cases: &mut Cases) {
         1,
         "b2e92f836055a255837debf850b528997ce0201cb82adfe4be1f587d07d8457dcb02352410cddd9e730ef3fa87",
     );
-    cases.add(
-        "Suci::deconceal, Profile A",
-        1,
-        secrets_a.clone(),
-        move || {
-            let suci = prepared(|| {
-                Suci::from_nas_octets(black_box(suci_a)).expect("the SUCI of Annex C.4.3.1")
-            });
-            crate::here();
-            let supi = spare(suci.deconceal(Some(black_box(private_a))));
-            crate::owned(&supi);
-            assert!(supi.is_ok(), "its key");
-        },
-    );
+    cases.add("deconceal, Profile A", 1, secrets_a.clone(), move || {
+        let suci = prepared(|| {
+            Suci::from_nas_octets(black_box(suci_a)).expect("the SUCI of Annex C.4.3.1")
+        });
+        crate::here();
+        let supi = spare(deconceal(&suci, Some(black_box(private_a))));
+        crate::owned(&supi);
+        assert!(supi.is_ok(), "its key");
+    });
     let of_key = secrets_a[..2].to_vec();
     cases.add(
         "HomeNetworkPrivateKey::profile_a",
@@ -1451,13 +1450,13 @@ fn suci(cases: &mut Cases) {
     );
     // The ephemeral key of a concealment is drawn: the scan cannot know
     // it, and looks at how deep the operation goes and at what is cleared
-    cases.add("Suci::conceal_imsi, Profile A", 1, Vec::new(), move || {
+    cases.add("conceal_imsi, Profile A", 1, Vec::new(), move || {
         let protection = Protection::Ecies {
             key_id: 27,
             key: public_a,
         };
         crate::here();
-        let suci = spare(Suci::conceal_imsi(
+        let suci = spare(conceal_imsi(
             plmn,
             black_box("001002086"),
             RoutingIndicator::default(),
@@ -1494,20 +1493,15 @@ fn suci(cases: &mut Cases) {
         2,
         "039aab8376597021e855679a9778ea0b67396e68c66df32c0f41e9acca2da9b9d146a33fc2716ac7dae96aa30a4d",
     );
-    cases.add(
-        "Suci::deconceal, Profile B",
-        1,
-        secrets_b.clone(),
-        move || {
-            let suci = prepared(|| {
-                Suci::from_nas_octets(black_box(suci_b)).expect("the SUCI of Annex C.4.4.1")
-            });
-            crate::here();
-            let supi = spare(suci.deconceal(Some(black_box(private_b))));
-            crate::owned(&supi);
-            assert!(supi.is_ok(), "its key");
-        },
-    );
+    cases.add("deconceal, Profile B", 1, secrets_b.clone(), move || {
+        let suci = prepared(|| {
+            Suci::from_nas_octets(black_box(suci_b)).expect("the SUCI of Annex C.4.4.1")
+        });
+        crate::here();
+        let supi = spare(deconceal(&suci, Some(black_box(private_b))));
+        crate::owned(&supi);
+        assert!(supi.is_ok(), "its key");
+    });
     let of_key = secrets_b[..2].to_vec();
     cases.add(
         "HomeNetworkPrivateKey::profile_b",
@@ -1529,13 +1523,13 @@ fn suci(cases: &mut Cases) {
             crate::owned(&value);
         },
     );
-    cases.add("Suci::conceal_imsi, Profile B", 1, Vec::new(), move || {
+    cases.add("conceal_imsi, Profile B", 1, Vec::new(), move || {
         let protection = Protection::Ecies {
             key_id: 27,
             key: public_b,
         };
         crate::here();
-        let suci = spare(Suci::conceal_imsi(
+        let suci = spare(conceal_imsi(
             plmn,
             black_box("001002086"),
             RoutingIndicator::default(),
@@ -1548,11 +1542,12 @@ fn suci(cases: &mut Cases) {
     // A network specific identifier, whose username of 17 octets takes two
     // blocks of keystream (Annex C.4.3.2)
     let nai = kept(
-        Suci::from_nai(concat!(
+        NaiSuci::parse(concat!(
             "type1.rid678.schid1.hnkey27.",
             "ecckey977d8b2fdaa7b64aa700d04227d5b440630ea4ec50f9082273a26bb678c92222.",
             "cip8e358a1582adb15322c10e515141d2039a.mac12e1d7783a97f1ac@3gpp.com"
         ))
+        .map(Suci::Nai)
         .expect("the SUCI of Annex C.4.3.2"),
     );
     let secrets_nai = vec![
@@ -1567,15 +1562,10 @@ fn suci(cases: &mut Cases) {
             &h("d87b69f4fe8cd6b211264ea5e69f682f151a82252684cdb15a047e6ef0595028"),
         ),
     ];
-    cases.add(
-        "Suci::deconceal, Profile A, a NAI",
-        1,
-        secrets_nai,
-        move || {
-            crate::here();
-            let supi = spare(black_box(nai).deconceal(Some(black_box(private_a))));
-            crate::owned(&supi);
-            assert!(supi.is_ok(), "its key");
-        },
-    );
+    cases.add("deconceal, Profile A, a NAI", 1, secrets_nai, move || {
+        crate::here();
+        let supi = spare(deconceal(black_box(nai), Some(black_box(private_a))));
+        crate::owned(&supi);
+        assert!(supi.is_ok(), "its key");
+    });
 }

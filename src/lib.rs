@@ -79,7 +79,7 @@
 //! | Protect the messages of many UEs in one call, with the `batch` feature | [`batch::cipher`], [`batch::mac`], [`batch::CipherJob`], [`batch::MacJob`] |
 //! | Keep the keys of a UE between its messages | [`CipheringContext`], [`IntegrityContext`] |
 //! | Derive the keys of a handover | [`nas_5gs::derive_kgnb`], [`nas_5gs::derive_nh`], [`nas_5gs::derive_kng_ran_star`], [`nas_5gs::derive_kamf_prime_handover`] |
-//! | Conceal and deconceal a SUCI, with the `suci` and `nai` features | `nas_5gs::Suci::conceal_imsi`, `nas_5gs::Suci::conceal_nai`, `nas_5gs::Suci::deconceal`, `nas_5gs::HomeNetworkPrivateKey` |
+//! | Conceal and deconceal a SUCI, with the `suci` feature | `nas_5gs::conceal_imsi`, `nas_5gs::conceal_nai`, `nas_5gs::deconceal`, `nas_5gs::HomeNetworkPrivateKey` |
 //! | Run an algorithm on a 3GPP test set | [`CipheringContext::cipher_bits`], [`IntegrityContext::mac_bits`] |
 //! | Select the algorithms | [`select_ciphering_algorithm`], [`select_integrity_algorithm`], [`DEFAULT_CIPHERING_PREFERENCE`], [`DEFAULT_INTEGRITY_PREFERENCE`] |
 //!
@@ -120,7 +120,7 @@
 //! | HASHMME | `nas_eps::compute_hash_mme` | TS 33.401 Annex I.2 | other implementations |
 //! | 5GS/EPS key mapping | Idle mobility and connected handover in both directions, and KASME_SRVCC | TS 33.501 Annexes A.14, A.15 and A.21 | calculated |
 //! | Other NAS MACs | `nas_5gs::nas_container_mac`; `nas_eps::re_establishment_nas_mac`; `nas_eps::service_request_short_mac` | TS 33.501 §6.9.2.3.3; TS 33.401 §7.4.4; TS 24.301 §9.9.3.28 | calculated |
-//! | SUPI and SUCI | `identity::Supi`; `nas_5gs::Suci` with the null scheme, Profile A (X25519) and Profile B (secp256r1), for an IMSI and for a NAI, on the SUPI and the two forms of a SUCI of oxirush-utils | TS 33.501 Annex C, TS 23.003 §2.2A, §2.2B and §28.7.3 | 3GPP |
+//! | SUPI and SUCI | `identity::Supi`; `identity::Suci`, concealed by `nas_5gs::conceal_imsi` and `nas_5gs::conceal_nai` and de-concealed by `nas_5gs::deconceal` with the null scheme, Profile A (X25519) and Profile B (secp256r1), for an IMSI and for a NAI, on the SUPI and the two forms of a SUCI of oxirush-utils | TS 33.501 Annex C, TS 23.003 §2.2A, §2.2B and §28.7.3 | 3GPP |
 //! | Algorithm selection | [`select_integrity_algorithm`], [`select_ciphering_algorithm`], with a preference such as the default ones | TS 33.401 §7.2.4.3.1, TS 33.501 §6.7.1 | calculated |
 //!
 //! The default order of the selection is NIA2, NIA1, NIA3, never NIA0, and
@@ -158,7 +158,7 @@
 //! | Length in bits | `Err(BitLengthExceedsData)` when the buffer is shorter |
 //! | PCI, ARFCN, AMF Set ID, AMF Pointer, cell identity | `Err(OutOfRange)` above the largest value |
 //! | PLMN, SUPI | The values of [`identity`], whose error names the member at fault and says why, and is `Err(Identity)` in a function of this crate |
-//! | SUCI from a peer | `nas_5gs::Suci`: a `nas_5gs::SuciError` that says what could not be read, or which step of the de-concealment failed |
+//! | SUCI from a peer | `identity::Suci`, read by oxirush-utils, and a `nas_5gs::SuciError` that says what could not be read, or which step of the de-concealment failed |
 //! | KDF parameter of variable length | `Err(InputTooLong)` above 65,535 octets |
 //!
 //! # Key material and timing
@@ -377,7 +377,7 @@
 //! | none | The algorithms and the keyed contexts, MILENAGE, the keys and every derivation, NAS integrity and ciphering, the selection of the algorithms, the types of the inputs | `core` alone: no allocator. 15 crates in its tree, oxirush-utils one of them, and no procedural macro |
 //! | `alloc` | What returns a `Vec` or a `String`: `kdf::build_s`, `Supi::into_owned` | An allocator |
 //! | `std` | On an AArch64 system other than Linux, Android and Apple's: the choice of the code on the vector and AES instructions when the program runs. Nothing else | The standard library. It brings `alloc` |
-//! | `suci` | `nas_5gs::Suci`: the SUCI of an IMSI and of a SUPI that is a NAI, in a mobile identity or in the NAI format, concealed and de-concealed with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, which it brings, and a source of random numbers that `getrandom` has for the target: concealment draws a key. 42 crates |
+//! | `suci` | `nas_5gs::conceal_imsi`, `nas_5gs::conceal_nai` and `nas_5gs::deconceal`: the SUCI of an IMSI and of a SUPI that is a NAI, in a mobile identity or in the NAI format, concealed and de-concealed with the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, which it brings, and a source of random numbers that `getrandom` has for the target: concealment draws a key. 42 crates |
 //! | `batch` | [`batch`]: many messages, or the MILENAGE of many subscribers, in one call | Nothing |
 //! | `idna` | The realm and the username of a NAI are also checked as internationalized names: Unicode normalization form C, and a realm that IDNA takes as it is written | `suci`, which it brings, with the Unicode normalization and the IDNA of oxirush-utils. 70 crates |
 //!

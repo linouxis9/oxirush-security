@@ -49,7 +49,7 @@ fn main() -> Result<(), SecurityError> {
 
     // KSEAF -> KAMF, with the SUPI: an IMSI by its digits
     let supi = Supi::imsi("208930000000001")?;
-    let k_amf = derive_kamf(&k_seaf, &supi, &abba)?;
+    let k_amf = derive_kamf(&k_seaf, supi.identity(), &abba)?;
     println!("KAMF:  {}", hex::encode(k_amf.as_octets()));
 
     // KAMF -> KNASint, the 128-bit integrity key of the selected algorithm

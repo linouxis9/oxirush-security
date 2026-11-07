@@ -38,8 +38,9 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 use oxirush_security::identity::{Plmn, RoutingIndicator, Supi};
 use oxirush_security::nas_5gs::{
-    HomeNetworkPrivateKey, HomeNetworkPublicKey, KNasEnc, KNasInt, NasConnection, Protection, Suci,
-    derive_kamf, derive_kausf, derive_knas_int, derive_kseaf, nas_cipher, nas_mac,
+    HomeNetworkPrivateKey, HomeNetworkPublicKey, KNasEnc, KNasInt, NasConnection, Protection,
+    conceal_imsi, deconceal, derive_kamf, derive_kausf, derive_knas_int, derive_kseaf, nas_cipher,
+    nas_mac,
 };
 use oxirush_security::{
     Autn, Bearer, CipheringAlgorithm, CipheringContext, Ck, Direction, Ik, IntegrityAlgorithm,
@@ -122,14 +123,14 @@ fn key_derivations(criterion: &mut Criterion) {
     let supi = Supi::imsi("208930000000001").expect("an IMSI");
     let k_ausf = derive_kausf(&ck, &ik, sn_name, &autn).expect("a short name");
     let k_seaf = derive_kseaf(&k_ausf, sn_name).expect("a short name");
-    let k_amf = derive_kamf(&k_seaf, &supi, &[0, 0]).expect("an ABBA of two octets");
+    let k_amf = derive_kamf(&k_seaf, supi.identity(), &[0, 0]).expect("an ABBA of two octets");
 
     let mut group = criterion.benchmark_group("kdf");
     group.bench_function("KAUSF", |bencher| {
         bencher.iter(|| derive_kausf(black_box(&ck), &ik, sn_name, &autn))
     });
     group.bench_function("KAMF", |bencher| {
-        bencher.iter(|| derive_kamf(black_box(&k_seaf), &supi, &[0, 0]))
+        bencher.iter(|| derive_kamf(black_box(&k_seaf), supi.identity(), &[0, 0]))
     });
     group.bench_function("KNASint", |bencher| {
         bencher.iter(|| derive_knas_int(black_box(&k_amf), IntegrityAlgorithm::NIA2))
@@ -138,7 +139,7 @@ fn key_derivations(criterion: &mut Criterion) {
 }
 
 /// Concealment and de-concealment of an IMSI whose MSIN has nine digits,
-/// five octets in BCD: `Suci::conceal_imsi`, and `Suci::deconceal` of a
+/// five octets in BCD: `conceal_imsi`, and `deconceal` of a
 /// SUCI that is read already.
 fn suci(criterion: &mut Criterion) {
     let plmn = Plmn::new("274", "012").expect("an MCC and an MNC");
@@ -149,7 +150,7 @@ fn suci(criterion: &mut Criterion) {
     let public_b = HomeNetworkPublicKey::profile_b(&public_b).expect("a key of Profile B");
     let conceal = |key| {
         let protection = Protection::Ecies { key_id: 1, key };
-        Suci::conceal_imsi(
+        conceal_imsi(
             plmn,
             black_box("001002086"),
             RoutingIndicator::default(),
@@ -164,13 +165,13 @@ fn suci(criterion: &mut Criterion) {
         bencher.iter(|| conceal(&public_a))
     });
     group.bench_function("profile-a/deconceal", |bencher| {
-        bencher.iter(|| black_box(&suci_a).deconceal(Some(&private_a)))
+        bencher.iter(|| deconceal(black_box(&suci_a), Some(&private_a)))
     });
     group.bench_function("profile-b/conceal", |bencher| {
         bencher.iter(|| conceal(&public_b))
     });
     group.bench_function("profile-b/deconceal", |bencher| {
-        bencher.iter(|| black_box(&suci_b).deconceal(Some(&private_b)))
+        bencher.iter(|| deconceal(black_box(&suci_b), Some(&private_b)))
     });
     group.finish();
 }

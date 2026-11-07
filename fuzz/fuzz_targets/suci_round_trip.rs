@@ -4,8 +4,21 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use oxirush_security::identity::{Plmn, ProtectionScheme, RoutingIndicator, Supi};
-use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, SchemeOutput, Suci};
+use oxirush_security::identity::{NaiSuci, Plmn, ProtectionScheme, RoutingIndicator, Suci, Supi};
+use oxirush_security::nas_5gs::{
+    HomeNetworkPrivateKey, Protection, conceal_imsi, conceal_nai, deconceal,
+};
+
+/// The octets of the ciphertext of a scheme output of a profile: what is
+/// between the ephemeral public key and the MAC tag of eight octets.
+fn ciphertext(scheme: ProtectionScheme, output: Option<&[u8]>) -> Option<usize> {
+    let key = match scheme {
+        ProtectionScheme::PROFILE_A => 32,
+        ProtectionScheme::PROFILE_B => 33,
+        _ => return None,
+    };
+    Some(output?.len() - key - 8)
+}
 
 // The home network private keys of TS 33.501 Annex C.4
 const PRIVATE_A: [u8; 32] = [
@@ -56,25 +69,35 @@ fuzz_target!(|bytes: &[u8]| {
         && let Ok(plmn) = Plmn::new(&plmn[..3], &plmn[3..])
     {
         for (protection, private) in &protections {
-            let Ok(suci) = Suci::conceal_imsi(plmn, msin, routing_indicator, *protection) else {
+            let Ok(suci) = conceal_imsi(plmn, msin, routing_indicator, *protection) else {
                 // No MSIN, or one that makes more than fifteen digits
                 assert!(msin.is_empty() || digits.len() > 15);
                 continue;
             };
             assert_eq!(suci.routing_indicator(), routing_indicator);
-            if let SchemeOutput::Ecies { ciphertext, .. } = suci.scheme_output() {
-                assert_eq!(ciphertext.len(), msin.len().div_ceil(2));
-                assert_eq!(suci.home_network_public_key_id(), key_id);
+            let Suci::Imsi(imsi) = &suci else {
+                panic!("the SUCI of an IMSI");
+            };
+            let scheme = suci.protection_scheme();
+            if let Some(length) = ciphertext(scheme, imsi.concealed_output()) {
+                assert_eq!(length, msin.len().div_ceil(2));
+                assert_eq!(suci.home_network_public_key_identifier(), key_id);
             }
             let identity = suci.to_nas_octets().expect("an IMSI with its PLMN");
             let received = Suci::from_nas_octets(&identity).expect("a SUCI that was written");
             assert_eq!(received, suci);
-            let supi = received.deconceal(*private).expect("the key of the SUCI");
+            let supi = deconceal(&received, *private).expect("the key of the SUCI");
             assert_eq!(supi.identity(), digits);
             // The NAI format has the same parts, and its realm for the PLMN
-            let nai = Suci::from_nai(&suci.to_nai().expect("an IMSI in the NAI format"))
-                .expect("a SUCI that was written");
-            assert_eq!(nai.scheme_output(), suci.scheme_output());
+            let text = suci
+                .to_nai()
+                .expect("an IMSI in the NAI format")
+                .to_string();
+            let nai = NaiSuci::parse(&text).expect("a SUCI that was written");
+            assert_eq!(
+                (nai.clear(), nai.concealed_output()),
+                (imsi.msin(), imsi.concealed_output())
+            );
         }
     }
 
@@ -87,19 +110,24 @@ fuzz_target!(|bytes: &[u8]| {
         return;
     };
     for (protection, private) in &protections {
-        let Ok(suci) = Suci::conceal_nai(&supi, routing_indicator, *protection) else {
+        let Ok(suci) = conceal_nai(&supi, routing_indicator, *protection) else {
             continue;
         };
-        if let SchemeOutput::Ecies { ciphertext, .. } = suci.scheme_output() {
-            let username = nai.rsplit_once('@').expect("a NAI").0;
-            assert_eq!(ciphertext.len(), username.len());
-        } else {
-            assert_eq!(suci.protection_scheme(), ProtectionScheme::NULL);
+        let Suci::Nai(concealed) = &suci else {
+            panic!("the SUCI of a NAI");
+        };
+        let scheme = suci.protection_scheme();
+        match ciphertext(scheme, concealed.concealed_output()) {
+            Some(length) => {
+                let username = nai.rsplit_once('@').expect("a NAI").0;
+                assert_eq!(length, username.len());
+            }
+            None => assert_eq!(scheme, ProtectionScheme::NULL),
         }
-        let text = suci.to_nai().expect("a NAI");
-        assert_eq!(Suci::from_nai(&text).as_ref(), Ok(&suci));
+        let text = suci.to_nai().expect("a NAI").to_string();
+        assert_eq!(NaiSuci::parse(&text).map(Suci::Nai).as_ref(), Ok(&suci));
         let identity = suci.to_nas_octets().expect("a network specific identifier");
         assert_eq!(Suci::from_nas_octets(&identity).as_ref(), Ok(&suci));
-        assert_eq!(suci.deconceal(*private).as_ref(), Ok(&supi));
+        assert_eq!(deconceal(&suci, *private).as_ref(), Ok(&supi));
     }
 });

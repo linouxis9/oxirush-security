@@ -17,6 +17,16 @@ All notable changes to `oxirush-security` are recorded here.
 - `nas_eps::service_request_short_mac` takes the first octet of the message
   and refuses one that is not of a SERVICE REQUEST: it is
   `service_request_short_mac_with_header`, which is gone.
+- oxirush-utils 0.2. A SUCI is its `identity::Suci`, that of an IMSI or one in
+  the form of a NAI, which reads and writes its octets and its text:
+  `nas_5gs::conceal_imsi`, `nas_5gs::conceal_nai` and `nas_5gs::deconceal`
+  conceal and de-conceal one. `nas_5gs::Suci`, `HomeNetwork` and
+  `SchemeOutput` are gone. A SUCI is read with
+  `Suci::from_nas_octets_tolerant` and refused in `deconceal` when its scheme
+  output is shorter than its profile, as a receiver passes it on.
+- `nas_5gs::derive_kamf` takes the SUPI as the derivation takes it, its
+  identity alone: `derive_kamf(&kseaf, supi.identity(), &abba)`. A `Supi` owns
+  its text.
 - The identities are those of `oxirush_security::identity` alone: `Plmn` and
   `tbcd` at the crate root, `kdf::Zeroizing`, and `Guti`, `STmsi`,
   `MobileIdentityType`, `Supi`, `SupiType`, `ProtectionScheme` and

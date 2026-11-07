@@ -3,8 +3,10 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use oxirush_security::identity::ProtectionScheme;
-use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, HomeNetworkPublicKey, Suci, SuciError};
+use oxirush_security::identity::{NaiSuci, ProtectionScheme, Suci};
+use oxirush_security::nas_5gs::{
+    HomeNetworkPrivateKey, HomeNetworkPublicKey, SuciError, deconceal,
+};
 
 // The home network private keys of TS 33.501 Annex C.4
 const PRIVATE_A: [u8; 32] = [
@@ -21,9 +23,9 @@ fuzz_target!(|bytes: &[u8]| {
     let private_b = HomeNetworkPrivateKey::profile_b(&PRIVATE_B).expect("a key of Profile B");
     // De-conceal with each key and with none: an error or a SUPI. A key is
     // missing or of the other profile exactly when the error says so
-    let deconceal = |suci: &Suci| {
+    let deconceal_each = |suci: &Suci| {
         for key in [None, Some(&private_a), Some(&private_b)] {
-            let result = suci.deconceal(key);
+            let result = deconceal(suci, key);
             let wrong_key = matches!(
                 result,
                 Err(SuciError::MissingKey | SuciError::WrongKeyType { .. })
@@ -42,25 +44,24 @@ fuzz_target!(|bytes: &[u8]| {
         }
     };
 
-    // The SUCI mobile identity of a NAS message
-    if let Ok(suci) = Suci::from_nas_octets(bytes) {
+    // The SUCI mobile identity of a NAS message, as a SIDF reads it
+    if let Ok((suci, _)) = Suci::from_nas_octets_tolerant(bytes) {
         let _ = suci.to_string();
         let identity = suci.to_nas_octets().expect("a SUCI of a mobile identity");
         assert_eq!(Suci::from_nas_octets(&identity).as_ref(), Ok(&suci));
-        deconceal(&suci);
+        deconceal_each(&suci);
     }
 
     // A SUCI in the NAI format: what is read is written as a text that
     // reads as the same SUCI
     if let Ok(text) = std::str::from_utf8(bytes)
-        && let Ok(suci) = Suci::from_nai(text)
+        && let Ok(nai) = NaiSuci::parse(text)
     {
-        assert_eq!(
-            Suci::from_nai(&suci.to_nai().expect("a NAI")).as_ref(),
-            Ok(&suci)
-        );
+        let suci = Suci::Nai(nai);
+        let again = suci.to_nai().expect("a NAI").to_string();
+        assert_eq!(NaiSuci::parse(&again).map(Suci::Nai).as_ref(), Ok(&suci));
         let _ = suci.to_string();
-        deconceal(&suci);
+        deconceal_each(&suci);
     }
 
     // The keys of a home network, from any octets

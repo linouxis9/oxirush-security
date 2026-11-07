@@ -126,7 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // SEAF: KAMF, from the SUPI and the ABBA. The SUPI is the one that a SUCI
     // de-conceals to, or the text of a service based interface
     let supi = Supi::parse("imsi-208930000000001")?;
-    let k_amf = derive_kamf(&k_seaf, &supi, &[0x00, 0x00])?;
+    let k_amf = derive_kamf(&k_seaf, supi.identity(), &[0x00, 0x00])?;
     println!("KAMF   {}", hex::encode(k_amf.as_octets()));
 
     // UE: the USIM checks the MAC of AUTN. The ME judges the SQN and the
@@ -543,8 +543,10 @@ SUPI that is a NAI is concealed as a NAI (TS 23.003, 28.7.3). This needs the
 `suci` feature.
 
 ```rust
-use oxirush_security::identity::{Plmn, RoutingIndicator, Supi};
-use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, Suci};
+use oxirush_security::identity::{NaiSuci, Plmn, RoutingIndicator, Suci, Supi};
+use oxirush_security::nas_5gs::{
+    HomeNetworkPrivateKey, Protection, conceal_imsi, conceal_nai, deconceal,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Home network: its private key, and the public key that its subscribers
@@ -561,15 +563,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let protection = Protection::Ecies { key_id: 27, key: &public };
     let plmn = Plmn::new("274", "012")?;
     let routing = RoutingIndicator::default();
-    let suci = Suci::conceal_imsi(plmn, "001002086", routing, protection)?;
+    let suci = conceal_imsi(plmn, "001002086", routing, protection)?;
     let identity = suci.to_nas_octets()?;
     println!("mobile identity of {} octets", identity.len());
 
     // SIDF: read the SUCI, take the private key that its scheme and its key
     // identifier name, and de-conceal
-    let received = Suci::from_nas_octets(&identity)?;
-    println!("{:?}, key {}", received.protection_scheme(), received.home_network_public_key_id());
-    let supi = received.deconceal(Some(&private))?;
+    let (received, _) = Suci::from_nas_octets_tolerant(&identity)?;
+    let key_id = received.home_network_public_key_identifier();
+    println!("{:?}, key {key_id}", received.protection_scheme());
+    let supi = deconceal(&received, Some(&private))?;
     println!("{supi}, of which KAMF takes {}", supi.identity());
 
     // The SUCI of Annex C.4.3.1, and what a SIDF without the key is told
@@ -579,15 +582,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?);
     let annex = Suci::from_nas_octets(&identity)?;
     println!("{annex}");
-    println!("{:?}", annex.deconceal(Some(&private)));
-    println!("{:?}", annex.deconceal(None));
+    println!("{:?}", deconceal(&annex, Some(&private)));
+    println!("{:?}", deconceal(&annex, None));
 
     // A SUPI that is a NAI: the username is concealed, the realm is not
     let supi = Supi::network_specific("sensor-17@example.net")?;
     let protection = Protection::Ecies { key_id: 1, key: &public };
-    let text = Suci::conceal_nai(&supi, RoutingIndicator::default(), protection)?.to_nai()?;
+    let text = conceal_nai(&supi, RoutingIndicator::default(), protection)?.to_nai()?.to_string();
     println!("{}...", &text[..31]);
-    println!("{}", Suci::from_nai(&text)?.deconceal(Some(&private))?);
+    let read = Suci::Nai(NaiSuci::parse(&text)?);
+    println!("{}", deconceal(&read, Some(&private))?);
     Ok(())
 }
 ```

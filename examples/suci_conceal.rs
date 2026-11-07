@@ -23,8 +23,10 @@
 //! - Profile B (secp256r1 ECIES) for a network specific identifier, in the
 //!   NAI format.
 
-use oxirush_security::identity::{Plmn, RoutingIndicator, Supi};
-use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, SchemeOutput, Suci, SuciError};
+use oxirush_security::identity::{NaiSuci, Plmn, RoutingIndicator, Suci, Supi};
+use oxirush_security::nas_5gs::{
+    HomeNetworkPrivateKey, Protection, SuciError, conceal_imsi, conceal_nai, deconceal,
+};
 
 fn main() -> Result<(), SuciError> {
     println!("=== SUCI concealment (TS 33.501 Annex C) ===\n");
@@ -35,7 +37,7 @@ fn main() -> Result<(), SuciError> {
     let routing = RoutingIndicator::default();
 
     // ── Null scheme ──────────────────────────────────────────────────────
-    let suci = Suci::conceal_imsi(plmn, msin, routing, Protection::Null)?;
+    let suci = conceal_imsi(plmn, msin, routing, Protection::Null)?;
     println!("\n--- Null scheme ---\n{suci}");
     println!("mobile identity: {}", hex::encode(suci.to_nas_octets()?));
     println!("(the MSIN is in clear)");
@@ -60,31 +62,23 @@ fn main() -> Result<(), SuciError> {
         key_id: 1,
         key: &public_a,
     };
-    let suci = Suci::conceal_imsi(plmn, msin, routing, protection)?;
-    if let SchemeOutput::Ecies {
-        ephemeral_public_key,
-        ciphertext,
-        mac_tag,
-    } = suci.scheme_output()
-    {
-        println!(
-            "ephemeral public key:    {}",
-            hex::encode(ephemeral_public_key)
-        );
-        println!("ciphertext:              {}", hex::encode(ciphertext));
-        println!("MAC tag:                 {}", hex::encode(mac_tag));
+    let suci = conceal_imsi(plmn, msin, routing, protection)?;
+    if let Suci::Imsi(concealed) = &suci {
+        // The ephemeral public key, the ciphered MSIN and the MAC tag
+        let output = concealed.concealed_output().unwrap_or_default();
+        println!("scheme output: {}", hex::encode(output));
     }
     let identity = suci.to_nas_octets()?;
 
     // SIDF: read the mobile identity, choose the key, de-conceal
-    let received = Suci::from_nas_octets(&identity)?;
+    let (received, _) = Suci::from_nas_octets_tolerant(&identity)?;
     println!(
         "received: {:?}, key {}, routing indicator {}",
         received.protection_scheme(),
-        received.home_network_public_key_id(),
+        received.home_network_public_key_identifier(),
         received.routing_indicator(),
     );
-    let supi = received.deconceal(Some(&private_a))?;
+    let supi = deconceal(&received, Some(&private_a))?;
     println!("SUPI: {supi}");
     assert_eq!(supi.identity(), "208930000000001");
 
@@ -100,16 +94,18 @@ fn main() -> Result<(), SuciError> {
         key_id: 2,
         key: &public_b,
     };
-    let nai = Suci::conceal_nai(&supi, routing, protection)?.to_nai()?;
+    let nai = conceal_nai(&supi, routing, protection)?
+        .to_nai()?
+        .to_string();
     println!("{nai}");
 
     // SIDF: a key of the other profile is refused, and its own de-conceals
-    let received = Suci::from_nai(&nai)?;
+    let received = Suci::Nai(NaiSuci::parse(&nai)?);
     println!(
         "with the key of Profile A: {:?}",
-        received.deconceal(Some(&private_a))
+        deconceal(&received, Some(&private_a))
     );
-    let recovered = received.deconceal(Some(&private_b))?;
+    let recovered = deconceal(&received, Some(&private_b))?;
     println!("SUPI: {recovered}");
     assert_eq!(recovered, supi);
 

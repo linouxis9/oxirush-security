@@ -62,7 +62,7 @@ getrandom = { version = "0.4", optional = true }
 # The identities: PLMN, 5G-GUTI, 5G-S-TMSI, SUPI, the two forms of a SUCI and
 # the grammar of a NAI, with no feature of its own (`alloc` and `nai` above
 # turn on those that they need). It adds no crate to the tree.
-oxirush-utils = { version = "0.1.0", default-features = false }
+oxirush-utils = { version = "0.2.0", default-features = false }
 
 # The instructions of the processor, asked without the standard library:
 # CPUID on x86-64, the system on AArch64. `aes` has it in the tree already.
@@ -86,6 +86,10 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oxirush_security_hooks)', 
 [[example]]
 name = "suci_conceal"
 required-features = ["suci"]
+
+[[example]]
+name = "key_derivation_nas_5gs"
+required-features = ["alloc"]
 
 [[test]]
 name = "suci_validation"

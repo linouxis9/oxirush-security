@@ -18,19 +18,22 @@
 //! What `{}` and `{:?}` print: an identity and a value that travels in
 //! clear whole, and no octet of a key.
 
+use oxirush_security::identity::{Guti5g, Plmn, STmsi5g};
 use oxirush_security::nas_5gs::{KAmf, KNasInt, ResStar, XresStar};
-
-use oxirush_security::identity::{Guti5g, Plmn, STmsi5g, Supi};
 use oxirush_security::{Autn, Ck, Ik, Rand, milenage};
 
 #[test]
 fn an_identity_is_printed_whole() {
-    let supi = Supi::imsi("208930000000001").unwrap();
-    assert_eq!(format!("{supi}"), "imsi-208930000000001");
-    assert_eq!(format!("{supi:?}"), "Supi(imsi-208930000000001)");
-    let supi = Supi::parse("nai-user17@example.com").unwrap();
-    assert_eq!(format!("{supi}"), "nai-user17@example.com");
-    assert_eq!(format!("{supi:?}"), "Supi(nai-user17@example.com)");
+    #[cfg(feature = "alloc")]
+    {
+        use oxirush_security::identity::Supi;
+        let supi = Supi::imsi("208930000000001").unwrap();
+        assert_eq!(format!("{supi}"), "imsi-208930000000001");
+        assert_eq!(format!("{supi:?}"), "Supi(imsi-208930000000001)");
+        let supi = Supi::parse("nai-user17@example.com").unwrap();
+        assert_eq!(format!("{supi}"), "nai-user17@example.com");
+        assert_eq!(format!("{supi:?}"), "Supi(nai-user17@example.com)");
+    }
 
     let plmn = Plmn::new("208", "93").unwrap();
     assert_eq!(format!("{plmn}"), "208-93");
@@ -48,7 +51,8 @@ fn an_identity_is_printed_whole() {
 #[cfg(feature = "suci")]
 #[test]
 fn a_suci_and_a_home_network_public_key_are_printed_whole() {
-    use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, HomeNetworkPublicKey, Suci};
+    use oxirush_security::identity::Suci;
+    use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, HomeNetworkPublicKey};
 
     // The SUCI of TS 33.501 Annex C.4.3.1, concealed with Profile A
     let output = concat!(

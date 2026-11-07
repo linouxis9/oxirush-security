@@ -27,7 +27,6 @@ use crate::common::kdf::{checked_parameter, derive, derive_algorithm_key, low_12
 use crate::common::keys::{Autn, Ck, Ik, Rand};
 use crate::common::wipe;
 use crate::nas_eps::KAsme;
-use oxirush_utils::identity::Supi;
 use zeroize::Zeroizing;
 
 /// FC of the algorithm key derivation function (TS 33.501 Annex A.8).
@@ -100,10 +99,12 @@ pub fn derive_kseaf(kausf: &KAusf, sn_name: &[u8]) -> Result<KSeaf, SecurityErro
 
 /// Derive KAMF from KSEAF (TS 33.501 Annex A.7, FC=0x6D).
 ///
-/// The derivation takes the SUPI as its identity alone, the digits of an
-/// IMSI or the NAI of another SUPI, without the `imsi-` or `nai-` that the
-/// service based interfaces write in front (Annex A.7.0). [`Supi`] gives
-/// it, whichever form the SUPI came in.
+/// `supi` is the SUPI as the derivation takes it, its identity alone: the
+/// digits of an IMSI or the NAI of another SUPI, without the `imsi-` or
+/// `nai-` that the service based interfaces write in front (Annex A.7.0).
+/// `Supi::identity` of oxirush-utils gives it,
+/// whichever form the SUPI came in. One longer than 65,535 octets is
+/// [`SecurityError::InputTooLong`].
 ///
 /// `abba` is the ABBA parameter, `[0x00, 0x00]` in the releases so far
 /// (Annex A.7.1). One that is not 2 to 255 octets long, the lengths that
@@ -111,26 +112,24 @@ pub fn derive_kseaf(kausf: &KAusf, sn_name: &[u8]) -> Result<KSeaf, SecurityErro
 /// [`SecurityError::InvalidParameter`].
 ///
 /// ```
-/// use oxirush_security::identity::Supi;
 /// use oxirush_security::nas_5gs::{KSeaf, derive_kamf};
 ///
-/// // The KSEAF of the example of `derive_kseaf`, and the SUPI as an SBI writes it
+/// // The KSEAF of the example of `derive_kseaf`, and the SUPI imsi-208930000000001 by
+/// // its identity, as `Supi::identity` gives it
 /// let k_seaf = "cfddde483bd1318a412e98870f556410905be4fb7500abed93ee16af71bbb3fa";
 /// let k_seaf = KSeaf::from_slice(&hex::decode(k_seaf).unwrap()).unwrap();
-/// let supi = Supi::parse("imsi-208930000000001").unwrap();
-/// let k_amf = derive_kamf(&k_seaf, &supi, &[0x00, 0x00]).unwrap();
+/// let k_amf = derive_kamf(&k_seaf, "208930000000001", &[0x00, 0x00]).unwrap();
 /// let expected = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
 /// assert_eq!(hex::encode(k_amf.as_octets()), expected);
 /// ```
-pub fn derive_kamf(kseaf: &KSeaf, supi: &Supi<'_>, abba: &[u8]) -> Result<KAmf, SecurityError> {
+pub fn derive_kamf(kseaf: &KSeaf, supi: &str, abba: &[u8]) -> Result<KAmf, SecurityError> {
     wipe::derivation(|| {
         if !(2..=255).contains(&abba.len()) {
             return Err(SecurityError::InvalidParameter(
                 "ABBA is 2 to 255 octets long",
             ));
         }
-        // A SUPI is at most 507 octets long
-        let parameters = [supi.identity().as_bytes(), abba];
+        let parameters = [checked_parameter(supi.as_bytes())?, abba];
         Ok(KAmf::new(&derive(kseaf.as_octets(), 0x6D, &parameters)))
     })
 }
@@ -991,14 +990,14 @@ mod tests {
             assert!(compute_xres_star(&ck, &ik, b"5G:x", &rand, &vec![0; length]).is_ok());
         }
 
-        let (kseaf, supi) = (KSeaf::new(&[0; 32]), Supi::imsi("208930000000001").unwrap());
+        let (kseaf, supi) = (KSeaf::new(&[0; 32]), "208930000000001");
         for length in [0, 1, 256] {
             assert_eq!(
-                derive_kamf(&kseaf, &supi, &vec![0; length]).unwrap_err(),
+                derive_kamf(&kseaf, supi, &vec![0; length]).unwrap_err(),
                 SecurityError::InvalidParameter("ABBA is 2 to 255 octets long")
             );
         }
-        assert!(derive_kamf(&kseaf, &supi, &[0; 255]).is_ok());
+        assert!(derive_kamf(&kseaf, supi, &[0; 255]).is_ok());
     }
 
     #[test]
@@ -1042,8 +1041,7 @@ mod tests {
             hex::encode(kseaf.as_octets()),
             "cfddde483bd1318a412e98870f556410905be4fb7500abed93ee16af71bbb3fa"
         );
-        let supi = Supi::imsi("208930000000001").unwrap();
-        let kamf = derive_kamf(&kseaf, &supi, &[0x00, 0x00]).unwrap();
+        let kamf = derive_kamf(&kseaf, "208930000000001", &[0x00, 0x00]).unwrap();
         assert_eq!(
             hex::encode(kamf.as_octets()),
             "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4"
@@ -1079,8 +1077,10 @@ mod tests {
     /// for the IMSI 274012001002086 of TS 33.501 Annex C.4, as the second
     /// review of this crate recorded them. 0.2.0 took the SUPI as a
     /// string, and gave another KAMF for `imsi-274012001002086`.
+    #[cfg(feature = "alloc")]
     #[test]
     fn kamf_takes_the_identity_of_a_supi_in_either_form() {
+        use oxirush_utils::identity::Supi;
         let ck = Ck::new(&octets("5dbdbb2954e8f3cde665b046179a5098"));
         let ik = Ik::new(&octets("59a92d3b476a0443487055cf88b2307b"));
         let sn = b"5G:mnc012.mcc274.3gppnetwork.org";
@@ -1101,14 +1101,18 @@ mod tests {
             Supi::parse("imsi-274012001002086").unwrap(),
         ] {
             assert_eq!(
-                hex::encode(derive_kamf(&kseaf, &supi, &[0, 0]).unwrap().as_octets()),
+                hex::encode(
+                    derive_kamf(&kseaf, supi.identity(), &[0, 0])
+                        .unwrap()
+                        .as_octets()
+                ),
                 kamf
             );
         }
         // A network specific identifier is its NAI, without `nai-`
         let nai = Supi::parse("nai-user17@example.com").unwrap();
         assert_eq!(
-            derive_kamf(&kseaf, &nai, &[0, 0]).unwrap(),
+            derive_kamf(&kseaf, nai.identity(), &[0, 0]).unwrap(),
             *kdf(
                 kseaf.as_octets(),
                 b"\x6duser17@example.com\x00\x12\x00\x00\x00\x02"

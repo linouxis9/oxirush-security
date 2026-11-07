@@ -13,7 +13,7 @@ nea_cipher 128-EEA2, 64 octets                                        vector cod
 CipheringContext::cipher 128-EEA2, 64 octets                          vector code    176     1792      1   nothing left (6 without the clearing)
 batch::mac of 128-EIA2, 16 x 61 octets, from contexts                 vector code   7944    18432      1   nothing left
 nas_5gs::derive_kamf                                                  vector code   1048     4096      1   nothing left (4 without the clearing)
-Suci::deconceal, Profile B                                            vector code   4224    12288      1   nothing left (2 without the clearing)
+deconceal, Profile B                                                  vector code   4224    12288      1   nothing left (2 without the clearing)
 ...
 1703 leftovers are seen when nothing is cleared after an operation
 the deepest work for each number of octets that is cleared:
@@ -22,7 +22,7 @@ the deepest work for each number of octets that is cleared:
     2304    800  34 %   batch::cipher of 128-EEA2, 16 x 1500 octets, from keys, vector code
     4096   1240  30 %   nas_5gs::compute_res_star, vector code
     8192   2344  28 %   IntegrityContext::new 128-EIA2, scalar code
-   12288   4224  34 %   Suci::deconceal, Profile B, vector code
+   12288   4224  34 %   deconceal, Profile B, vector code
    18432   7944  43 %   batch::mac of 128-EIA2, 16 x 61 octets, from contexts, vector code
 ```
 

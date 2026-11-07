@@ -47,6 +47,6 @@ pub use security::{NasConnection, nas_cipher, nas_container_mac, nas_mac};
 #[cfg(feature = "suci")]
 #[cfg_attr(docsrs, doc(cfg(feature = "suci")))]
 pub use suci::{
-    HomeNetwork, HomeNetworkPrivateKey, HomeNetworkPublicKey, Protection, SchemeOutput, Suci,
-    SuciError,
+    HomeNetworkPrivateKey, HomeNetworkPublicKey, Protection, SuciError, conceal_imsi, conceal_nai,
+    deconceal,
 };
