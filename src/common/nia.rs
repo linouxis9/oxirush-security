@@ -24,13 +24,9 @@
 //! - 128-NIA3, 128-EIA3: ZUC (TS 33.401 Annex B.2.4, TS 35.221 and TS 35.222).
 //!
 //! These functions take what the algorithms take: any 32-bit COUNT and a
-//! five-bit [`Bearer`]. [`nia_mac`], [`nia1_mac`], [`nia2_mac`] and
-//! [`nia3_mac`] authenticate whole octets and cannot fail. The `*_bits`
-//! forms authenticate the first bits of a message, as the test data of
-//! 3GPP and the bit strings outside NAS need, and return an error for a
-//! length that the message does not have.
-//!
-//! For a NAS message use [`nas_5gs::nas_mac`](crate::nas_5gs::nas_mac) or
+//! five-bit [`Bearer`]. A program calls them through an
+//! [`IntegrityContext`](crate::IntegrityContext), or for a NAS message
+//! through [`nas_5gs::nas_mac`](crate::nas_5gs::nas_mac) and
 //! [`nas_eps::nas_mac`](crate::nas_eps::nas_mac), which take a NAS COUNT.
 use crate::common::aes128::{Aes128, RoundKeys};
 use crate::common::ct::{clmul64, clmul128, mask64};

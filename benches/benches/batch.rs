@@ -32,10 +32,10 @@
 //! alone.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
-use oxirush_security::nas_5gs::{KNasEnc, KNasInt};
+use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, nas_cipher, nas_mac};
 use oxirush_security::{
     Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
-    IntegrityContext, MacJob, nea_cipher, nea_cipher_batch, nia_mac, nia_mac_batch,
+    IntegrityContext, MacJob, NasCount, nea_cipher_batch, nia_mac_batch,
 };
 use oxirush_security_benches::message;
 use pprof::criterion::{Output, PProfProfiler};
@@ -68,8 +68,9 @@ fn ciphers_of<const N: usize>(criterion: &mut Criterion) {
             group.bench_function(BenchmarkId::new(name, "single"), |bencher| {
                 bencher.iter(|| {
                     for ((key, data), count) in keys.iter().zip(&mut data).zip(COUNT..) {
-                        let data = black_box(data);
-                        nea_cipher(black_box(key), count, bearer, uplink, data, algorithm);
+                        let (data, count) = (black_box(data), NasCount::new(count).unwrap());
+                        let access = NasConnection::ThreeGpp;
+                        nas_cipher(black_box(key), count, access, uplink, data, algorithm);
                     }
                 })
             });
@@ -129,8 +130,9 @@ fn macs_of<const N: usize>(criterion: &mut Criterion) {
                 bencher.iter(|| {
                     let mut macs = 0;
                     for ((key, data), count) in keys.iter().zip(&data).zip(COUNT..) {
-                        let data = black_box(data);
-                        macs ^= nia_mac(black_box(key), count, bearer, uplink, data, algorithm);
+                        let (data, count) = (black_box(data), NasCount::new(count).unwrap());
+                        let access = NasConnection::ThreeGpp;
+                        macs ^= nas_mac(black_box(key), count, access, uplink, data, algorithm);
                     }
                     macs
                 })

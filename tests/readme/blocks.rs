@@ -279,9 +279,10 @@ fn block_6() {
 
 /// The Rust block 7 of README.md.
 fn block_7() {
-    use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, cipher_job, mac_job};
+    use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection};
     use oxirush_security::{
-        CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount, nea_cipher_batch, nia_mac_batch,
+        CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob, NasCount,
+        nea_cipher_batch, nia_mac_batch,
     };
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -302,8 +303,8 @@ fn block_7() {
 
         let mut jobs: Vec<_> = (messages.iter_mut().enumerate())
             .map(|(ue, message)| {
-                let (key, count) = (&k_nas_enc[ue], counts[ue]);
-                cipher_job(key, count, access, downlink, &mut message[1..], nea[ue])
+                let (key, count) = (&k_nas_enc[ue], counts[ue].get());
+                CipherJob::new(key, count, access.into(), downlink, &mut message[1..], nea[ue])
             })
             .collect();
         nea_cipher_batch(&mut jobs);
@@ -311,8 +312,8 @@ fn block_7() {
         // The MAC is over the sequence number and the ciphered message
         let mut jobs: Vec<_> = (messages.iter().enumerate())
             .map(|(ue, message)| {
-                let (key, count) = (&k_nas_int[ue], counts[ue]);
-                mac_job(key, count, access, downlink, message, nia[ue])
+                let (key, count) = (&k_nas_int[ue], counts[ue].get());
+                MacJob::new(key, count, access.into(), downlink, message, nia[ue])
             })
             .collect();
         nia_mac_batch(&mut jobs);
@@ -450,7 +451,7 @@ fn block_10() {
 fn block_11() {
     use oxirush_security::nas_eps::{KNasEnc, KNasInt};
     use oxirush_security::{
-        Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, nea_cipher_bits, nia_mac_bits,
+        Bearer, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm, IntegrityContext,
     };
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -458,15 +459,17 @@ fn block_11() {
         // takes the octets of a test set with `from_slice`
         let k = KNasEnc::from_slice(&hex::decode("d3c5d592327fb11c4035c6680af8c6d1")?)?;
         let mut data = hex::decode("981ba6824c1bfb1ab485472029b71d808ce33e2cc3c0b5fc1f3de8a6dc66b1f0")?;
-        let (count, bearer, downlink) = (0x398a_59b4, Bearer::new(0x15)?, Direction::Downlink);
-        nea_cipher_bits(&k, count, bearer, downlink, &mut data, 253, CipheringAlgorithm::EEA2)?;
+        let (count, bearer, downlink) = (0x398a_59b4_u32, Bearer::new(0x15)?, Direction::Downlink);
+        let context = CipheringContext::new(&k, CipheringAlgorithm::EEA2);
+        context.cipher_bits(count, bearer, downlink, &mut data, 253)?;
         println!("{}", hex::encode(&data));
 
         // 128-EIA2 test set 1 of Annex C.2.1: 58 bits
         let k = KNasInt::from_slice(&hex::decode("2bd6459f82c5b300952c49104881ff48")?)?;
         let message = hex::decode("3332346263393840")?;
-        let (count, bearer, uplink) = (0x38a6_f056, Bearer::new(0x18)?, Direction::Uplink);
-        let mac = nia_mac_bits(&k, count, bearer, uplink, &message, 58, IntegrityAlgorithm::EIA2)?;
+        let (count, bearer, uplink) = (0x38a6_f056_u32, Bearer::new(0x18)?, Direction::Uplink);
+        let context = IntegrityContext::new(&k, IntegrityAlgorithm::EIA2);
+        let mac = context.mac_bits(count, bearer, uplink, &message, 58)?;
         println!("{mac:08x}");
         Ok(())
     }

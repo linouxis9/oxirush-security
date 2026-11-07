@@ -153,7 +153,7 @@ one call.
 ## Several messages in one call
 
 `batch` times N messages, each with its own key and COUNT: `single` is a
-call of `nea_cipher` or `nia_mac` for each, and `batch` one call of
+call of `nas_cipher` or `nas_mac` for each, and `batch` one call of
 `nea_cipher_batch` or `nia_mac_batch` for all; `single-context` and
 `batch-context` do the same with a keyed context for each message. The
 times are for the N messages.

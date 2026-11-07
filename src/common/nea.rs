@@ -25,14 +25,9 @@
 //!
 //! These functions take what the algorithms take: any 32-bit COUNT and a
 //! five-bit [`Bearer`]. They cipher or decipher in place, which is one
-//! operation. [`nea_cipher`], [`nea1_cipher`], [`nea2_cipher`] and
-//! [`nea3_cipher`] process whole octets and cannot fail. The `*_bits`
-//! forms process the first bits of the data and leave the unused low-order
-//! bits of the last octet as they are; they return an error for a length
-//! that the data does not have.
-//!
-//! For a NAS message use
-//! [`nas_5gs::nas_cipher`](crate::nas_5gs::nas_cipher) or
+//! operation. A program calls them through a
+//! [`CipheringContext`](crate::CipheringContext), or for a NAS message
+//! through [`nas_5gs::nas_cipher`](crate::nas_5gs::nas_cipher) and
 //! [`nas_eps::nas_cipher`](crate::nas_eps::nas_cipher), which take a NAS
 //! COUNT.
 use crate::common::aes128::{Aes128, RoundKeys};
@@ -119,6 +114,7 @@ pub(crate) fn cipher_octets(
 /// A `bit_length` above the length of `data` in bits is
 /// [`SecurityError::BitLengthExceedsData`], with the null algorithm too,
 /// and the data is then unchanged.
+#[cfg(any(test, oxirush_security_hooks))]
 pub fn nea_cipher_bits(
     key: &impl CipheringKey,
     count: u32,

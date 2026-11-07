@@ -30,8 +30,9 @@
 //!
 //! A context serves both directions and every bearer, which have the same
 //! key: COUNT, BEARER and DIRECTION are inputs of each call. It is wiped
-//! when it is dropped. Its values are those of
-//! [`nia_mac`](crate::nia_mac) and of [`nea_cipher`](crate::nea_cipher).
+//! when it is dropped. A context made for one message costs what the
+//! algorithm computes from the key, once: it is how a program runs an
+//! algorithm on any COUNT and BEARER.
 //!
 //! The round keys are kept on a processor with the AES instructions, where
 //! they are 176 octets: an [`IntegrityContext`] is 240 octets and a
@@ -64,25 +65,16 @@ use zeroize::Zeroizing;
 /// a 5GS NAS message; an EPS NAS message has [`Bearer::ZERO`].
 ///
 /// ```
-/// use oxirush_security::nas_5gs::{KNasInt, NasConnection};
-/// use oxirush_security::{Direction, IntegrityAlgorithm, IntegrityContext, NasCount, nia_mac};
+/// use oxirush_security::nas_5gs::{KNasInt, NasConnection, nas_mac};
+/// use oxirush_security::{Direction, IntegrityAlgorithm, IntegrityContext, NasCount};
 ///
 /// let key = KNasInt::new(&[0x2b; 16]);
 /// let context = IntegrityContext::new(&key, IntegrityAlgorithm::NIA2);
 ///
 /// let (count, message) = (NasCount::new(7)?, [0x07, 0x7e, 0x00, 0x43]);
-/// let mac = context.mac(count, NasConnection::ThreeGpp, Direction::Uplink, &message);
-/// assert_eq!(
-///     mac,
-///     nia_mac(
-///         &key,
-///         count.get(),
-///         NasConnection::ThreeGpp.into(),
-///         Direction::Uplink,
-///         &message,
-///         IntegrityAlgorithm::NIA2,
-///     )
-/// );
+/// let (access, uplink) = (NasConnection::ThreeGpp, Direction::Uplink);
+/// let mac = context.mac(count, access, uplink, &message);
+/// assert_eq!(mac, nas_mac(&key, count, access, uplink, &message, IntegrityAlgorithm::NIA2));
 /// # Ok::<(), oxirush_security::SecurityError>(())
 /// ```
 #[derive(Clone)]

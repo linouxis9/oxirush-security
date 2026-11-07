@@ -27,9 +27,10 @@ use oxirush_security::nas_5gs::{self, NasConnection, Supi};
 use oxirush_security::{
     AccessKeyCount, Autn, Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Ck, Direction,
     Ik, IntegrityAlgorithm, IntegrityContext, MacJob, NasCount, Plmn, Rand, Snow3G, Zuc,
-    constant_time_eq, nas_eps, nea_cipher, nea_cipher_batch, nea_cipher_bits, nia_mac,
-    nia_mac_batch, nia_mac_bits,
+    constant_time_eq, nas_eps, nea_cipher_batch, nia_mac_batch,
 };
+// The algorithms on a key and a message, which the NAS functions and the contexts run
+use oxirush_security::hooks::{nea_cipher, nea_cipher_bits, nia_mac, nia_mac_bits};
 use std::hint::black_box;
 use std::mem::ManuallyDrop;
 use std::sync::Arc;

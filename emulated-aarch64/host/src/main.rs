@@ -332,7 +332,7 @@ impl Left {
 /// The values that an operation of `leftovers.rs` must not leave.
 fn secrets_of(kind: Kind) -> Vec<Secret> {
     use oxirush_security::nas_5gs::{KAmf, KNasEnc, derive_knas_int};
-    use oxirush_security::{Bearer, Direction, IntegrityAlgorithm, Snow3G, Zuc, nea_cipher};
+    use oxirush_security::{Bearer, CipheringContext, Direction, IntegrityAlgorithm, Snow3G, Zuc};
     let (key, bearer) = (
         leftovers::KEY,
         Bearer::new(leftovers::BEARER).expect("five bits"),
@@ -341,13 +341,13 @@ fn secrets_of(kind: Kind) -> Vec<Secret> {
         |words: &[u32]| -> Vec<u8> { words.iter().flat_map(|word| word.to_le_bytes()).collect() };
     let keystream = |key: &[u8; 16], algorithm: usize| {
         let mut keystream = vec![0u8; 64];
-        nea_cipher(
-            &KNasEnc::new(key),
+        let key = KNasEnc::new(key);
+        let context = CipheringContext::new(&key, leftovers::CIPHERING[algorithm]);
+        context.cipher(
             leftovers::COUNT,
             bearer,
             Direction::Downlink,
             &mut keystream,
-            leftovers::CIPHERING[algorithm],
         );
         values::keystream_secrets(&keystream)
     };

@@ -37,12 +37,13 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 use oxirush_security::nas_5gs::{
-    HomeNetworkPrivateKey, HomeNetworkPublicKey, KNasEnc, KNasInt, Protection, RoutingIndicator,
-    Suci, Supi, derive_kamf, derive_kausf, derive_knas_int, derive_kseaf,
+    HomeNetworkPrivateKey, HomeNetworkPublicKey, KNasEnc, KNasInt, NasConnection, Protection,
+    RoutingIndicator, Suci, Supi, derive_kamf, derive_kausf, derive_knas_int, derive_kseaf,
+    nas_cipher, nas_mac,
 };
 use oxirush_security::{
     Autn, Bearer, CipheringAlgorithm, CipheringContext, Ck, Direction, Ik, IntegrityAlgorithm,
-    IntegrityContext, Plmn, nea_cipher, nia_mac,
+    IntegrityContext, NasCount, Plmn,
 };
 use oxirush_security_benches::{PROFILE_A, PROFILE_B, message};
 use pprof::criterion::{Output, PProfProfiler};
@@ -69,8 +70,9 @@ fn ciphers(criterion: &mut Criterion) {
                 let (bearer, uplink) = (Bearer::ZERO, Direction::Uplink);
                 group.bench_function(BenchmarkId::new(name, octets), |bencher| match form {
                     "cipher" => bencher.iter(|| {
-                        let data = black_box(&mut data);
-                        nea_cipher(black_box(&key), COUNT, bearer, uplink, data, algorithm)
+                        let (data, count) = (black_box(&mut data), NasCount::new(COUNT).unwrap());
+                        let access = NasConnection::ThreeGpp;
+                        nas_cipher(black_box(&key), count, access, uplink, data, algorithm)
                     }),
                     _ => bencher.iter(|| {
                         black_box(&context).cipher(COUNT, bearer, uplink, black_box(&mut data))
@@ -98,8 +100,9 @@ fn macs(criterion: &mut Criterion) {
                 let (bearer, uplink) = (Bearer::ZERO, Direction::Uplink);
                 group.bench_function(BenchmarkId::new(name, octets), |bencher| match form {
                     "mac" => bencher.iter(|| {
-                        let data = black_box(&data);
-                        nia_mac(black_box(&key), COUNT, bearer, uplink, data, algorithm)
+                        let (data, count) = (black_box(&data), NasCount::new(COUNT).unwrap());
+                        let access = NasConnection::ThreeGpp;
+                        nas_mac(black_box(&key), count, access, uplink, data, algorithm)
                     }),
                     _ => bencher
                         .iter(|| black_box(&context).mac(COUNT, bearer, uplink, black_box(&data))),

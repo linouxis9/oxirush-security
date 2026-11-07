@@ -33,8 +33,8 @@ use oxirush_security::milenage::{
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt};
 use oxirush_security::{
     Autn, Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, Implementation,
-    IntegrityAlgorithm, IntegrityContext, MacJob, Rand, Snow3G, Zuc, implementation, nea_cipher,
-    nea_cipher_batch, nea_cipher_bits, nia_mac, nia_mac_batch, nia_mac_bits,
+    IntegrityAlgorithm, IntegrityContext, MacJob, Rand, SecurityError, Snow3G, Zuc, implementation,
+    nea_cipher_batch, nia_mac_batch,
 };
 
 /// The cases, by their names.
@@ -253,7 +253,7 @@ fn contexts() -> u64 {
                 Ok(mac) => digest.word(mac),
                 Err(_) => return u64::MAX,
             }
-            // The functions that take the key give the same
+            // A context made for the message gives the same
             let key = KNasInt::new(&key);
             if nia_mac(
                 &key,
@@ -656,4 +656,54 @@ fn known_answers() -> u64 {
         return number;
     }
     0
+}
+
+/// A message ciphered with a key, through a context made for it.
+fn nea_cipher(
+    key: &KNasEnc,
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    data: &mut [u8],
+    algorithm: CipheringAlgorithm,
+) {
+    CipheringContext::new(key, algorithm).cipher(count, bearer, direction, data);
+}
+
+/// The first `bits` of a message ciphered with a key, through a context made for it.
+fn nea_cipher_bits(
+    key: &KNasEnc,
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    data: &mut [u8],
+    bits: u64,
+    algorithm: CipheringAlgorithm,
+) -> Result<(), SecurityError> {
+    CipheringContext::new(key, algorithm).cipher_bits(count, bearer, direction, data, bits)
+}
+
+/// The MAC of a message with a key, through a context made for it.
+fn nia_mac(
+    key: &KNasInt,
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    message: &[u8],
+    algorithm: IntegrityAlgorithm,
+) -> u32 {
+    IntegrityContext::new(key, algorithm).mac(count, bearer, direction, message)
+}
+
+/// The MAC of the first `bits` of a message with a key, through a context made for it.
+fn nia_mac_bits(
+    key: &KNasInt,
+    count: u32,
+    bearer: Bearer,
+    direction: Direction,
+    message: &[u8],
+    bits: u64,
+    algorithm: IntegrityAlgorithm,
+) -> Result<u32, SecurityError> {
+    IntegrityContext::new(key, algorithm).mac_bits(count, bearer, direction, message, bits)
 }

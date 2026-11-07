@@ -4,6 +4,13 @@ All notable changes to `oxirush-security` are recorded here.
 
 ## Unreleased
 
+- The algorithms run through the keyed contexts: `CipheringContext::new(&key,
+  algorithm).cipher(..)` and `IntegrityContext::new(&key, algorithm).mac(..)`,
+  with `cipher_bits` and `mac_bits`, take any COUNT and BEARER, and a NAS
+  message keeps `nas_cipher` and `nas_mac`. `nea_cipher`, `nea_cipher_bits`,
+  `nia_mac`, `nia_mac_bits`, and `cipher_job` and `mac_job` of `nas_5gs` and
+  `nas_eps` are gone: a job is `CipherJob::new` or `MacJob::new`, or
+  `context.job(..)`.
 - The default features are `std` alone: a program that conceals or reads a
   SUCI asks for `suci`. The feature `nai` is part of `suci`, which has the NAI
   format and the SUPIs that are a NAI.

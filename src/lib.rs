@@ -76,11 +76,11 @@
 //! | Make the vectors of many subscribers in one call | [`milenage::authentication_vector_batch`], [`milenage::check_autn_batch`] |
 //! | Protect and check a NAS message | [`nas_5gs::derive_knas_enc`], [`nas_5gs::derive_knas_int`], [`nas_5gs::nas_cipher`], [`nas_5gs::nas_mac`], [`NasCount::estimate`], [`constant_time_eq`] |
 //! | The same in EPS | [`nas_eps::derive_kasme`], [`nas_eps::nas_cipher`], [`nas_eps::nas_mac`], [`nas_eps::service_request_short_mac`] |
-//! | Protect the messages of many UEs in one call | [`nea_cipher_batch`], [`nia_mac_batch`], [`nas_5gs::cipher_job`], [`nas_5gs::mac_job`] |
+//! | Protect the messages of many UEs in one call | [`nea_cipher_batch`], [`nia_mac_batch`], [`CipherJob`], [`MacJob`] |
 //! | Keep the keys of a UE between its messages | [`CipheringContext`], [`IntegrityContext`] |
 //! | Derive the keys of a handover | [`nas_5gs::derive_kgnb`], [`nas_5gs::derive_nh`], [`nas_5gs::derive_kng_ran_star`], [`nas_5gs::derive_kamf_prime_handover`] |
 //! | Conceal and deconceal a SUCI, with the `suci` and `nai` features | `nas_5gs::Suci::conceal_imsi`, `nas_5gs::Suci::conceal_nai`, `nas_5gs::Suci::deconceal`, `nas_5gs::HomeNetworkPrivateKey` |
-//! | Run an algorithm on a 3GPP test set | [`nea_cipher_bits`], [`nia_mac_bits`] |
+//! | Run an algorithm on a 3GPP test set | [`CipheringContext::cipher_bits`], [`IntegrityContext::mac_bits`] |
 //! | Select the algorithms | [`select_ciphering_algo`], [`select_integrity_algo`], [`select_integrity_algo_with_preference`] |
 //! | Encode a PLMN identity, a 5G-GUTI and TBCD digits | [`Plmn`], [`nas_5gs::Guti`], `tbcd` with `alloc` |
 //!
@@ -109,8 +109,7 @@
 //! |------|-----------|---------------|------------------|
 //! | NAS ciphering | `nas_cipher` of each system | NEA0 and EEA0, 128-NEA1 and 128-EEA1 (SNOW 3G), 128-NEA2 and 128-EEA2 (AES-CTR), 128-NEA3 and 128-EEA3 (ZUC): TS 33.401 Annex B.1 | 3GPP |
 //! | NAS integrity | `nas_mac` of each system | 128-NIA1 and 128-EIA1 (SNOW 3G), 128-NIA2 and 128-EIA2 (AES-CMAC), 128-NIA3 and 128-EIA3 (ZUC): TS 33.401 Annex B.2 | 3GPP |
-//! | The algorithms themselves | [`nea_cipher`], [`nia_mac`] and their `*_bits` forms, with any COUNT, BEARER and length in bits | The same | 3GPP |
-//! | A key kept between messages | [`CipheringContext`], [`IntegrityContext`] | The same | 3GPP |
+//! | The algorithms themselves, and a key kept between messages | [`CipheringContext`], [`IntegrityContext`]: `cipher`, `mac` and their `*_bits` forms, with any COUNT, BEARER and length in bits | The same | 3GPP |
 //! | Several messages at once | [`nea_cipher_batch`], [`nia_mac_batch`] on a [`CipherJob`] or a [`MacJob`] for each message | The same | 3GPP |
 //! | Keystream generators | [`Snow3G`], [`Zuc`] | TS 35.216, TS 35.222 | 3GPP |
 //! | MILENAGE | `milenage::Milenage`: f1, f1\*, f2 to f5, f5\*; `milenage::Opc::from_op` | TS 35.206 §4.1 | 3GPP, other implementations |
@@ -478,8 +477,6 @@ pub use common::input::{
     AccessKeyCount, Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount,
 };
 pub use common::keys::{Autn, CipheringKey, Ck, Ik, IntegrityKey, Rand};
-pub use common::nea::{nea_cipher, nea_cipher_bits};
-pub use common::nia::{nia_mac, nia_mac_bits};
 pub use common::snow3g::Snow3G;
 pub use common::zuc::Zuc;
 /// The identities of 3GPP networks as values: those of oxirush-utils,
@@ -526,6 +523,12 @@ pub mod hooks {
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         work()
     }
+
+    /// The algorithms on a key and a message, which the NAS functions and
+    /// the keyed contexts run, for the programs that look at what each
+    /// leaves.
+    pub use crate::common::nea::{nea_cipher, nea_cipher_bits};
+    pub use crate::common::nia::{nia_mac, nia_mac_bits};
 
     /// Run `work` without the vector instructions of 256 bits, as on a
     /// processor that has those of 128 bits alone.

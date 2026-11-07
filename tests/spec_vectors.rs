@@ -297,8 +297,7 @@ const MAC_SETS_1_TO_5: &[Mac] = &[
 use oxirush_security::nas_eps::{KNasEnc, KNasInt};
 use oxirush_security::{
     Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
-    IntegrityContext, MacJob, Snow3G, Zuc, nea_cipher, nea_cipher_batch, nea_cipher_bits, nia_mac,
-    nia_mac_batch, nia_mac_bits,
+    IntegrityContext, MacJob, Snow3G, Zuc, nea_cipher_batch, nia_mac_batch,
 };
 
 fn bearer(value: u8) -> Bearer {
@@ -347,7 +346,7 @@ fn check_enc(v: &Enc) {
     let nbytes = full + (rem > 0) as usize;
     let mut data = pt[..nbytes].to_vec();
     let (bearer, dir) = (bearer(v.bearer), direction(v.dir));
-    nea_cipher(&key, v.count, bearer, dir, &mut data, ciphering(v));
+    CipheringContext::new(&key, ciphering(v)).cipher(v.count, bearer, dir, &mut data);
     assert_eq!(
         hex::encode(&data[..full]),
         hex::encode(&ct[..full]),
@@ -366,14 +365,11 @@ fn check_enc(v: &Enc) {
     println!("{} OK ({} bits)", v.name, v.len);
 }
 
-/// The set through the function of bits, and through a keyed context.
+/// The set through a keyed context, by its bits.
 fn check_enc_bits(v: &Enc) {
     let key = ciphering_key(v);
     let context = CipheringContext::new(&key, ciphering(v));
     let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
-    check_cipher(v, "function", |data| {
-        nea_cipher_bits(&key, v.count, bearer, dir, data, bits, ciphering(v)).unwrap()
-    });
     check_cipher(v, "context", |data| {
         context
             .cipher_bits(v.count, bearer, dir, data, bits)
@@ -438,7 +434,8 @@ fn eia1_sets_6_7() {
         let key = integrity_key(v);
         let msg = h(v.msg);
         let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
-        let got = nia_mac_bits(&key, v.count, bearer, dir, &msg, bits, integrity(v)).unwrap();
+        let context = IntegrityContext::new(&key, integrity(v));
+        let got = context.mac_bits(v.count, bearer, dir, &msg, bits).unwrap();
         assert_eq!(got, v.mac, "{}", v.name);
         println!("{} OK mac={:08x}", v.name, got);
     }
@@ -574,11 +571,11 @@ fn eia2_set_7() {
     let msg = h(v.msg);
     let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
     let algorithm = IntegrityAlgorithm::EIA2;
+    let context = IntegrityContext::new(&key, algorithm);
     assert_eq!(
-        nia_mac_bits(&key, v.count, bearer, dir, &msg, bits, algorithm),
+        context.mac_bits(v.count, bearer, dir, &msg, bits),
         Ok(0xf4cc8fa3)
     );
-    let context = IntegrityContext::new(&key, algorithm);
     assert_eq!(
         context.mac_bits(v.count, bearer, dir, &msg, bits),
         Ok(0xf4cc8fa3)
@@ -621,22 +618,11 @@ fn snow3g_uea2_intermediate_set1_state() {
     );
 }
 #[test]
-fn eia2_all_byte_aligned_sets_via_nia_mac() {
-    // C.2.2 via nia_mac dispatch
+fn eia2_all_byte_aligned_sets_through_a_context() {
+    // C.2.2
     let key = KNasInt::from_slice(&h("d3c5d592327fb11c4035c6680af8c6d1")).unwrap();
     let message = h("484583d5afe082ae");
-    let (count, bearer, algorithm) = (0x398a59b4, bearer(0x1a), IntegrityAlgorithm::EIA2);
-    assert_eq!(
-        nia_mac(
-            &key,
-            count,
-            bearer,
-            Direction::Downlink,
-            &message,
-            algorithm
-        ),
-        0xb93787e6
-    );
+    let (count, bearer, algorithm) = (0x398a59b4_u32, bearer(0x1a), IntegrityAlgorithm::EIA2);
     let context = IntegrityContext::new(&key, algorithm);
     assert_eq!(
         context.mac(count, bearer, Direction::Downlink, &message),
@@ -700,14 +686,7 @@ fn eia1_is_uia2_for_a_downlink_count_of_the_high_bit() {
     assert!(v.count >> 31 == 1);
     let (key, msg) = (integrity_key(v), h(v.msg));
     let (bits, algorithm) = (v.len as u64, IntegrityAlgorithm::EIA1);
-    let mac = nia_mac_bits(
-        &key,
-        v.count,
-        bearer(v.bearer),
-        direction(1),
-        &msg,
-        bits,
-        algorithm,
-    );
+    let context = IntegrityContext::new(&key, algorithm);
+    let mac = context.mac_bits(v.count, bearer(v.bearer), direction(1), &msg, bits);
     assert_eq!(mac, Ok(uia2(&h(v.key), v.count, v.bearer, 1, &msg, bits)));
 }

@@ -49,7 +49,7 @@ pub use keys::{
 pub use oxirush_utils::identity::{
     Guti5g as Guti, MobileIdentityType5gs as MobileIdentityType, STmsi5g as STmsi, Supi, SupiType,
 };
-pub use security::{NasConnection, cipher_job, mac_job, nas_cipher, nas_container_mac, nas_mac};
+pub use security::{NasConnection, nas_cipher, nas_container_mac, nas_mac};
 #[cfg(feature = "suci")]
 #[cfg_attr(docsrs, doc(cfg(feature = "suci")))]
 pub use suci::{

@@ -12,10 +12,11 @@
 use libfuzzer_sys::fuzz_target;
 use oxirush_security::hooks::{narrow, scalar};
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt};
+// The algorithms on a key and a message, which the NAS functions and the contexts run
+use oxirush_security::hooks::{nea_cipher, nea_cipher_bits, nia_mac, nia_mac_bits};
 use oxirush_security::{
     Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
-    IntegrityContext, MacJob, nea_cipher, nea_cipher_batch, nea_cipher_bits, nia_mac,
-    nia_mac_batch, nia_mac_bits,
+    IntegrityContext, MacJob, nea_cipher_batch, nia_mac_batch,
 };
 
 fuzz_target!(|bytes: &[u8]| {

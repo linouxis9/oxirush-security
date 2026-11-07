@@ -45,6 +45,6 @@ pub use keys::{
     KUpEnc, KUpInt, Kn, LwipPsk, NasToken, Nh, SKwt,
 };
 pub use security::{
-    cipher_job, mac_job, nas_cipher, nas_mac, re_establishment_nas_mac, service_request_short_mac,
+    nas_cipher, nas_mac, re_establishment_nas_mac, service_request_short_mac,
     service_request_short_mac_with_header,
 };

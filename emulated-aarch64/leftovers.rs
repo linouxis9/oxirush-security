@@ -29,11 +29,13 @@ use core::mem::ManuallyDrop;
 use oxirush_security::milenage::{
     Amf, K, Milenage, Opc, Sqn, VectorJob, authentication_vector_batch,
 };
-use oxirush_security::nas_5gs::{KAmf, KNasEnc, KNasInt, derive_knas_int};
+use oxirush_security::nas_5gs::{
+    KAmf, KNasEnc, KNasInt, NasConnection, derive_knas_int, nas_cipher, nas_mac,
+};
 use oxirush_security::{
     Autn, Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
-    IntegrityContext, MacJob, Rand, Snow3G, Zuc, constant_time_eq, nea_cipher, nea_cipher_batch,
-    nia_mac, nia_mac_batch,
+    IntegrityContext, MacJob, NasCount, Rand, Snow3G, Zuc, constant_time_eq, nea_cipher_batch,
+    nia_mac_batch,
 };
 
 /// The key of the examples of FIPS 197, whose round keys are known.
@@ -148,15 +150,15 @@ pub enum Kind {
 
 /// The operations: their names, and what they are.
 pub const CASES: [(&str, Kind); 26] = [
-    ("nea_cipher 128-EEA1, 64 octets", Kind::Ciphering(0)),
-    ("nea_cipher 128-EEA2, 64 octets", Kind::Ciphering(1)),
-    ("nea_cipher 128-EEA3, 64 octets", Kind::Ciphering(2)),
-    ("nea_cipher 128-EEA1, 1500 octets", Kind::Ciphering(0)),
-    ("nea_cipher 128-EEA2, 1500 octets", Kind::Ciphering(1)),
-    ("nea_cipher 128-EEA3, 1500 octets", Kind::Ciphering(2)),
-    ("nia_mac 128-EIA1, 1500 octets", Kind::Integrity(0)),
-    ("nia_mac 128-EIA2, 1500 octets", Kind::Integrity(1)),
-    ("nia_mac 128-EIA3, 1500 octets", Kind::Integrity(2)),
+    ("nas_cipher 128-NEA1, 64 octets", Kind::Ciphering(0)),
+    ("nas_cipher 128-NEA2, 64 octets", Kind::Ciphering(1)),
+    ("nas_cipher 128-NEA3, 64 octets", Kind::Ciphering(2)),
+    ("nas_cipher 128-NEA1, 1500 octets", Kind::Ciphering(0)),
+    ("nas_cipher 128-NEA2, 1500 octets", Kind::Ciphering(1)),
+    ("nas_cipher 128-NEA3, 1500 octets", Kind::Ciphering(2)),
+    ("nas_mac 128-NIA1, 1500 octets", Kind::Integrity(0)),
+    ("nas_mac 128-NIA2, 1500 octets", Kind::Integrity(1)),
+    ("nas_mac 128-NIA3, 1500 octets", Kind::Integrity(2)),
     ("CipheringContext::new 128-EEA2", Kind::Ciphering(1)),
     (
         "CipheringContext::cipher 128-EEA2, 1500 octets",
@@ -287,14 +289,33 @@ impl Prepared {
         let downlink = Direction::Downlink;
         self.owned = [0; 2];
         match case {
+            // The NAS connection of 3GPP access is the BEARER 1
             0..=5 => {
                 let data = &mut self.data[0][..if case < 3 { 64 } else { LONGEST }];
-                nea_cipher(&ENC, COUNT, bearer, downlink, data, CIPHERING[case % 3]);
+                let count = NasCount::new(COUNT).unwrap_or(NasCount::ZERO);
+                let algorithm = CIPHERING[case % 3];
+                nas_cipher(
+                    &ENC,
+                    count,
+                    NasConnection::ThreeGpp,
+                    downlink,
+                    data,
+                    algorithm,
+                );
                 0
             }
             6..=8 => {
                 let (data, algorithm) = (&self.data[0], INTEGRITY[case % 3]);
-                nia_mac(&INT, COUNT, bearer, downlink, data, algorithm).into()
+                let count = NasCount::new(COUNT).unwrap_or(NasCount::ZERO);
+                nas_mac(
+                    &INT,
+                    count,
+                    NasConnection::ThreeGpp,
+                    downlink,
+                    data,
+                    algorithm,
+                )
+                .into()
             }
             9 => {
                 let context = CipheringContext::new(&ENC, CipheringAlgorithm::Aes);

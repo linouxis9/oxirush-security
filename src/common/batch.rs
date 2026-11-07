@@ -19,16 +19,16 @@
 //! DIRECTION, as an AMF, an MME or a load generator has them.
 //!
 //! [`nea_cipher_batch`] and [`nia_mac_batch`] give every message what
-//! [`nea_cipher`](crate::nea_cipher) and [`nia_mac`](crate::nia_mac) give
+//! [`CipheringContext::cipher`] and [`IntegrityContext::mac`] give
 //! it alone. A message is a job: [`CipherJob`] or [`MacJob`], which holds
 //! its key with its COUNT, its BEARER, its DIRECTION and its algorithm, so
 //! that none of them goes to another message. The jobs of a batch need not
 //! have the same algorithm or the same length.
 //!
-//! For a NAS message, [`nas_5gs::cipher_job`](crate::nas_5gs::cipher_job),
-//! [`nas_5gs::mac_job`](crate::nas_5gs::mac_job) and their counterparts of
-//! [`nas_eps`](crate::nas_eps) make the job from a NAS COUNT. A keyed
-//! context makes the job of a message with
+//! A NAS message gives its job the 32 bits of its NAS COUNT
+//! ([`NasCount::get`](crate::NasCount::get)), and in 5GS the BEARER of its
+//! [`NasConnection`](crate::nas_5gs::NasConnection). A keyed context makes
+//! the job of a message with
 //! [`CipheringContext::job`](crate::CipheringContext::job) or
 //! [`IntegrityContext::job`](crate::IntegrityContext::job), and the batch
 //! then has what the context has computed from the key.
@@ -86,7 +86,7 @@ pub struct CipherJob<'a> {
 
 impl<'a> CipherJob<'a> {
     /// The message `data`, in whole octets, with what
-    /// [`nea_cipher`](crate::nea_cipher) takes.
+    /// [`CipheringContext::cipher`] takes, with the key and the algorithm.
     pub fn new(
         key: &'a impl CipheringKey,
         count: u32,
@@ -131,7 +131,8 @@ impl<'a> CipherJob<'a> {
     }
 
     /// The first `bit_length` bits of `data`, with what
-    /// [`nea_cipher_bits`](crate::nea_cipher_bits) takes. The unused
+    /// [`CipheringContext::cipher_bits`] takes, with the key and the
+    /// algorithm. The unused
     /// low-order bits of the last octet stay as they are.
     ///
     /// A `bit_length` that `data` does not have is
@@ -203,8 +204,8 @@ impl<'a> CipherJob<'a> {
 /// operation. Each call ciphers every job once more.
 ///
 /// ```
-/// use oxirush_security::nas_5gs::{KNasEnc, NasConnection, cipher_job, nas_cipher};
-/// use oxirush_security::{CipheringAlgorithm, Direction, NasCount, nea_cipher_batch};
+/// use oxirush_security::nas_5gs::{KNasEnc, NasConnection, nas_cipher};
+/// use oxirush_security::{CipherJob, CipheringAlgorithm, Direction, NasCount, nea_cipher_batch};
 ///
 /// // The downlink messages of two UEs, each with its key and its NAS COUNT
 /// let keys = [KNasEnc::new(&[0x11; 16]), KNasEnc::new(&[0x22; 16])];
@@ -213,7 +214,9 @@ impl<'a> CipherJob<'a> {
 /// let nea1 = CipheringAlgorithm::NEA1;
 /// let mut messages = [vec![0x7e, 0x00, 0x54, 0x43, 0x90], vec![0x7e, 0x00, 0x5d, 0x02]];
 /// let mut jobs: Vec<_> = (messages.iter_mut().zip(&keys).zip(counts))
-///     .map(|((message, key), count)| cipher_job(key, count, access, downlink, message, nea1))
+///     .map(|((message, key), count)| {
+///         CipherJob::new(key, count.get(), access.into(), downlink, message, nea1)
+///     })
 ///     .collect();
 /// nea_cipher_batch(&mut jobs);
 ///
@@ -258,7 +261,7 @@ pub struct MacJob<'a> {
 
 impl<'a> MacJob<'a> {
     /// The message `message`, in whole octets, with what
-    /// [`nia_mac`](crate::nia_mac) takes.
+    /// [`IntegrityContext::mac`] takes, with the key and the algorithm.
     pub fn new(
         key: &'a impl IntegrityKey,
         count: u32,
@@ -301,7 +304,8 @@ impl<'a> MacJob<'a> {
     }
 
     /// The first `bit_length` bits of `message`, with what
-    /// [`nia_mac_bits`](crate::nia_mac_bits) takes.
+    /// [`IntegrityContext::mac_bits`] takes, with the key and the
+    /// algorithm.
     ///
     /// A `bit_length` that `message` does not have is
     /// [`SecurityError::BitLengthExceedsData`].
@@ -352,8 +356,8 @@ impl<'a> MacJob<'a> {
 /// returns.
 ///
 /// ```
-/// use oxirush_security::nas_5gs::{KNasInt, NasConnection, mac_job, nas_mac};
-/// use oxirush_security::{Direction, IntegrityAlgorithm, NasCount, nia_mac_batch};
+/// use oxirush_security::nas_5gs::{KNasInt, NasConnection, nas_mac};
+/// use oxirush_security::{Direction, IntegrityAlgorithm, MacJob, NasCount, nia_mac_batch};
 ///
 /// // The uplink messages of two UEs, each with its key, its NAS COUNT and its algorithm
 /// let keys = [KNasInt::new(&[0x44; 16]), KNasInt::new(&[0x55; 16])];
@@ -362,7 +366,10 @@ impl<'a> MacJob<'a> {
 /// let (access, uplink) = (NasConnection::ThreeGpp, Direction::Uplink);
 /// let messages = [[0x07, 0x7e, 0x00, 0x43], [0x00, 0x7e, 0x00, 0x43]];
 /// let mut jobs: Vec<_> = (0..2)
-///     .map(|ue| mac_job(&keys[ue], counts[ue], access, uplink, &messages[ue], algorithms[ue]))
+///     .map(|ue| {
+///         let (count, message) = (counts[ue].get(), &messages[ue]);
+///         MacJob::new(&keys[ue], count, access.into(), uplink, message, algorithms[ue])
+///     })
 ///     .collect();
 /// nia_mac_batch(&mut jobs);
 ///
@@ -692,7 +699,7 @@ mod lanes {
 mod tests {
     use super::*;
     use crate::common::nea::{nea_cipher, nea_cipher_bits};
-    use crate::common::nia::nia_mac_bits;
+    use crate::common::nia::{nia_mac, nia_mac_bits};
     use crate::{nas_5gs, nas_eps};
 
     /// Numbers that look random, the same at every run.
@@ -913,7 +920,7 @@ mod tests {
                         let (key, count) = (&message.key, message.count);
                         let (bearer, direction) = (message.bearer, message.direction);
                         let expected =
-                            crate::nia_mac(key, count, bearer, direction, &message.data, integrity);
+                            nia_mac(key, count, bearer, direction, &message.data, integrity);
                         assert_eq!(job.mac(), Some(expected), "{integrity:?}, {length} octets");
                     }
                     drop(macs);
@@ -1028,13 +1035,19 @@ mod tests {
                 let mut data = [*b"a 5GS NAS message"; 5];
                 let mut jobs: Vec<_> = data
                     .iter_mut()
-                    .map(|data| nas_5gs::cipher_job(&enc, count, connection, uplink, data, cipher))
+                    .map(|data| {
+                        let bearer = connection.into();
+                        CipherJob::new(&enc, count.get(), bearer, uplink, data, cipher)
+                    })
                     .collect();
                 nea_cipher_batch(&mut jobs);
                 assert_eq!(data, [expected; 5]);
                 let mut jobs: Vec<_> = data
                     .iter()
-                    .map(|data| nas_5gs::mac_job(&int, count, connection, uplink, data, integrity))
+                    .map(|data| {
+                        let bearer = connection.into();
+                        MacJob::new(&int, count.get(), bearer, uplink, data, integrity)
+                    })
                     .collect();
                 nia_mac_batch(&mut jobs);
                 assert!(jobs.iter().all(|job| job.mac() == Some(mac)));
@@ -1048,13 +1061,13 @@ mod tests {
             let mut data = [*b"an EPS NAS message"; 5];
             let mut jobs: Vec<_> = data
                 .iter_mut()
-                .map(|data| nas_eps::cipher_job(&enc, count, uplink, data, cipher))
+                .map(|data| CipherJob::new(&enc, count.get(), Bearer::ZERO, uplink, data, cipher))
                 .collect();
             nea_cipher_batch(&mut jobs);
             assert_eq!(data, [expected; 5]);
             let mut jobs: Vec<_> = data
                 .iter()
-                .map(|data| nas_eps::mac_job(&int, count, uplink, data, integrity))
+                .map(|data| MacJob::new(&int, count.get(), Bearer::ZERO, uplink, data, integrity))
                 .collect();
             nia_mac_batch(&mut jobs);
             assert!(jobs.iter().all(|job| job.mac() == Some(mac)));
