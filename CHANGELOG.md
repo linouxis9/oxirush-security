@@ -8,8 +8,17 @@ All notable changes to `oxirush-security` are recorded here.
   `batch::cipher` and `batch::mac` (once `nea_cipher_batch` and
   `nia_mac_batch`), `batch::authentication_vectors` and `batch::check_autn`
   (once `milenage::authentication_vector_batch` and `check_autn_batch`), the
-  jobs `CipherJob`, `MacJob`, `VectorJob` and `AutnJob`, the `job` of a keyed
-  context and the side-by-side counts of `Implementation`.
+  jobs `CipherJob`, `MacJob`, `VectorJob` and `AutnJob`, and the `job` of a
+  keyed context.
+- `select_integrity_algorithm` and `select_ciphering_algorithm` take the
+  preference, which `DEFAULT_INTEGRITY_PREFERENCE` and
+  `DEFAULT_CIPHERING_PREFERENCE` give by default: `select_*_algo` and
+  `select_*_algo_with_preference` are gone.
+- `nas_eps::service_request_short_mac` takes the first octet of the message
+  and refuses one that is not of a SERVICE REQUEST: it is
+  `service_request_short_mac_with_header`, which is gone.
+- `Implementation` says which code runs, and `Code` with the code of each
+  algorithm and the side-by-side counts are gone.
 - The algorithms run through the keyed contexts: `CipheringContext::new(&key,
   algorithm).cipher(..)` and `IntegrityContext::new(&key, algorithm).mac(..)`,
   with `cipher_bits` and `mac_bits`, take any COUNT and BEARER, and a NAS

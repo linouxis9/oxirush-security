@@ -44,7 +44,4 @@ pub use keys::{
     AccessKey, CkPrime, CkSrvcc, IkPrime, IkSrvcc, KAsme, KEnb, KNasEnc, KNasInt, KRrcEnc, KRrcInt,
     KUpEnc, KUpInt, Kn, LwipPsk, NasToken, Nh, SKwt,
 };
-pub use security::{
-    nas_cipher, nas_mac, re_establishment_nas_mac, service_request_short_mac,
-    service_request_short_mac_with_header,
-};
+pub use security::{nas_cipher, nas_mac, re_establishment_nas_mac, service_request_short_mac};

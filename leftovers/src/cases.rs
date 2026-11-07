@@ -352,7 +352,7 @@ fn algorithms(cases: &mut Cases) {
                 let uplink = Direction::Uplink;
                 crate::here();
                 let value = spare(nas_eps::service_request_short_mac(
-                    key, count, uplink, 0x34, algorithm,
+                    key, count, uplink, 0xc7, 0x34, algorithm,
                 ));
                 crate::owned(&value);
             },

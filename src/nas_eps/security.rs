@@ -131,31 +131,14 @@ pub fn re_establishment_nas_mac(
 /// Compute the short MAC of a SERVICE REQUEST: the two least significant
 /// octets of the MAC over its first two octets (TS 24.301 §9.9.3.28).
 ///
+/// `first_octet` is that of the message: 0xC7, security header type 12 with
+/// the protocol discriminator of EMM, which a sender writes, or 0xD7, 0xE7
+/// or 0xF7, which TS 24.301 §9.3.1 reads as a SERVICE REQUEST too.
 /// `ksi_and_sequence_number` is the second octet: the 3-bit KSI and the
-/// 5-bit NAS sequence number. The first octet is 0xC7, security header type
-/// 12 with the protocol discriminator of EMM.
-pub fn service_request_short_mac(
-    key: &KNasInt,
-    count: NasCount,
-    direction: Direction,
-    ksi_and_sequence_number: u8,
-    algorithm: IntegrityAlgorithm,
-) -> u16 {
-    nas_mac(
-        key,
-        count,
-        direction,
-        &[0xc7, ksi_and_sequence_number],
-        algorithm,
-    ) as u16
-}
-
-/// Compute a short MAC with the first octet that a SERVICE REQUEST was
-/// received with. TS 24.301 §9.3.1 reads the security header types 12 to
-/// 15 as a SERVICE REQUEST, so the octet is 0xC7, 0xD7, 0xE7 or 0xF7.
+/// 5-bit NAS sequence number.
 ///
 /// Another `first_octet` is [`SecurityError::InvalidParameter`].
-pub fn service_request_short_mac_with_header(
+pub fn service_request_short_mac(
     key: &KNasInt,
     count: NasCount,
     direction: Direction,
@@ -249,13 +232,9 @@ mod tests {
                 IntegrityAlgorithm::EIA2,
             ) as u16
         };
-        assert_eq!(
-            service_request_short_mac(&key, count, uplink, 0x2a, IntegrityAlgorithm::EIA2),
-            over([0xc7, 0x2a])
-        );
         for first_octet in [0xc7, 0xd7, 0xe7, 0xf7] {
             assert_eq!(
-                service_request_short_mac_with_header(
+                service_request_short_mac(
                     &key,
                     count,
                     uplink,
@@ -268,7 +247,7 @@ mod tests {
         }
         for first_octet in [0x07, 0x17, 0xb7, 0xc0, 0xc2] {
             assert!(
-                service_request_short_mac_with_header(
+                service_request_short_mac(
                     &key,
                     count,
                     uplink,

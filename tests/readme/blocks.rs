@@ -265,9 +265,10 @@ fn block_6() {
         let mac = nas_mac(&knas_int, count, uplink, &protected, eia2);
         println!("ciphered {}, MAC {mac:08x}", hex::encode(message));
 
-        // The short MAC of a SERVICE REQUEST with NAS COUNT 1: KSI 0 and sequence
-        // number 1 in its second octet
-        let short_mac = service_request_short_mac(&knas_int, count.next()?, uplink, 0x01, eia2);
+        // The short MAC of a SERVICE REQUEST with NAS COUNT 1: its first octet,
+        // then KSI 0 and sequence number 1 in its second
+        let next = count.next()?;
+        let short_mac = service_request_short_mac(&knas_int, next, uplink, 0xc7, 0x01, eia2)?;
         println!("short MAC {short_mac:04x}");
         Ok(())
     }
@@ -478,26 +479,27 @@ fn block_11() {
 /// The Rust block 12 of README.md.
 fn block_12() {
     use oxirush_security::{
-        CipheringAlgorithm, IntegrityAlgorithm, select_ciphering_algo, select_integrity_algo,
-        select_integrity_algo_with_preference,
+        CipheringAlgorithm, DEFAULT_CIPHERING_PREFERENCE, DEFAULT_INTEGRITY_PREFERENCE,
+        IntegrityAlgorithm, select_ciphering_algorithm, select_integrity_algorithm,
     };
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The EA and IA octets of a UE security capability: EA0, EA1 and EA2, and
         // IA1 and IA2. 128-NEA2 and 128-NIA2 are AES, 128-NEA1 and 128-NIA1 SNOW 3G
-        println!("{:?}", select_ciphering_algo(0xe0));
-        println!("{:?}", select_integrity_algo(0x60));
+        let nia = select_integrity_algorithm(0x60, DEFAULT_INTEGRITY_PREFERENCE);
+        println!("{:?}", select_ciphering_algorithm(0xe0, DEFAULT_CIPHERING_PREFERENCE));
+        println!("{nia:?}");
 
         // An operator's order in the place of NIA2, NIA1, NIA3
         let order = [IntegrityAlgorithm::NIA1, IntegrityAlgorithm::NIA2];
-        println!("{:?}", select_integrity_algo_with_preference(0x60, &order));
+        println!("{:?}", select_integrity_algorithm(0x60, &order));
 
         // An identifier from a message: 4 to 7 are reserved
         println!("{:?}", CipheringAlgorithm::try_from(2));
         println!("{:?}", IntegrityAlgorithm::try_from(5));
 
         // The name of an algorithm in each system, for a log
-        if let Some(selected) = select_integrity_algo(0x60) {
+        if let Some(selected) = nia {
             println!("{} in 5GS, {} in EPS", selected.name_5gs(), selected.name_eps());
         }
         Ok(())

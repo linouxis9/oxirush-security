@@ -81,7 +81,7 @@
 //! | Derive the keys of a handover | [`nas_5gs::derive_kgnb`], [`nas_5gs::derive_nh`], [`nas_5gs::derive_kng_ran_star`], [`nas_5gs::derive_kamf_prime_handover`] |
 //! | Conceal and deconceal a SUCI, with the `suci` and `nai` features | `nas_5gs::Suci::conceal_imsi`, `nas_5gs::Suci::conceal_nai`, `nas_5gs::Suci::deconceal`, `nas_5gs::HomeNetworkPrivateKey` |
 //! | Run an algorithm on a 3GPP test set | [`CipheringContext::cipher_bits`], [`IntegrityContext::mac_bits`] |
-//! | Select the algorithms | [`select_ciphering_algo`], [`select_integrity_algo`], [`select_integrity_algo_with_preference`] |
+//! | Select the algorithms | [`select_ciphering_algorithm`], [`select_integrity_algorithm`], [`DEFAULT_CIPHERING_PREFERENCE`], [`DEFAULT_INTEGRITY_PREFERENCE`] |
 //! | Encode a PLMN identity, a 5G-GUTI and TBCD digits | [`Plmn`], [`nas_5gs::Guti`], `tbcd` with `alloc` |
 //!
 //! # Where things are
@@ -124,7 +124,7 @@
 //! | SUPI and SUCI | `nas_5gs::Supi`; `nas_5gs::Suci` with the null scheme, Profile A (X25519) and Profile B (secp256r1), for an IMSI and for a NAI, on the SUPI and the two forms of a SUCI of oxirush-utils | TS 33.501 Annex C, TS 23.003 §2.2A, §2.2B and §28.7.3 | 3GPP |
 //! | 5G-GUTI, 5G-S-TMSI | `nas_5gs::Guti`, `nas_5gs::STmsi`: the values of oxirush-utils | TS 24.501 §9.11.3.4 | calculated |
 //! | PLMN and TBCD | [`Plmn`], `tbcd::encode`, `tbcd::decode`: those of oxirush-utils | TS 24.008 §10.5.1.3, TS 29.002 | calculated |
-//! | Algorithm selection | [`select_integrity_algo`], [`select_ciphering_algo`] and their `*_with_preference` forms | TS 33.401 §7.2.4.3.1, TS 33.501 §6.7.1 | calculated |
+//! | Algorithm selection | [`select_integrity_algorithm`], [`select_ciphering_algorithm`], with a preference such as the default ones | TS 33.401 §7.2.4.3.1, TS 33.501 §6.7.1 | calculated |
 //!
 //! The default order of the selection is NIA2, NIA1, NIA3, never NIA0, and
 //! NEA2, NEA1, NEA3, NEA0.
@@ -472,10 +472,10 @@ pub mod kdf {
 // has under the same name with another meaning: the keys of a hierarchy
 // and their derivations are in the module of their system.
 pub use common::algo::{
-    select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
-    select_integrity_algo_with_preference,
+    DEFAULT_CIPHERING_PREFERENCE, DEFAULT_INTEGRITY_PREFERENCE, select_ciphering_algorithm,
+    select_integrity_algorithm,
 };
-pub use common::code::{Code, Implementation, implementation};
+pub use common::code::{Implementation, implementation};
 pub use common::context::{CipheringContext, IntegrityContext};
 pub use common::ct::constant_time_eq;
 pub use common::error::SecurityError;

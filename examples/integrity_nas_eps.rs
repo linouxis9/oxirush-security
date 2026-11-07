@@ -69,9 +69,11 @@ fn main() {
         &key,
         count,
         direction,
+        0xc7,
         ksi_and_sequence_number,
         IntegrityAlgorithm::EIA2,
-    );
+    )
+    .expect("the first octet of a SERVICE REQUEST");
     println!("SERVICE REQUEST short MAC (EIA2): 0x{short_mac:04x}");
 
     // The MME has the NAS COUNT of the SERVICE REQUEST from those five bits

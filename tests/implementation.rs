@@ -27,28 +27,12 @@
 //! OXIRUSH_SECURITY_EXPECT=Vector256 cargo test --test implementation -- --nocapture
 //! ```
 
-use oxirush_security::{CipheringAlgorithm, Implementation, IntegrityAlgorithm, implementation};
+use oxirush_security::{Implementation, implementation};
 
 #[test]
 fn the_implementation_is_the_one_that_the_job_expects() {
     let implementation = implementation();
     println!("oxirush-security runs: {implementation:?} ({implementation})");
-    for (name, ciphering, integrity) in [
-        (
-            "SNOW 3G",
-            CipheringAlgorithm::NEA1,
-            IntegrityAlgorithm::NIA1,
-        ),
-        ("AES", CipheringAlgorithm::NEA2, IntegrityAlgorithm::NIA2),
-        ("ZUC", CipheringAlgorithm::NEA3, IntegrityAlgorithm::NIA3),
-    ] {
-        println!(
-            "  {name}: ciphering on {}, integrity on {}",
-            implementation.ciphering(ciphering),
-            implementation.integrity(integrity),
-        );
-    }
-    println!("  MILENAGE: AES on {}", implementation.milenage());
 
     let Ok(expected) = std::env::var("OXIRUSH_SECURITY_EXPECT") else {
         return;

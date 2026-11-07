@@ -119,7 +119,7 @@ fn the_values_of_milenage_that_travel_are_printed_whole() {
 
 #[test]
 fn the_code_that_runs_is_printed_by_what_it_is() {
-    use oxirush_security::{Code, Implementation};
+    use oxirush_security::Implementation;
     assert_eq!(
         [
             Implementation::Scalar,
@@ -131,23 +131,6 @@ fn the_code_that_runs_is_printed_by_what_it_is() {
             "scalar code, and the aes crate for AES",
             "vector and AES instructions of 128 bits, four generators side by side in a batch",
             "vector and AES instructions of 128 bits, eight generators side by side in a batch on AVX2",
-        ]
-    );
-    assert_eq!(
-        [
-            Code::Null,
-            Code::Scalar,
-            Code::AesCrate,
-            Code::Vector,
-            Code::AesInstructions
-        ]
-        .map(|code| code.to_string()),
-        [
-            "nothing",
-            "scalar code",
-            "the aes crate",
-            "vector instructions",
-            "AES instructions"
         ]
     );
 }
