@@ -15,7 +15,9 @@
 all_features = true
 
 # Mutants that `cargo test` on x86-64 cannot see, each with why, and which job of
-# the workflow runs them where they are seen.
+# the workflow runs them where they are seen. Each is named by its function, and by
+# its column where the function has another mutant of the same name, so that an edit
+# elsewhere in the file leaves the name as it is.
 exclude_re = [
     # What is set to zero after a piece of work, on the stack and in the registers:
     # leftovers/ alone sees it, a program of its own that reads its stack. The job
@@ -23,20 +25,19 @@ exclude_re = [
     'src/common/wipe\.rs:.*: replace (Clear<DEPTH>::clear|<impl Drop for Clear<DEPTH>>::drop) with \(\)$',
     'src/common/wipe\.rs:.* in (Clear<DEPTH>::clear|after)$',
     # And the clearing of the vector registers and the stack after a piece of work on
-    # x86-64, which leftovers/ finds left as they were.
-    'src/common/simd/mod\.rs:221:5: replace clear with \(\)$',
-    # The same clearing on AArch64, which x86-64 does not build: the job
-    # `emulated-aarch64` runs its mutant with emulated-aarch64/, which finds the
-    # areas that the crate cleared, and the vector registers, not zero.
-    'src/common/simd/mod\.rs:340:5: replace clear with \(\)$',
+    # x86-64, which leftovers/ finds left as they were, and the same clearing on
+    # AArch64, which x86-64 does not build: the job `emulated-aarch64` runs its mutant
+    # with emulated-aarch64/, which finds the areas that the crate cleared, and the
+    # vector registers, not zero.
+    'src/common/simd/mod\.rs:.*: replace clear with \(\)$',
     # `Clear::now` without its body drops the value it takes, whose `Drop` clears: the
     # mutant clears at the same place.
     'src/common/wipe\.rs:.*: replace Clear<DEPTH>::now with \(\)$',
     # The clearing of the stack of the targets other than x86-64 and AArch64, which a
     # build for them alone has: leftovers/ reads the stack of x86-64 Linux. Its hook is
-    # named by its line, for that of x86-64 has a mutant of the same name.
+    # named by its column, for that of x86-64 has a mutant of the same name.
     'src/common/wipe\.rs:.*: replace stack with \(\)$',
-    'src/common/wipe\.rs:242:16: delete ! in Clear<DEPTH>::clear$',
+    'src/common/wipe\.rs:\d+:16: delete ! in Clear<DEPTH>::clear$',
     # The hooks of `--cfg oxirush_security_hooks`, which only the fuzz targets, the
     # emulated AArch64 program and leftovers/ build: `cargo test` has its own ones.
     # The job `leftovers` runs these mutants too.
@@ -46,25 +47,21 @@ exclude_re = [
     'src/common/simd/mod\.rs:.*: replace allowed::(get|replace) ',
     # The detection of AArch64, which x86-64 does not build: the job `aarch64` runs its
     # mutant `false` on an AArch64 runner. There the instructions are found before the
-    # standard library is asked (line 181), and `true` is what it answers.
-    'src/common/simd/mod\.rs:(172|181):',
-    # The detection of the instructions answers true on a runner that has them,
-    # which every runner of the workflow has: `true` is what it gives there. On a
-    # processor without them the vector code would fault, which none can show.
-    'src/common/simd/mod\.rs:.*: replace detected -> bool with true$',
+    # standard library is asked, and `true` is what it answers.
+    'src/common/simd/mod\.rs:.*: replace (detected -> bool with (true|false)|&& with \|\| in detected)$',
     # Likewise the 256-bit vector code is available on a runner where the instructions
     # of both its tests are: `||` answers there as `&&` does.
     'src/common/simd/mod\.rs:.*: replace && with \|\| in wide_available$',
     # The shuffle of ShiftRows gives indices of 0 to 15, and the mutant 16 to 47 with
     # the same four low bits: PSHUFB of x86-64 reads those four alone. TBL of AArch64
     # reads the whole index: the job `aarch64` runs this mutant.
-    'src/common/simd/tables\.rs:88:60: replace % with \+',
+    'src/common/simd/tables\.rs:\d+:60: replace % with \+$',
     # Fields of distinct bits, each kept to its own: `^` joins them as `|` does. The
     # bits of the last octet that are not of the message and those that are; BEARER
     # (bits 8 to 4) and DIRECTION (bit 3) of the counter block; the halves of P and Q
     # of 128-EIA1; the octets of the columns of ZUC, the halves of its bit
     # reorganisation and of its words of F.
-    'src/common/batch\.rs:.*: replace \| with \^ in CipherJob<.a>::restore$',
+    'src/batch\.rs:.*: replace \| with \^ in CipherJob<.a>::restore$',
     'src/common/nea\.rs:.*: replace \| with \^ in ctr_prefix$',
     'src/common/nia\.rs:.*: replace \| with \^ in eia1_evaluate$',
     'src/common/zuc\.rs:.*: replace \| with \^ in (sboxes|Scalar::bit_reorg|Scalar::f|load)$',
@@ -76,7 +73,7 @@ exclude_re = [
     'src/common/snow3g\.rs:.*: replace \| with \^ in mul_alpha_value$',
     'src/common/nia\.rs:.*: replace \| with \^ in Eia3<.a>::word$',
     'src/milenage/kernel\.rs:.*: replace \| with \^ in in1$',
-    'src/common/nia\.rs:655:12: replace \^= with \|= in eia3_iv$',
+    'src/common/nia\.rs:\d+:12: replace \^= with \|= in eia3_iv$',
     # And the bits of the last octet that a message keeps and those that it ciphers;
     # BEARER (bits 31 to 27) and DIRECTION (bit 26) of the IV of 128-EEA1, and their
     # bits 7 to 3 and 2 in octet 4 of that of 128-EEA3; FRESH (bits 31 to 27) and
@@ -86,42 +83,40 @@ exclude_re = [
     # of their product; the two nibbles of the S-box S0 of ZUC, and those of its table
     # of Q2, which the rotation of 5 takes to bits 1 to 4 and to bits 5 to 7 and 0.
     'src/common/nea\.rs:.*: replace \| with \^ in (cipher_bits|eea1_key_and_iv|eea3_iv)$',
-    'src/common/nia\.rs:216:21: replace \^ with \| in eia1_key_and_iv$',
+    'src/common/nia\.rs:\d+:21: replace \^ with \| in eia1_key_and_iv$',
     'src/common/nia\.rs:.*: replace \| with \^ in (number_of|eia3_groups)$',
     'src/common/snow3g\.rs:.*: replace \| with \^ in (div_alpha_value|mul_div_alpha)$',
-    'src/common/snow3g\.rs:113:49: replace \| with \^$',
-    'src/common/zuc\.rs:99:16: replace \| with \^ in s0$',
-    'src/common/simd/tables\.rs:127:50: replace \^ with \|$',
+    'src/common/snow3g\.rs:\d+:49: replace \| with \^$',
+    'src/common/zuc\.rs:.*: replace \| with \^ in s0$',
+    'src/common/simd/tables\.rs:.*: replace \^ with \|$',
     # A linear map of the octets, given by the images of its bits, whose mutant takes
     # the bits that are clear: the image of the complement, `linear(x) + linear(0xff)`.
     # Its two tables, of the low nibble and of the high one, each gain linear(0xff),
     # which cancels in their sum, the one way the vector code reads them.
-    'src/common/simd/tables\.rs:139:31: replace == with != in linear$',
+    'src/common/simd/tables\.rs:.*: replace == with != in linear$',
     # The code that runs side by side gives what the code that runs one at a time gives:
     # blocks of AES one by one rather than in groups, the widest group of chains of
     # 128-EIA2 for a count that the mutant makes negative, the round keys computed
     # again rather than taken from a context, a batch done by the portable code when
     # the vector code says it did none, a piece of work of no message, and a stream of
     # no word given a lane.
-    'src/common/aes128\.rs:155:25: replace > with (==|<|>=) in <impl BlockCipherEncClosure for Blocks<._>>::call$',
-    'src/common/aes128\.rs:155:29: replace && with \|\| in <impl BlockCipherEncClosure for Blocks<._>>::call$',
-    'src/common/aes128\.rs:155:45: replace <= with > in <impl BlockCipherEncClosure for Blocks<._>>::call$',
-    'src/common/aes128\.rs:238:25: replace <= with > in <impl BlockCipherEncClosure for Counter<._>>::call$',
-    'src/common/batch\.rs:.*: replace \+= with -= in lanes::mac_aes$',
+    'src/common/aes128\.rs:.*: replace (> with (==|<|>=)|&& with \|\||<= with >) in <impl BlockCipherEncClosure for Blocks<._>>::call$',
+    'src/common/aes128\.rs:.*: replace <= with > in <impl BlockCipherEncClosure for Counter<._>>::call$',
+    'src/batch\.rs:.*: replace \+= with -= in lanes::mac_aes$',
     'src/common/context\.rs:.*: replace CipheringContext::schedule -> Option<&crate::common::simd::AesSchedule> with None$',
     'src/common/context\.rs:.*: replace IntegrityContext::cmac_key -> Option<crate::common::nia::CmacKey<._>> with None$',
-    'src/common/batch\.rs:.*: replace MacJob<.a>::keyed -> Option<crate::common::nia::CmacKey<.a>> with None$',
+    'src/batch\.rs:.*: replace MacJob<.a>::keyed -> Option<crate::common::nia::CmacKey<.a>> with None$',
     'src/common/aes128\.rs:.*: replace RoundKeys<.a>::schedule -> Option<\(Instructions, &.a AesSchedule\)> with None$',
     'src/common/aes128\.rs:.*: replace expand -> \(Expanded, Schedule\) with \(Default::default\(\), Default::default\(\)\)$',
-    'src/common/batch\.rs:.*: replace lanes::(cipher|mac) -> bool with false$',
-    'src/common/batch\.rs:.*: replace > with >= in lanes::(cipher|mac)$',
-    'src/common/simd/lanes\.rs:85:62: replace > with >= in run$',
+    'src/batch\.rs:.*: replace lanes::(cipher|mac) -> bool with false$',
+    'src/batch\.rs:.*: replace > with >= in lanes::(cipher|mac)$',
+    'src/common/simd/lanes\.rs:\d+:62: replace > with >= in run$',
     # And the MACs that the portable code computes again after the vector code has
     # computed them; groups of AES of eight places, some of no message, rather than of
     # one, two or four; one clock of the generators at a time; four generators side by
     # side rather than eight, or eight rather than four.
-    'src/common/batch\.rs:386:14: replace && with \|\| in nia_mac_batch$',
-    'src/common/batch\.rs:.*: delete match arm (1|2|3 \| 4) in lanes::mac_aes$',
+    'src/batch\.rs:.*: replace && with \|\| in mac$',
+    'src/batch\.rs:.*: delete match arm (1|2|3 \| 4) in lanes::mac_aes$',
     'src/common/simd/lanes\.rs:.*: replace Lane<S>::clocks -> usize with 1$',
     'src/common/simd/mod\.rs:.*: replace > with (<|==|>=) in (snow3g|zuc)_lanes$',
     # No round keys are a value of no instructions and of zeros, which the defaults are.
@@ -130,5 +125,5 @@ exclude_re = [
     # parts of 52 octets, a multiple of four, take the keystream in its order as parts
     # of 192 do.
     'src/common/context\.rs:.*: replace match guard data\.is_empty\(\) with false in CipheringContext::cipher_(message|whole)$',
-    'src/common/nea\.rs:161:35: replace \* with \+ in xor_keystream$',
+    'src/common/nea\.rs:.*: replace \* with \+ in xor_keystream$',
 ]

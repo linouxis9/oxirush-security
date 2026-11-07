@@ -157,15 +157,13 @@ pub(crate) fn available() -> bool {
     if allowed::get() == Allowed::Scalar {
         return false;
     }
+    #[cfg(target_arch = "x86_64")]
+    return vector_128::get();
+    #[cfg(target_arch = "aarch64")]
     detected()
 }
 
-#[cfg(target_arch = "x86_64")]
-#[inline]
-fn detected() -> bool {
-    vector_128::get()
-}
-
+/// Whether an AArch64 processor has the instructions of the vector paths.
 #[cfg(target_arch = "aarch64")]
 #[inline]
 fn detected() -> bool {
