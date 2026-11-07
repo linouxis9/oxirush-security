@@ -11,7 +11,7 @@ oxirush-security runs: Vector256 (vector and AES instructions of 128 bits, eight
 operation                                                                    form  depth  cleared  areas
 nea_cipher 128-EEA2, 64 octets                                        vector code    576     2304      1   nothing left (12 without the clearing)
 CipheringContext::cipher 128-EEA2, 64 octets                          vector code    176     1792      1   nothing left (6 without the clearing)
-nia_mac_batch of 128-EIA2, 16 x 61 octets, from contexts              vector code   7944    18432      1   nothing left
+batch::mac of 128-EIA2, 16 x 61 octets, from contexts                 vector code   7944    18432      1   nothing left
 nas_5gs::derive_kamf                                                  vector code   1048     4096      1   nothing left (4 without the clearing)
 Suci::deconceal, Profile B                                            vector code   4224    12288      1   nothing left (2 without the clearing)
 ...
@@ -19,11 +19,11 @@ Suci::deconceal, Profile B                                            vector cod
 the deepest work for each number of octets that is cleared:
     1536    216  14 %   Zuc::next_word, scalar code
     1792    368  20 %   CipheringContext::cipher 128-EEA2, 1500 octets, vector code
-    2304    800  34 %   nea_cipher_batch of 128-EEA2, 16 x 1500 octets, from keys, vector code
+    2304    800  34 %   batch::cipher of 128-EEA2, 16 x 1500 octets, from keys, vector code
     4096   1240  30 %   nas_5gs::compute_res_star, vector code
     8192   2344  28 %   IntegrityContext::new 128-EIA2, scalar code
    12288   4224  34 %   Suci::deconceal, Profile B, vector code
-   18432   7944  43 %   nia_mac_batch of 128-EIA2, 16 x 61 octets, from contexts, vector code
+   18432   7944  43 %   batch::mac of 128-EIA2, 16 x 61 octets, from contexts, vector code
 ```
 
 The program calls each public operation of oxirush-security that computes

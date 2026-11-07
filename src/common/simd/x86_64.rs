@@ -189,4 +189,5 @@ operations! {
 
 sboxes!("ssse3,sse4.1,aes,pclmulqdq");
 generators!("ssse3,sse4.1,aes,pclmulqdq");
+#[cfg(feature = "batch")]
 lanes!("ssse3,sse4.1,aes,pclmulqdq", 4);

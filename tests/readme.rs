@@ -42,7 +42,7 @@
 //! cargo test --test readme
 //! ```
 // The blocks use every feature, which the default ones are.
-#![cfg(feature = "suci")]
+#![cfg(all(feature = "suci", feature = "batch"))]
 
 use std::fmt::Write;
 

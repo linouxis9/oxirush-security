@@ -26,7 +26,7 @@
 //! A benchmark is `milenage/implementation/function`: one call, from K and
 //! OPc. `milenage/N/function/form` is the vectors or the AUTN checks of N
 //! subscribers, each with its K: `single` is a call for each, `batch` one
-//! call of `authentication_vector_batch` or `check_autn_batch` for all. `oxirush` is this crate, on the AES instructions of the processor
+//! call of `batch::authentication_vectors` or `batch::check_autn` for all. `oxirush` is this crate, on the AES instructions of the processor
 //! where it has them; `milenage-0.1.6` is the `milenage` crate, whose AES is
 //! that of the `aes` crate 0.8, which finds the AES instructions itself.
 //! With the hooks of the crate and `FORM=scalar`, this crate runs its code
@@ -35,10 +35,8 @@
 //! the `aes` crate 0.8 is with `--cfg aes_force_soft`.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
-use oxirush_security::milenage::{
-    Amf, AutnJob, Auts, K, Milenage, Op, Opc, Sqn, VectorJob, authentication_vector_batch,
-    check_autn_batch,
-};
+use oxirush_security::batch::{self, AutnJob, VectorJob};
+use oxirush_security::milenage::{Amf, Auts, K, Milenage, Op, Opc, Sqn};
 use oxirush_security::{Autn, Rand};
 use pprof::criterion::{Output, PProfProfiler};
 use std::hint::black_box;
@@ -182,7 +180,7 @@ fn batches(criterion: &mut Criterion) {
                     .iter()
                     .map(|(subscriber, rand)| VectorJob::new(subscriber, rand, &sqn, &amf))
                     .collect();
-                authentication_vector_batch(&mut jobs);
+                batch::authentication_vectors(&mut jobs);
                 jobs
             })
         });
@@ -198,7 +196,7 @@ fn batches(criterion: &mut Criterion) {
                 let mut jobs: Vec<AutnJob<'_>> = (black_box(&subscribers).iter().zip(&autns))
                     .map(|((subscriber, rand), autn)| AutnJob::new(subscriber, rand, autn))
                     .collect();
-                check_autn_batch(&mut jobs);
+                batch::check_autn(&mut jobs);
                 jobs
             })
         });

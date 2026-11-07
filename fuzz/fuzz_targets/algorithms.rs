@@ -13,10 +13,10 @@ use libfuzzer_sys::fuzz_target;
 use oxirush_security::hooks::{narrow, scalar};
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt};
 // The algorithms on a key and a message, which the NAS functions and the contexts run
+use oxirush_security::batch::{self, CipherJob, MacJob};
 use oxirush_security::hooks::{nea_cipher, nea_cipher_bits, nia_mac, nia_mac_bits};
 use oxirush_security::{
-    Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
-    IntegrityContext, MacJob, nea_cipher_batch, nia_mac_batch,
+    Bearer, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm, IntegrityContext,
 };
 
 fuzz_target!(|bytes: &[u8]| {
@@ -121,7 +121,7 @@ fuzz_target!(|bytes: &[u8]| {
                 _ => integrity_contexts[index].job(count, bearer, direction, messages[index]),
             })
             .collect();
-        nia_mac_batch(&mut macs);
+        batch::mac(&mut macs);
         let mut data: Vec<Vec<u8>> = messages.iter().map(|message| message.to_vec()).collect();
         let mut jobs: Vec<CipherJob<'_>> = data
             .iter_mut()
@@ -134,7 +134,7 @@ fuzz_target!(|bytes: &[u8]| {
                 _ => ciphering_contexts[index].job(count, bearer, direction, data),
             })
             .collect();
-        nea_cipher_batch(&mut jobs);
+        batch::cipher(&mut jobs);
         drop(jobs);
         let macs = macs
             .iter()

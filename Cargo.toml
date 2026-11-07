@@ -29,6 +29,11 @@ alloc = ["zeroize/alloc", "oxirush-utils/alloc"]
 # of RFC 7542. Concealment draws a key with `getrandom`, which needs a source
 # of random numbers for the target.
 suci = ["alloc", "dep:x25519-dalek", "dep:p256", "dep:getrandom"]
+# Many messages or subscribers in one call, `oxirush_security::batch`: the
+# SNOW 3G and ZUC generators, the CBC-MAC chains of 128-EIA2 and the MILENAGE
+# of several of them side by side on the vector instructions. One message at
+# a time needs none of it.
+batch = []
 # The realm and the username of a NAI are also checked as internationalized
 # names: Unicode normalization form C, and a realm that IDNA takes as it is
 # written. It brings the Unicode tables of the `idna` of oxirush-utils, some

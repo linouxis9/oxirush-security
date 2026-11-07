@@ -211,12 +211,16 @@ pub(crate) fn with_portable_kernel<R>(k: &[u8; 16], work: impl FnOnce(Kernel<'_>
 /// instructions: block `i` is that of subscriber `i`.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
+#[cfg(feature = "batch")]
 pub(crate) struct Lanes<'a, const N: usize> {
     pub(crate) instructions: Instructions,
     pub(crate) schedules: [&'a AesSchedule; N],
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(all(
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    feature = "batch"
+))]
 impl<const N: usize> Lanes<'_, N> {
     /// Encrypt each block where it is, with the key of its subscriber, and
     /// add the OPc of its subscriber when there is one.

@@ -548,8 +548,10 @@ fn nothing_of_a_key_is_printed() {
 /// A batch gives each job what the function of one subscriber gives it,
 /// for 0 to 40 jobs: subscribers with the constants of the specification
 /// and with others, AUTNs that are accepted and AUTNs that are not.
+#[cfg(feature = "batch")]
 #[test]
 fn a_batch_gives_each_job_what_one_call_gives_it() {
+    use crate::batch::{self, AutnJob, VectorJob};
     in_both_forms(|form| {
         let mut next = random(0x6a09_e667_f3bc_c908);
         for jobs in 0..=40 {
@@ -575,7 +577,7 @@ fn a_batch_gives_each_job_what_one_call_gives_it() {
                 .map(|(subscriber, rand, sqn, amf)| VectorJob::new(subscriber, rand, sqn, amf))
                 .collect();
             assert!(vectors.iter().all(|job| job.vector().is_none()));
-            authentication_vector_batch(&mut vectors);
+            batch::authentication_vectors(&mut vectors);
             let autns: Vec<Autn> = vectors
                 .iter()
                 .zip(&drawn)
@@ -598,7 +600,7 @@ fn a_batch_gives_each_job_what_one_call_gives_it() {
                 .zip(&autns)
                 .map(|((subscriber, rand, ..), autn)| AutnJob::new(subscriber, rand, autn))
                 .collect();
-            check_autn_batch(&mut checks);
+            batch::check_autn(&mut checks);
             for ((job, (subscriber, rand, ..)), autn) in checks.iter().zip(&drawn).zip(&autns) {
                 let alone = subscriber.check_autn(rand, autn);
                 match (job.response().expect("a response"), alone) {

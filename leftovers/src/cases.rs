@@ -22,12 +22,13 @@ use crate::values::{
     Secret, aes_secrets, cmac_secrets, eea3_iv, hmac_secrets, keystream_secrets, milenage_secrets,
     reversed, s, secret, without, zuc_stages,
 };
+use oxirush_security::batch::{self, CipherJob, MacJob};
 use oxirush_security::kdf::{extract_128, kdf};
 use oxirush_security::nas_5gs::{self, NasConnection, Supi};
 use oxirush_security::{
-    AccessKeyCount, Autn, Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Ck, Direction,
-    Ik, IntegrityAlgorithm, IntegrityContext, MacJob, NasCount, Plmn, Rand, Snow3G, Zuc,
-    constant_time_eq, nas_eps, nea_cipher_batch, nia_mac_batch,
+    AccessKeyCount, Autn, Bearer, CipheringAlgorithm, CipheringContext, Ck, Direction, Ik,
+    IntegrityAlgorithm, IntegrityContext, NasCount, Plmn, Rand, Snow3G, Zuc, constant_time_eq,
+    nas_eps,
 };
 // The algorithms on a key and a message, which the NAS functions and the contexts run
 use oxirush_security::hooks::{nea_cipher, nea_cipher_bits, nia_mac, nia_mac_bits};
@@ -513,7 +514,7 @@ fn batches(cases: &mut Cases) {
             for (messages, length) in SIZES {
                 let of = algorithm_of.clone();
                 cases.add(
-                    format!("nea_cipher_batch {kind}, {messages} x {length} octets, from {form}"),
+                    format!("batch::cipher {kind}, {messages} x {length} octets, from {form}"),
                     3,
                     secrets.clone(),
                     move || {
@@ -546,7 +547,7 @@ fn batches(cases: &mut Cases) {
                             .collect();
                         let mut jobs = spare(jobs);
                         crate::here();
-                        nea_cipher_batch(black_box(&mut jobs));
+                        batch::cipher(black_box(&mut jobs));
                     },
                 );
             }
@@ -562,7 +563,7 @@ fn batches(cases: &mut Cases) {
                 let kind = kind.replace("EEA", "EIA");
                 let length = length - 3;
                 cases.add(
-                    format!("nia_mac_batch {kind}, {messages} x {length} octets, from {form}"),
+                    format!("batch::mac {kind}, {messages} x {length} octets, from {form}"),
                     3,
                     secrets.clone(),
                     move || {
@@ -595,7 +596,7 @@ fn batches(cases: &mut Cases) {
                             .collect();
                         let mut jobs = spare(jobs);
                         crate::here();
-                        nia_mac_batch(black_box(&mut jobs));
+                        batch::mac(black_box(&mut jobs));
                     },
                 );
             }
@@ -1337,11 +1338,11 @@ fn milenage(cases: &mut Cases) {
                 .into_boxed_slice(),
         );
         cases.add(
-            format!("authentication_vector_batch of {count}"),
+            format!("batch::authentication_vectors of {count}"),
             3,
             secrets.clone(),
             move || {
-                use oxirush_security::milenage::{VectorJob, authentication_vector_batch};
+                use oxirush_security::batch::VectorJob;
                 let mut jobs = prepared(|| {
                     let jobs = subscribers
                         .iter()
@@ -1349,15 +1350,15 @@ fn milenage(cases: &mut Cases) {
                     jobs.collect::<Vec<_>>()
                 });
                 crate::here();
-                authentication_vector_batch(black_box(&mut jobs));
+                batch::authentication_vectors(black_box(&mut jobs));
             },
         );
         cases.add(
-            format!("check_autn_batch of {count}"),
+            format!("batch::check_autn of {count}"),
             3,
             secrets.clone(),
             move || {
-                use oxirush_security::milenage::{AutnJob, check_autn_batch};
+                use oxirush_security::batch::AutnJob;
                 let mut jobs = prepared(|| {
                     let jobs = subscribers
                         .iter()
@@ -1365,7 +1366,7 @@ fn milenage(cases: &mut Cases) {
                     jobs.collect::<Vec<_>>()
                 });
                 crate::here();
-                check_autn_batch(black_box(&mut jobs));
+                batch::check_autn(black_box(&mut jobs));
             },
         );
     }

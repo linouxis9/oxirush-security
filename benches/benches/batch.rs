@@ -32,10 +32,11 @@
 //! alone.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
+use oxirush_security::batch::{self, CipherJob, MacJob};
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, nas_cipher, nas_mac};
 use oxirush_security::{
-    Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
-    IntegrityContext, MacJob, NasCount, nea_cipher_batch, nia_mac_batch,
+    Bearer, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm, IntegrityContext,
+    NasCount,
 };
 use oxirush_security_benches::message;
 use pprof::criterion::{Output, PProfProfiler};
@@ -81,7 +82,7 @@ fn ciphers_of<const N: usize>(criterion: &mut Criterion) {
                         let ((key, data), count) = messages.next().expect("N messages");
                         CipherJob::new(black_box(key), count, bearer, uplink, data, algorithm)
                     });
-                    nea_cipher_batch(black_box(&mut jobs));
+                    batch::cipher(black_box(&mut jobs));
                 })
             });
             // A context saves the key expansion of AES, and nothing of the
@@ -103,7 +104,7 @@ fn ciphers_of<const N: usize>(criterion: &mut Criterion) {
                         let ((context, data), count) = messages.next().expect("N messages");
                         black_box(context).job(count, bearer, uplink, data)
                     });
-                    nea_cipher_batch(black_box(&mut jobs));
+                    batch::cipher(black_box(&mut jobs));
                 })
             });
         }
@@ -144,7 +145,7 @@ fn macs_of<const N: usize>(criterion: &mut Criterion) {
                         let ((key, data), count) = messages.next().expect("N messages");
                         MacJob::new(black_box(key), count, bearer, uplink, data, algorithm)
                     });
-                    nia_mac_batch(black_box(&mut jobs));
+                    batch::mac(black_box(&mut jobs));
                     jobs.iter()
                         .fold(0, |macs, job| macs ^ job.mac().unwrap_or(0))
                 })
@@ -170,7 +171,7 @@ fn macs_of<const N: usize>(criterion: &mut Criterion) {
                         let ((context, data), count) = messages.next().expect("N messages");
                         black_box(context).job(count, bearer, uplink, data)
                     });
-                    nia_mac_batch(black_box(&mut jobs));
+                    batch::mac(black_box(&mut jobs));
                     jobs.iter()
                         .fold(0, |macs, job| macs ^ job.mac().unwrap_or(0))
                 })

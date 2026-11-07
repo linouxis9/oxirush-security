@@ -42,7 +42,7 @@ how deep the work goes, and then as a program has it:
 ```text
 operation                                                          form  depth  cleared  areas
 nas_cipher 128-NEA2, 64 octets                              vector code   1088     2304      1   nothing left (8 without the clearing)
-nia_mac_batch of 128-EIA2, 8 x 300 octets, from contexts    vector code   8304    18432      1   nothing left
+batch::mac of 128-EIA2, 8 x 300 octets, from contexts       vector code   8304    18432      1   nothing left
 ```
 
 The run fails when a key, a round key, a subkey of CMAC, keystream, a

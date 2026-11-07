@@ -40,6 +40,8 @@ jobs:
       - run: cargo test --no-default-features --features alloc
       - run: cargo test --no-default-features --features std
       - run: cargo test --no-default-features --features suci
+      - run: cargo test --no-default-features --features batch
+      - run: cargo test --all-features
       # The instructions enabled by the build, as on a target without an
       # operating system
       - name: Test with the instructions enabled by the build
@@ -230,6 +232,7 @@ jobs:
       - run: cargo build --target ${{ matrix.target }} --no-default-features
       - run: cargo build --target ${{ matrix.target }} --no-default-features --features alloc
       - run: cargo build --target ${{ matrix.target }} --no-default-features --features suci
+      - run: cargo build --target ${{ matrix.target }} --no-default-features --features batch
       - run: cargo build --target ${{ matrix.target }} --no-default-features --features idna
 
   # A target that has the scalar code alone, and 32-bit lengths
@@ -284,6 +287,7 @@ jobs:
           cargo build --target thumbv7em-none-eabihf --no-default-features
           cargo build --target thumbv7em-none-eabihf --no-default-features --features alloc
           cargo build --target thumbv7em-none-eabihf --no-default-features --features suci
+          cargo build --target thumbv7em-none-eabihf --no-default-features --features batch
           cargo build --target thumbv7em-none-eabihf --no-default-features --features idna
 
   clippy:
@@ -298,6 +302,7 @@ jobs:
       - run: cargo clippy --all-targets --features suci -- -D warnings
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
       - run: cargo clippy --all-targets --no-default-features --features suci -- -D warnings
+      - run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Clippy without the clearing
         env:
           RUSTFLAGS: --cfg oxirush_security_unwiped
@@ -324,7 +329,7 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: |
-          for features in "" alloc std suci idna; do
+          for features in "" alloc std suci batch idna; do
             echo "::group::--no-default-features --features \"$features\""
             cargo doc --no-deps --no-default-features --features "$features"
             echo "::endgroup::"

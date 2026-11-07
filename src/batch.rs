@@ -15,10 +15,20 @@
    limitations under the License.
 */
 
-//! Several messages at once, each with its own key, COUNT, BEARER and
-//! DIRECTION, as an AMF, an MME or a load generator has them.
+//! Several messages or subscribers at once, each with its own key, as an
+//! AMF, an MME, a home network or a load generator has them: with the
+//! feature `batch`.
 //!
-//! [`nea_cipher_batch`] and [`nia_mac_batch`] give every message what
+//! A batch pays where many messages are protected together. One message
+//! takes about as long through a keyed context as through `aes` with `ctr`
+//! or `cmac`, and a program that protects its messages one at a time needs
+//! none of this.
+//!
+//! [`authentication_vectors`] and [`check_autn`] do the same for MILENAGE:
+//! the authentication vectors of many subscribers, or the checks of their
+//! AUTN, with the AES of eight of them side by side.
+//!
+//! [`cipher`] and [`mac`] give every message what
 //! [`CipheringContext::cipher`] and [`IntegrityContext::mac`] give
 //! it alone. A message is a job: [`CipherJob`] or [`MacJob`], which holds
 //! its key with its COUNT, its BEARER, its DIRECTION and its algorithm, so
@@ -65,6 +75,7 @@ use crate::common::nea::cipher_octets;
 use crate::common::nea::nea2_instructions;
 use crate::common::nia::{BitString, mac_of_bits};
 use crate::common::wipe;
+pub use crate::milenage::batch::{AutnJob, VectorJob, authentication_vectors, check_autn};
 
 /// A message to cipher or to decipher in a batch: its key, the COUNT, the
 /// BEARER and the DIRECTION of the algorithm, its octets and its algorithm.
@@ -205,7 +216,8 @@ impl<'a> CipherJob<'a> {
 ///
 /// ```
 /// use oxirush_security::nas_5gs::{KNasEnc, NasConnection, nas_cipher};
-/// use oxirush_security::{CipherJob, CipheringAlgorithm, Direction, NasCount, nea_cipher_batch};
+/// use oxirush_security::batch::{self, CipherJob};
+/// use oxirush_security::{CipheringAlgorithm, Direction, NasCount};
 ///
 /// // The downlink messages of two UEs, each with its key and its NAS COUNT
 /// let keys = [KNasEnc::new(&[0x11; 16]), KNasEnc::new(&[0x22; 16])];
@@ -218,14 +230,14 @@ impl<'a> CipherJob<'a> {
 ///         CipherJob::new(key, count.get(), access.into(), downlink, message, nea1)
 ///     })
 ///     .collect();
-/// nea_cipher_batch(&mut jobs);
+/// batch::cipher(&mut jobs);
 ///
 /// // Each is what the function of one message gives
 /// let mut alone = vec![0x7e, 0x00, 0x5d, 0x02];
 /// nas_cipher(&keys[1], counts[1], access, downlink, &mut alone, nea1);
 /// assert_eq!(messages[1], alone);
 /// ```
-pub fn nea_cipher_batch(jobs: &mut [CipherJob<'_>]) {
+pub fn cipher(jobs: &mut [CipherJob<'_>]) {
     // Each piece of work clears what it left: the generators that run
     // side by side, and the messages that come one after the other
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -330,7 +342,7 @@ impl<'a> MacJob<'a> {
         self.context.and_then(IntegrityContext::cmac_key)
     }
 
-    /// The MAC, once [`nia_mac_batch`] has computed it: `None` before.
+    /// The MAC, once [`mac`] has computed it: `None` before.
     pub fn mac(&self) -> Option<u32> {
         self.mac
     }
@@ -357,7 +369,8 @@ impl<'a> MacJob<'a> {
 ///
 /// ```
 /// use oxirush_security::nas_5gs::{KNasInt, NasConnection, nas_mac};
-/// use oxirush_security::{Direction, IntegrityAlgorithm, MacJob, NasCount, nia_mac_batch};
+/// use oxirush_security::batch::{self, MacJob};
+/// use oxirush_security::{Direction, IntegrityAlgorithm, NasCount};
 ///
 /// // The uplink messages of two UEs, each with its key, its NAS COUNT and its algorithm
 /// let keys = [KNasInt::new(&[0x44; 16]), KNasInt::new(&[0x55; 16])];
@@ -371,13 +384,13 @@ impl<'a> MacJob<'a> {
 ///         MacJob::new(&keys[ue], count, access.into(), uplink, message, algorithms[ue])
 ///     })
 ///     .collect();
-/// nia_mac_batch(&mut jobs);
+/// batch::mac(&mut jobs);
 ///
 /// // Each is what the function of one message gives
 /// let alone = nas_mac(&keys[1], counts[1], access, uplink, &messages[1], algorithms[1]);
 /// assert_eq!(jobs[1].mac(), Some(alone));
 /// ```
-pub fn nia_mac_batch(jobs: &mut [MacJob<'_>]) {
+pub fn mac(jobs: &mut [MacJob<'_>]) {
     // Each piece of work clears what it left: the generators and the
     // chains that run side by side, and the messages that come one after
     // the other
@@ -814,7 +827,7 @@ mod tests {
                         }
                     })
                     .collect();
-                nea_cipher_batch(&mut jobs);
+                super::cipher(&mut jobs);
                 for (index, (message, expected)) in messages.iter().zip(&expected).enumerate() {
                     assert_eq!(
                         &message.data,
@@ -863,7 +876,7 @@ mod tests {
                     })
                     .collect();
                 assert!(jobs.iter().all(|job| job.mac().is_none()));
-                nia_mac_batch(&mut jobs);
+                super::mac(&mut jobs);
                 for (index, (message, job)) in messages.iter().zip(&jobs).enumerate() {
                     let algorithm = IntegrityAlgorithm::try_from(message.algorithm).unwrap();
                     let bits = message.bits.unwrap_or(8 * message.data.len() as u64);
@@ -915,7 +928,7 @@ mod tests {
                             MacJob::new(&m.key, m.count, m.bearer, m.direction, &m.data, integrity)
                         })
                         .collect();
-                    nia_mac_batch(&mut macs);
+                    super::mac(&mut macs);
                     for (message, job) in messages.iter().zip(&macs) {
                         let (key, count) = (&message.key, message.count);
                         let (bearer, direction) = (message.bearer, message.direction);
@@ -936,9 +949,9 @@ mod tests {
                             CipherJob::new(&m.key, m.count, m.bearer, m.direction, data, cipher)
                         })
                         .collect();
-                    nea_cipher_batch(&mut jobs);
+                    super::cipher(&mut jobs);
                     // A second call deciphers
-                    nea_cipher_batch(&mut jobs);
+                    super::cipher(&mut jobs);
                     assert!(
                         messages
                             .iter()
@@ -969,7 +982,7 @@ mod tests {
                         CipherJob::new(&m.key, m.count, m.bearer, m.direction, data, algorithm)
                     })
                     .collect();
-                nea_cipher_batch(&mut ciphers);
+                super::cipher(&mut ciphers);
                 drop(ciphers);
                 let mut macs: Vec<MacJob<'_>> = messages
                     .iter()
@@ -978,7 +991,7 @@ mod tests {
                         MacJob::new(&m.key, m.count, m.bearer, m.direction, &m.data, algorithm)
                     })
                     .collect();
-                nia_mac_batch(&mut macs);
+                super::mac(&mut macs);
                 let macs: Vec<Option<u32>> = macs.iter().map(MacJob::mac).collect();
                 (data, macs)
             };
@@ -1040,7 +1053,7 @@ mod tests {
                         CipherJob::new(&enc, count.get(), bearer, uplink, data, cipher)
                     })
                     .collect();
-                nea_cipher_batch(&mut jobs);
+                super::cipher(&mut jobs);
                 assert_eq!(data, [expected; 5]);
                 let mut jobs: Vec<_> = data
                     .iter()
@@ -1049,7 +1062,7 @@ mod tests {
                         MacJob::new(&int, count.get(), bearer, uplink, data, integrity)
                     })
                     .collect();
-                nia_mac_batch(&mut jobs);
+                super::mac(&mut jobs);
                 assert!(jobs.iter().all(|job| job.mac() == Some(mac)));
             }
 
@@ -1063,13 +1076,13 @@ mod tests {
                 .iter_mut()
                 .map(|data| CipherJob::new(&enc, count.get(), Bearer::ZERO, uplink, data, cipher))
                 .collect();
-            nea_cipher_batch(&mut jobs);
+            super::cipher(&mut jobs);
             assert_eq!(data, [expected; 5]);
             let mut jobs: Vec<_> = data
                 .iter()
                 .map(|data| MacJob::new(&int, count.get(), Bearer::ZERO, uplink, data, integrity))
                 .collect();
-            nia_mac_batch(&mut jobs);
+            super::mac(&mut jobs);
             assert!(jobs.iter().all(|job| job.mac() == Some(mac)));
         }
     }

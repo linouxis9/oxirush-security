@@ -39,6 +39,7 @@ use zeroize::{Zeroize, Zeroizing};
 #[macro_use]
 #[deny(unsafe_code)]
 mod generators;
+#[cfg(feature = "batch")]
 #[deny(unsafe_code)]
 pub(crate) mod lanes;
 #[deny(unsafe_code)]
@@ -52,7 +53,7 @@ mod arch;
 #[deny(unsafe_code)]
 #[path = "x86_64.rs"]
 mod arch;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "batch"))]
 #[deny(unsafe_code)]
 #[path = "x86_64_avx2.rs"]
 mod wide;
@@ -531,6 +532,7 @@ impl Zeroize for Zuc {
 /// SNOW 3G for `N` messages at once, on vector instructions: word `i` of
 /// every array is that of message `i`. It exists only on a processor that
 /// has the instructions of its `N`: `new` is the one way to make it.
+#[cfg(feature = "batch")]
 pub(crate) struct Snow3gLanes<const N: usize> {
     /// The sixteen stages of the LFSRs are `lfsr[at..at + 16]`. A clock
     /// writes the next one after them and moves `at` by one.
@@ -541,6 +543,7 @@ pub(crate) struct Snow3gLanes<const N: usize> {
 }
 
 /// ZUC for `N` messages at once, as [`Snow3gLanes`] is SNOW 3G.
+#[cfg(feature = "batch")]
 pub(crate) struct ZucLanes<const N: usize> {
     /// The sixteen stages of the LFSRs are `lfsr[at..at + 16]`. A clock
     /// writes the next one after them and moves `at` by one.
@@ -551,6 +554,7 @@ pub(crate) struct ZucLanes<const N: usize> {
 }
 
 /// `N` generators of one kind, which [`lanes::run`] gives their messages.
+#[cfg(feature = "batch")]
 pub(crate) trait Generators<const N: usize>: Zeroize {
     /// Give generator `lane` the sixteen stages that a key and an IV give,
     /// and registers at zero.
@@ -564,6 +568,7 @@ pub(crate) trait Generators<const N: usize>: Zeroize {
 
 /// The lane generators of a width: how they are made, which is where the
 /// processor is asked for the instructions of `$clocks`, and their clocks.
+#[cfg(feature = "batch")]
 macro_rules! lane_generators {
     ($generators:ident, $registers:literal, $lanes:literal, $available:path, $clocks:path) => {
         impl $generators<$lanes> {
@@ -606,21 +611,24 @@ macro_rules! lane_generators {
     };
 }
 
+#[cfg(feature = "batch")]
 lane_generators!(Snow3gLanes, 3, 4, available, arch::snow3g_lanes_clocks);
+#[cfg(feature = "batch")]
 lane_generators!(ZucLanes, 2, 4, available, arch::zuc_lanes_clocks);
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "batch"))]
 lane_generators!(Snow3gLanes, 3, 8, wide_available, wide::snow3g_lanes_clocks);
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "batch"))]
 lane_generators!(ZucLanes, 2, 8, wide_available, wide::zuc_lanes_clocks);
 
 /// Above this many messages, the generators that run eight side by side
 /// are faster than those that run four, where the processor has both.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "batch"))]
 const WIDE_FROM: usize = 4;
 
 /// Give each of the `count` messages of `streams` its SNOW 3G keystream,
 /// from generators that run side by side. `false` on a processor without
 /// the instructions, where nothing is done.
+#[cfg(feature = "batch")]
 pub(crate) fn snow3g_lanes<S: lanes::Stream>(
     count: usize,
     streams: impl Iterator<Item = S>,
@@ -644,6 +652,7 @@ pub(crate) fn snow3g_lanes<S: lanes::Stream>(
 
 /// Give each of the `count` messages of `streams` its ZUC keystream, as
 /// [`snow3g_lanes`] does for SNOW 3G.
+#[cfg(feature = "batch")]
 pub(crate) fn zuc_lanes<S: lanes::Stream>(count: usize, streams: impl Iterator<Item = S>) -> bool {
     if count == 0 {
         return available();

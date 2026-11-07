@@ -73,10 +73,10 @@
 //! |------|-------|
 //! | Run 5G AKA, from MILENAGE to KAMF | [`milenage::Milenage::authentication_vector`], [`milenage::Milenage::check_autn`], [`nas_5gs::derive_kausf`], [`nas_5gs::derive_kseaf`], [`nas_5gs::derive_kamf`], [`nas_5gs::XresStar::accepts`] |
 //! | Re-synchronise a USIM | [`milenage::Milenage::auts`], [`milenage::Milenage::verify_auts`] |
-//! | Make the vectors of many subscribers in one call | [`milenage::authentication_vector_batch`], [`milenage::check_autn_batch`] |
+//! | Make the vectors of many subscribers in one call, with the `batch` feature | [`batch::authentication_vectors`], [`batch::check_autn`] |
 //! | Protect and check a NAS message | [`nas_5gs::derive_knas_enc`], [`nas_5gs::derive_knas_int`], [`nas_5gs::nas_cipher`], [`nas_5gs::nas_mac`], [`NasCount::estimate`], [`constant_time_eq`] |
 //! | The same in EPS | [`nas_eps::derive_kasme`], [`nas_eps::nas_cipher`], [`nas_eps::nas_mac`], [`nas_eps::service_request_short_mac`] |
-//! | Protect the messages of many UEs in one call | [`nea_cipher_batch`], [`nia_mac_batch`], [`CipherJob`], [`MacJob`] |
+//! | Protect the messages of many UEs in one call, with the `batch` feature | [`batch::cipher`], [`batch::mac`], [`batch::CipherJob`], [`batch::MacJob`] |
 //! | Keep the keys of a UE between its messages | [`CipheringContext`], [`IntegrityContext`] |
 //! | Derive the keys of a handover | [`nas_5gs::derive_kgnb`], [`nas_5gs::derive_nh`], [`nas_5gs::derive_kng_ran_star`], [`nas_5gs::derive_kamf_prime_handover`] |
 //! | Conceal and deconceal a SUCI, with the `suci` and `nai` features | `nas_5gs::Suci::conceal_imsi`, `nas_5gs::Suci::conceal_nai`, `nas_5gs::Suci::deconceal`, `nas_5gs::HomeNetworkPrivateKey` |
@@ -88,10 +88,11 @@
 //!
 //! | Where | Contents |
 //! |-------|----------|
-//! | The crate root | What 5GS and EPS share: the algorithms, their inputs, the keyed contexts, the batches, CK, IK, RAND and AUTN, the PLMN and TBCD |
+//! | The crate root | What 5GS and EPS share: the algorithms, their inputs, the keyed contexts, CK, IK, RAND and AUTN, the PLMN and TBCD |
 //! | [`nas_5gs`] | TS 33.501: the keys and their derivations, NAS integrity and ciphering, the SUPI, the SUCI and the 5G-GUTI |
 //! | [`nas_eps`] | TS 33.401: the keys and their derivations, NAS integrity and ciphering, the short MAC of a SERVICE REQUEST, HASHMME |
-//! | [`milenage`] | TS 35.206 and TS 33.102: MILENAGE, its keys and values, the authentication vector of a home network, the check of AUTN in a USIM and the AUTS of a re-synchronisation, for one subscriber or for many |
+//! | [`milenage`] | TS 35.206 and TS 33.102: MILENAGE, its keys and values, the authentication vector of a home network, the check of AUTN in a USIM and the AUTS of a re-synchronisation |
+//! | [`batch`] | With the feature `batch`: many messages, or the MILENAGE of many subscribers, in one call |
 //! | [`kdf`] | The KDF of TS 33.220, for a derivation that the crate does not have |
 //!
 //! An item has one path. The two systems have keys and functions of the
@@ -110,7 +111,7 @@
 //! | NAS ciphering | `nas_cipher` of each system | NEA0 and EEA0, 128-NEA1 and 128-EEA1 (SNOW 3G), 128-NEA2 and 128-EEA2 (AES-CTR), 128-NEA3 and 128-EEA3 (ZUC): TS 33.401 Annex B.1 | 3GPP |
 //! | NAS integrity | `nas_mac` of each system | 128-NIA1 and 128-EIA1 (SNOW 3G), 128-NIA2 and 128-EIA2 (AES-CMAC), 128-NIA3 and 128-EIA3 (ZUC): TS 33.401 Annex B.2 | 3GPP |
 //! | The algorithms themselves, and a key kept between messages | [`CipheringContext`], [`IntegrityContext`]: `cipher`, `mac` and their `*_bits` forms, with any COUNT, BEARER and length in bits | The same | 3GPP |
-//! | Several messages at once | [`nea_cipher_batch`], [`nia_mac_batch`] on a [`CipherJob`] or a [`MacJob`] for each message | The same | 3GPP |
+//! | Several messages at once, with the `batch` feature | [`batch::cipher`], [`batch::mac`] on a [`batch::CipherJob`] or a [`batch::MacJob`] for each message | The same | 3GPP |
 //! | Keystream generators | [`Snow3G`], [`Zuc`] | TS 35.216, TS 35.222 | 3GPP |
 //! | MILENAGE | `milenage::Milenage`: f1, f1\*, f2 to f5, f5\*; `milenage::Opc::from_op` | TS 35.206 §4.1 | 3GPP, other implementations |
 //! | Authentication | `authentication_vector`, `check_autn`, `auts`, `verify_auts` of `milenage::Milenage`, and their batches | TS 33.102 §6.3.2, §6.3.3 and §6.3.5 | other implementations |
@@ -313,7 +314,7 @@
 //! that the processor of the test has. CI runs the tests on x86-64, on
 //! AArch64, and on 32-bit x86, which has the scalar code alone.
 //!
-//! [`nea_cipher_batch`] and [`nia_mac_batch`] are compared with the
+//! [`batch::cipher`] and [`batch::mac`] are compared with the
 //! functions of one message on batches of 0 to 40 messages of mixed
 //! algorithms and lengths, in whole octets and in bits, with eight
 //! generators side by side, with four and in scalar code. The 3GPP test
@@ -427,6 +428,9 @@
 
 // The tests use the standard library, whatever the features of the build.
 #![cfg_attr(not(test), no_std)]
+// The batches are a link where the build has them: the links are checked in
+// the build of every feature, which docs.rs makes.
+#![cfg_attr(not(feature = "batch"), allow(rustdoc::broken_intra_doc_links))]
 // `unsafe` is allowed in one module, `common::simd`, which says why
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
@@ -437,6 +441,9 @@ extern crate alloc;
 #[cfg(all(feature = "std", not(test)))]
 extern crate std;
 
+#[cfg(feature = "batch")]
+#[cfg_attr(docsrs, doc(cfg(feature = "batch")))]
+pub mod batch;
 mod common;
 pub mod milenage;
 pub mod nas_5gs;
@@ -444,7 +451,7 @@ pub mod nas_eps;
 
 // The examples of the README are compiled and run with the doctests. They
 // use every feature.
-#[cfg(all(doctest, feature = "suci"))]
+#[cfg(all(doctest, feature = "suci", feature = "batch"))]
 #[doc = include_str!("../README.md")]
 struct Readme;
 
@@ -468,7 +475,6 @@ pub use common::algo::{
     select_ciphering_algo, select_ciphering_algo_with_preference, select_integrity_algo,
     select_integrity_algo_with_preference,
 };
-pub use common::batch::{CipherJob, MacJob, nea_cipher_batch, nia_mac_batch};
 pub use common::code::{Code, Implementation, implementation};
 pub use common::context::{CipheringContext, IntegrityContext};
 pub use common::ct::constant_time_eq;

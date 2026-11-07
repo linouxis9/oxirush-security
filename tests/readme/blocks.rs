@@ -161,11 +161,9 @@ fn block_3() {
 
 /// The Rust block 4 of README.md.
 fn block_4() {
-    use oxirush_security::milenage::{
-        Amf, AutnJob, K, Milenage, Opc, Sqn, VectorJob, authentication_vector_batch,
-        check_autn_batch,
-    };
     use oxirush_security::Rand;
+    use oxirush_security::batch::{self, AutnJob, VectorJob};
+    use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
         // A thousand subscribers, each with its K, its RAND and its next SQN
@@ -184,7 +182,7 @@ fn block_4() {
         let mut jobs: Vec<_> = (0..1000)
             .map(|n| VectorJob::new(&subscribers[n], &rands[n], &sqns[n], &amf))
             .collect();
-        authentication_vector_batch(&mut jobs);
+        batch::authentication_vectors(&mut jobs);
         let vectors: Vec<_> = jobs.into_iter().filter_map(VectorJob::into_vector).collect();
         println!("AUTN of the last {}", hex::encode(vectors[999].autn().as_octets()));
 
@@ -192,7 +190,7 @@ fn block_4() {
         let mut jobs: Vec<_> = (0..1000)
             .map(|n| AutnJob::new(&subscribers[n], &rands[n], vectors[n].autn()))
             .collect();
-        check_autn_batch(&mut jobs);
+        batch::check_autn(&mut jobs);
         let accepted = jobs.iter().filter(|job| matches!(job.response(), Some(Ok(_)))).count();
         println!("{accepted} AUTNs accepted");
         Ok(())
@@ -281,8 +279,8 @@ fn block_6() {
 fn block_7() {
     use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection};
     use oxirush_security::{
-        CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob, NasCount,
-        nea_cipher_batch, nia_mac_batch,
+        CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount,
+        batch::{self, CipherJob, MacJob},
     };
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -307,7 +305,7 @@ fn block_7() {
                 CipherJob::new(key, count, access.into(), downlink, &mut message[1..], nea[ue])
             })
             .collect();
-        nea_cipher_batch(&mut jobs);
+        batch::cipher(&mut jobs);
 
         // The MAC is over the sequence number and the ciphered message
         let mut jobs: Vec<_> = (messages.iter().enumerate())
@@ -316,7 +314,7 @@ fn block_7() {
                 MacJob::new(key, count, access.into(), downlink, message, nia[ue])
             })
             .collect();
-        nia_mac_batch(&mut jobs);
+        batch::mac(&mut jobs);
         for (job, message) in jobs.iter().zip(&messages) {
             if let Some(mac) = job.mac() {
                 println!("MAC {mac:08x} of {}", hex::encode(message));

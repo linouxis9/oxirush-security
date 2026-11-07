@@ -74,6 +74,7 @@ pub(crate) mod depth {
     pub(crate) const PORTABLE: usize = 6144;
     /// Several messages side by side.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[cfg(feature = "batch")]
     pub(crate) const LANES: usize = 18432;
     /// Words of keystream from a generator, and a comparison.
     pub(crate) const WORDS: usize = 1536;
@@ -113,6 +114,7 @@ pub(crate) fn portable<R>(work: impl FnOnce() -> R) -> R {
 /// Several messages side by side.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline(always)]
+#[cfg(feature = "batch")]
 pub(crate) fn lanes<R>(work: impl FnOnce() -> R) -> R {
     after::<{ depth::LANES }, R>(work)
 }

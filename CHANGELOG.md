@@ -4,6 +4,12 @@ All notable changes to `oxirush-security` are recorded here.
 
 ## Unreleased
 
+- The batches are the feature `batch`, off by default, in the module `batch`:
+  `batch::cipher` and `batch::mac` (once `nea_cipher_batch` and
+  `nia_mac_batch`), `batch::authentication_vectors` and `batch::check_autn`
+  (once `milenage::authentication_vector_batch` and `check_autn_batch`), the
+  jobs `CipherJob`, `MacJob`, `VectorJob` and `AutnJob`, the `job` of a keyed
+  context and the side-by-side counts of `Implementation`.
 - The algorithms run through the keyed contexts: `CipheringContext::new(&key,
   algorithm).cipher(..)` and `IntegrityContext::new(&key, algorithm).mac(..)`,
   with `cipher_bits` and `mac_bits`, take any COUNT and BEARER, and a NAS

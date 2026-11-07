@@ -105,6 +105,7 @@ pub(crate) fn mac_message(
 
 /// The MAC of the first bits of a message, for a caller that clears after
 /// its own work.
+#[cfg(feature = "batch")]
 pub(crate) fn mac_of_bits(
     key: &[u8; 16],
     count: u32,
@@ -300,6 +301,7 @@ fn cmac_double(value: u128) -> u128 {
 /// The last octet of a message that does not end with one is left
 /// aligned, and its unused low-order bits are ignored, as in TS 33.401
 /// Annex C.2.
+#[cfg(feature = "batch")]
 fn eia2(
     key: &[u8; 16],
     count: u32,
@@ -346,6 +348,7 @@ pub(crate) fn cmac_subkeys(key: &[u8; 16], round_keys: RoundKeys<'_>) -> [u128; 
 /// AES-CMAC of a message, from its blocks, with a key, its round keys and
 /// its subkeys: the first four octets. For a caller that clears after its
 /// own work.
+#[cfg(feature = "batch")]
 pub(crate) fn cmac(
     key: &[u8; 16],
     round_keys: RoundKeys<'_>,
@@ -538,6 +541,7 @@ pub(crate) fn cmac_lanes<const N: usize>(
 /// from a context that has it.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
+#[cfg(feature = "batch")]
 pub(crate) enum CmacKey<'a> {
     Octets(&'a [u8; 16]),
     /// The round keys and the subkeys K1 and K2.
@@ -548,6 +552,7 @@ pub(crate) enum CmacKey<'a> {
 /// some have a keyed context: their round keys and their subkeys come
 /// from there, and those of the others are computed side by side.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(feature = "batch")]
 pub(crate) fn cmac_lanes_keyed<const N: usize>(
     instructions: Instructions,
     keys: [CmacKey<'_>; N],

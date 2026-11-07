@@ -26,16 +26,14 @@
 //! messages are in a [`Prepared`] that the guest keeps.
 
 use core::mem::ManuallyDrop;
-use oxirush_security::milenage::{
-    Amf, K, Milenage, Opc, Sqn, VectorJob, authentication_vector_batch,
-};
+use oxirush_security::batch::{self, CipherJob, MacJob, VectorJob};
+use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
 use oxirush_security::nas_5gs::{
     KAmf, KNasEnc, KNasInt, NasConnection, derive_knas_int, nas_cipher, nas_mac,
 };
 use oxirush_security::{
-    Autn, Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
-    IntegrityContext, MacJob, NasCount, Rand, Snow3G, Zuc, constant_time_eq, nea_cipher_batch,
-    nia_mac_batch,
+    Autn, Bearer, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
+    IntegrityContext, NasCount, Rand, Snow3G, Zuc, constant_time_eq,
 };
 
 /// The key of the examples of FIPS 197, whose round keys are known.
@@ -170,15 +168,15 @@ pub const CASES: [(&str, Kind); 26] = [
         Kind::Integrity(1),
     ),
     (
-        "nea_cipher_batch of the three algorithms, 9 x 300 octets",
+        "batch::cipher of the three algorithms, 9 x 300 octets",
         Kind::Batch,
     ),
     (
-        "nia_mac_batch of the three algorithms, 9 x 300 octets",
+        "batch::mac of the three algorithms, 9 x 300 octets",
         Kind::Batch,
     ),
     (
-        "nia_mac_batch of 128-EIA2, 8 x 300 octets, from contexts",
+        "batch::mac of 128-EIA2, 8 x 300 octets, from contexts",
         Kind::Batch,
     ),
     ("Snow3G::from_bytes", Kind::Generator(true)),
@@ -194,7 +192,7 @@ pub const CASES: [(&str, Kind); 26] = [
     ("Milenage::check_autn", Kind::Milenage { auts: false }),
     ("Milenage::verify_auts", Kind::Milenage { auts: true }),
     (
-        "authentication_vector_batch of 9",
+        "batch::authentication_vectors of 9",
         Kind::Milenage { auts: false },
     ),
 ];
@@ -343,7 +341,7 @@ impl Prepared {
                     index += 1;
                     CipherJob::new(key, COUNT, bearer, downlink, &mut data[..300], algorithm)
                 });
-                nea_cipher_batch(&mut jobs);
+                batch::cipher(&mut jobs);
                 0
             }
             14 | 15 => {
@@ -368,7 +366,7 @@ impl Prepared {
                 });
                 // Eight chains of AES side by side, or nine messages
                 let jobs = &mut jobs[..if from_contexts { 8 } else { MESSAGES }];
-                nia_mac_batch(jobs);
+                batch::mac(jobs);
                 jobs.iter().filter_map(MacJob::mac).map(u64::from).sum()
             }
             16 => self.keep(&ManuallyDrop::new(Snow3G::from_bytes(&KEY, &IV))),
@@ -415,7 +413,7 @@ impl Prepared {
                     let (rand, sqn, amf) = (&MILENAGE_RAND_, &MILENAGE_SQN_, &MILENAGE_AMF_);
                     let job = |subscriber| VectorJob::new(subscriber, rand, sqn, amf);
                     let mut jobs = ManuallyDrop::new(subscribers.each_ref().map(job));
-                    authentication_vector_batch(&mut *jobs);
+                    batch::authentication_vectors(&mut *jobs);
                     // The vectors are the program's
                     let from = core::ptr::from_ref(&jobs) as u64;
                     self.owned = [from, from + size_of_val(&jobs) as u64];

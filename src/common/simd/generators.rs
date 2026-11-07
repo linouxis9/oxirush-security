@@ -755,6 +755,7 @@ macro_rules! generators {
     };
 }
 
+#[cfg(feature = "batch")]
 macro_rules! lanes {
     ($features:literal, $lanes:literal) => {
         use crate::common::simd::{Snow3gLanes, ZucLanes};

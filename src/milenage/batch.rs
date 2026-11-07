@@ -17,7 +17,7 @@
 
 //! Many subscribers at once, as a home network or a fleet of UEs has them.
 //!
-//! [`authentication_vector_batch`] and [`check_autn_batch`] give each job
+//! [`authentication_vectors`] and [`check_autn`] give each job
 //! what [`Milenage::authentication_vector`] and [`Milenage::check_autn`]
 //! give it alone. On a processor with the AES instructions the key
 //! expansions of eight subscribers run side by side, and so do their
@@ -67,7 +67,7 @@ impl<'a> VectorJob<'a> {
         }
     }
 
-    /// The vector, once [`authentication_vector_batch`] has made it:
+    /// The vector, once [`authentication_vectors`] has made it:
     /// `None` before.
     pub fn vector(&self) -> Option<&AuthenticationVector> {
         self.vector.as_ref()
@@ -113,7 +113,7 @@ impl<'a> AutnJob<'a> {
         }
     }
 
-    /// What [`Milenage::check_autn`] gives, once [`check_autn_batch`] has
+    /// What [`Milenage::check_autn`] gives, once [`check_autn`] has
     /// checked the AUTN: `None` before.
     pub fn response(&self) -> Option<Result<&UsimResponse, SecurityError>> {
         self.response
@@ -144,8 +144,9 @@ impl<'a> AutnJob<'a> {
 /// [`VectorJob::vector`] then gives.
 ///
 /// ```
-/// use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn, VectorJob};
-/// use oxirush_security::{Rand, milenage};
+/// use oxirush_security::Rand;
+/// use oxirush_security::batch::{self, VectorJob};
+/// use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
 ///
 /// // A thousand subscribers, each with its K, its RAND and its next SQN
 /// let subscribers: Vec<Milenage> = (0..1000u16)
@@ -161,12 +162,12 @@ impl<'a> AutnJob<'a> {
 /// let mut jobs: Vec<_> = (subscribers.iter().zip(&rands))
 ///     .map(|(subscriber, rand)| VectorJob::new(subscriber, rand, &sqn, &amf))
 ///     .collect();
-/// milenage::authentication_vector_batch(&mut jobs);
+/// batch::authentication_vectors(&mut jobs);
 /// let alone = subscribers[7].authentication_vector(&rands[7], &sqn, &amf);
 /// assert_eq!(jobs[7].vector().unwrap().autn(), alone.autn());
 /// # Ok::<(), oxirush_security::SecurityError>(())
 /// ```
-pub fn authentication_vector_batch(jobs: &mut [VectorJob<'_>]) {
+pub fn authentication_vectors(jobs: &mut [VectorJob<'_>]) {
     if jobs.is_empty() {
         return;
     }
@@ -184,7 +185,7 @@ pub fn authentication_vector_batch(jobs: &mut [VectorJob<'_>]) {
 
 /// Check the AUTN of each job, as [`Milenage::check_autn`] does, which
 /// [`AutnJob::response`] then gives.
-pub fn check_autn_batch(jobs: &mut [AutnJob<'_>]) {
+pub fn check_autn(jobs: &mut [AutnJob<'_>]) {
     if jobs.is_empty() {
         return;
     }

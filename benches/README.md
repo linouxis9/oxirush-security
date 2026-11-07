@@ -154,7 +154,7 @@ one call.
 
 `batch` times N messages, each with its own key and COUNT: `single` is a
 call of `nas_cipher` or `nas_mac` for each, and `batch` one call of
-`nea_cipher_batch` or `nia_mac_batch` for all; `single-context` and
+`batch::cipher` or `batch::mac` for all; `single-context` and
 `batch-context` do the same with a keyed context for each message. The
 times are for the N messages.
 
@@ -235,7 +235,7 @@ octets of a key of that crate, which the `milenage` crate does not wipe.
 With the bitsliced AES the encryptions of one key run four at a time.
 
 `milenage/N/function/form` times N subscribers, each with its K: a call for
-each, or one call of `authentication_vector_batch` or `check_autn_batch`.
+each, or one call of `batch::authentication_vectors` or `batch::check_autn`.
 The time for the N, in microseconds:
 
 | | 1 | 4 | 8 | 64 | 1,024 |

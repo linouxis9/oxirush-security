@@ -93,9 +93,11 @@ impl Implementation {
     }
 
     /// How many messages of a ciphering algorithm
-    /// [`nea_cipher_batch`](crate::nea_cipher_batch) works on side by
-    /// side: 1, 4 or 8. It is 1 for 128-EEA2, whose counter blocks are
-    /// encrypted eight at a time for one message.
+    /// [`batch::cipher`](crate::batch::cipher) works on side by side: 1, 4
+    /// or 8. It is 1 for 128-EEA2, whose counter blocks are encrypted eight
+    /// at a time for one message.
+    #[cfg(feature = "batch")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "batch")))]
     pub fn ciphering_side_by_side(self, algorithm: CipheringAlgorithm) -> usize {
         match algorithm {
             CipheringAlgorithm::Snow3g | CipheringAlgorithm::Zuc => self.generators(),
@@ -104,8 +106,9 @@ impl Implementation {
     }
 
     /// How many messages of an integrity algorithm
-    /// [`nia_mac_batch`](crate::nia_mac_batch) works on side by side: 1, 4
-    /// or 8.
+    /// [`batch::mac`](crate::batch::mac) works on side by side: 1, 4 or 8.
+    #[cfg(feature = "batch")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "batch")))]
     pub fn integrity_side_by_side(self, algorithm: IntegrityAlgorithm) -> usize {
         match (algorithm, self) {
             (IntegrityAlgorithm::Snow3g | IntegrityAlgorithm::Zuc, _) => self.generators(),
@@ -123,9 +126,11 @@ impl Implementation {
     }
 
     /// How many subscribers
-    /// [`milenage::authentication_vector_batch`](crate::milenage::authentication_vector_batch)
-    /// and [`milenage::check_autn_batch`](crate::milenage::check_autn_batch)
-    /// work on side by side: 1 or 8.
+    /// [`batch::authentication_vectors`](crate::batch::authentication_vectors)
+    /// and [`batch::check_autn`](crate::batch::check_autn) work on side by
+    /// side: 1 or 8.
+    #[cfg(feature = "batch")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "batch")))]
     pub fn milenage_side_by_side(self) -> usize {
         match self {
             Self::Scalar => 1,
@@ -134,6 +139,7 @@ impl Implementation {
     }
 
     /// The SNOW 3G or ZUC generators that a batch clocks together.
+    #[cfg(feature = "batch")]
     fn generators(self) -> usize {
         match self {
             Self::Scalar => 1,
@@ -204,11 +210,13 @@ mod tests {
             assert_eq!(scalar(implementation), Implementation::Scalar);
             assert_ne!(narrow(implementation), Implementation::Vector256);
         }
+        #[cfg(feature = "batch")]
         let all = [
             Implementation::Scalar,
             Implementation::Vector128,
             Implementation::Vector256,
         ];
+        #[cfg(feature = "batch")]
         for (implementation, generators) in all.into_iter().zip([1, 4, 8]) {
             let (nea1, nia3) = (CipheringAlgorithm::NEA1, IntegrityAlgorithm::NIA3);
             assert_eq!(implementation.ciphering_side_by_side(nea1), generators);
@@ -230,6 +238,7 @@ mod tests {
             Implementation::Vector128.integrity(IntegrityAlgorithm::NIA2),
             Code::AesInstructions
         );
+        #[cfg(feature = "batch")]
         assert_eq!(
             Implementation::Vector128.integrity_side_by_side(IntegrityAlgorithm::NIA2),
             8
@@ -272,7 +281,13 @@ mod tests {
         );
         assert_eq!(Implementation::Scalar.milenage(), Code::AesCrate);
         assert_eq!(Implementation::Vector128.milenage(), Code::AesInstructions);
-        assert_eq!(Implementation::Scalar.milenage_side_by_side(), 1);
-        assert_eq!(Implementation::Vector256.milenage_side_by_side(), 8);
+        #[cfg(feature = "batch")]
+        assert_eq!(
+            (
+                all[0].milenage_side_by_side(),
+                all[2].milenage_side_by_side()
+            ),
+            (1, 8)
+        );
     }
 }

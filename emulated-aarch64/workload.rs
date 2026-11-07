@@ -26,15 +26,13 @@
 //! carry-less products of 128-EIA1 and 128-EIA3, and the AES of
 //! MILENAGE, several blocks of one key at a time.
 
-use oxirush_security::milenage::{
-    Amf, AutnJob, K, Milenage, Op, Opc, Sqn, VectorJob, authentication_vector_batch,
-    check_autn_batch,
-};
+use oxirush_security::milenage::{Amf, K, Milenage, Op, Opc, Sqn};
+
+use oxirush_security::batch::{self, AutnJob, CipherJob, MacJob, VectorJob};
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt};
 use oxirush_security::{
-    Autn, Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, Implementation,
-    IntegrityAlgorithm, IntegrityContext, MacJob, Rand, SecurityError, Snow3G, Zuc, implementation,
-    nea_cipher_batch, nia_mac_batch,
+    Autn, Bearer, CipheringAlgorithm, CipheringContext, Direction, Implementation,
+    IntegrityAlgorithm, IntegrityContext, Rand, SecurityError, Snow3G, Zuc, implementation,
 };
 
 /// The cases, by their names.
@@ -338,7 +336,7 @@ fn batches_of(seed: u64, keyed: bool) -> u64 {
                 false => MacJob::new(key, count, bearer, direction, &data[..length], algorithm),
             }
         });
-        nia_mac_batch(&mut jobs[..size]);
+        batch::mac(&mut jobs[..size]);
         for job in &jobs[..size] {
             digest.word(job.mac().unwrap_or(0));
         }
@@ -370,7 +368,7 @@ fn batches_of(seed: u64, keyed: bool) -> u64 {
                 CIPHERING[0],
             ),
         });
-        nea_cipher_batch(&mut batch[..size]);
+        batch::cipher(&mut batch[..size]);
         for (data, length) in data.iter().zip(lengths).take(size) {
             digest.octets(&data[..length]);
         }
@@ -575,7 +573,7 @@ fn milenage() -> u64 {
             at += 1;
             VectorJob::new(subscriber, &rands[at - 1], &sqn, &amf)
         });
-        authentication_vector_batch(&mut jobs[..count]);
+        batch::authentication_vectors(&mut jobs[..count]);
         let autns: [Autn; 9] = core::array::from_fn(|at| match jobs[at].vector() {
             Some(vector) => {
                 let mut autn = *vector.autn().as_octets();
@@ -589,7 +587,7 @@ fn milenage() -> u64 {
             at += 1;
             AutnJob::new(subscriber, &rands[at - 1], &autns[at - 1])
         });
-        check_autn_batch(&mut checks[..count]);
+        batch::check_autn(&mut checks[..count]);
         for (job, check) in jobs.iter().zip(&checks).take(count) {
             match job.vector() {
                 Some(vector) => digest.octets(vector.autn().as_octets()),

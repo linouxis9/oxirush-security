@@ -43,18 +43,12 @@ fn the_implementation_is_the_one_that_the_job_expects() {
         ("ZUC", CipheringAlgorithm::NEA3, IntegrityAlgorithm::NIA3),
     ] {
         println!(
-            "  {name}: ciphering on {}, {} side by side in a batch; integrity on {}, {} side by side",
+            "  {name}: ciphering on {}, integrity on {}",
             implementation.ciphering(ciphering),
-            implementation.ciphering_side_by_side(ciphering),
             implementation.integrity(integrity),
-            implementation.integrity_side_by_side(integrity),
         );
     }
-    println!(
-        "  MILENAGE: AES on {}, {} subscribers side by side in a batch",
-        implementation.milenage(),
-        implementation.milenage_side_by_side(),
-    );
+    println!("  MILENAGE: AES on {}", implementation.milenage());
 
     let Ok(expected) = std::env::var("OXIRUSH_SECURITY_EXPECT") else {
         return;

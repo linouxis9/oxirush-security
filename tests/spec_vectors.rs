@@ -294,10 +294,12 @@ const MAC_SETS_1_TO_5: &[Mac] = &[
     },
 ];
 
+#[cfg(feature = "batch")]
+use oxirush_security::batch::{self, CipherJob, MacJob};
 use oxirush_security::nas_eps::{KNasEnc, KNasInt};
 use oxirush_security::{
-    Bearer, CipherJob, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
-    IntegrityContext, MacJob, Snow3G, Zuc, nea_cipher_batch, nia_mac_batch,
+    Bearer, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm, IntegrityContext,
+    Snow3G, Zuc,
 };
 
 fn bearer(value: u8) -> Bearer {
@@ -459,6 +461,7 @@ fn the_mac_sets_through_a_context() {
 /// of 128-EEA3 share four generators: each has its length in bits, and its
 /// generator takes the next set when it has its keystream. Every other
 /// set comes from a keyed context.
+#[cfg(feature = "batch")]
 #[test]
 fn the_ciphering_sets_in_one_batch() {
     let keys: Vec<KNasEnc> = ENC.iter().map(ciphering_key).collect();
@@ -487,7 +490,7 @@ fn the_ciphering_sets_in_one_batch() {
             }
         })
         .collect();
-    nea_cipher_batch(&mut jobs);
+    batch::cipher(&mut jobs);
     drop(jobs);
 
     for ((v, data), plain) in ENC.iter().zip(&data).zip(&plain) {
@@ -516,6 +519,7 @@ fn the_ciphering_sets_in_one_batch() {
 /// 128-EIA3, each twice so that the generators of both have a message to
 /// take when one is done, the second time from a keyed context, and
 /// 128-EIA2 set 7 both ways.
+#[cfg(feature = "batch")]
 #[test]
 fn the_mac_sets_in_one_batch() {
     let sets: Vec<&Mac> = MAC.iter().chain(MAC_SETS_1_TO_5).collect();
@@ -552,7 +556,7 @@ fn the_mac_sets_in_one_batch() {
             .job_bits(v.count, bearer, dir, message, bits)
             .unwrap(),
     );
-    nia_mac_batch(&mut jobs);
+    batch::mac(&mut jobs);
 
     for (index, job) in jobs[..2 * sets.len()].iter().enumerate() {
         let v = sets[index % sets.len()];

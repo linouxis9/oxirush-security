@@ -66,7 +66,6 @@
 //! | [`auts`](Milenage::auts) | In the USIM: AUTS = SQNMS ⊕ AK\* \|\| MAC-S, with an AMF of zeros | TS 33.102 §6.3.3 |
 //! | [`verify_auts`](Milenage::verify_auts) | In the home network: SQNMS from AUTS, MAC-S checked | TS 33.102 §6.3.5 |
 //! | [`AuthenticationVector::xres_star`], [`UsimResponse::res_star`] | XRES\* and RES\* of 5GS, from the outputs of MILENAGE | TS 33.501 Annex A.4 |
-//! | [`authentication_vector_batch`], [`check_autn_batch`] | The vectors, or the checks of AUTN, of many subscribers | TS 33.102 §6.3.2 and §6.3.3 |
 //!
 //! A MAC is compared in a time that does not depend on where it differs.
 //! What the crate does not decide is the policy of the caller: whether a
@@ -79,10 +78,10 @@
 //! and printed without their octets; SQN, AMF, MAC-A, MAC-S, RES and AUTS
 //! print whole, as RAND and AUTN of the crate root do.
 //!
-//! [`authentication_vector_batch`] and [`check_autn_batch`] make the
-//! vectors or check the AUTNs of many subscribers in one call: on the AES
-//! instructions eight subscribers run side by side, and a thousand take
-//! half the time of a call for each.
+//! With the feature `batch`, `batch::authentication_vectors` and
+//! `batch::check_autn` make the vectors or check the AUTNs of many
+//! subscribers in one call: on the AES instructions eight subscribers run
+//! side by side, and a thousand take half the time of a call for each.
 //!
 //! # Types
 //!
@@ -101,14 +100,14 @@
 //! TUAK, the other algorithm set of 3GPP (TS 35.231), is not in the crate.
 
 mod aka;
-mod batch;
+#[cfg(feature = "batch")]
+pub(crate) mod batch;
 mod kernel;
 #[cfg(test)]
 mod tests;
 mod values;
 
 pub use aka::{AuthenticationVector, UsimResponse};
-pub use batch::{AutnJob, VectorJob, authentication_vector_batch, check_autn_batch};
 pub use kernel::Constants;
 pub use values::{Ak, AkStar, Amf, Auts, K, MacA, MacS, Op, Opc, Res, Sqn, Xres};
 

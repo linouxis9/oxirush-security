@@ -20,7 +20,6 @@
 
 pub(crate) mod aes128;
 pub(crate) mod algo;
-pub(crate) mod batch;
 pub(crate) mod code;
 pub(crate) mod context;
 pub(crate) mod ct;

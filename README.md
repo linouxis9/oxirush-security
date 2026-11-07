@@ -60,7 +60,8 @@ hex = "0.4" # for the examples of this page
 
 | Feature | Adds | Needs |
 |---------|------|-------|
-| none | The algorithms, their contexts and batches, MILENAGE, the key derivations, NAS integrity and ciphering, the choice of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone, no allocator |
+| none | The algorithms and their contexts, MILENAGE, the key derivations, NAS integrity and ciphering, the choice of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone, no allocator |
+| `batch` | Many messages, or the MILENAGE of many subscribers, in one call: `batch::cipher`, `batch::mac`, `batch::authentication_vectors`, `batch::check_autn` | |
 | `alloc` | What returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | An allocator |
 | `std` | On AArch64 outside Linux, Android and Apple systems, the choice of the vector code at run time | The standard library |
 | `suci` | The SUCI of an IMSI and of a SUPI that is a NAI (RFC 7542), in either form: the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, and a source of random numbers that `getrandom` has for the target |
@@ -199,15 +200,14 @@ Err(MacFailure)
 
 ## Make the vectors of many subscribers in one call
 
-A job is one subscriber with the inputs of its call. On the AES
-instructions, a batch works on eight subscribers side by side.
+With the `batch` feature, a job is one subscriber with the inputs of its
+call. On the AES instructions, a batch works on eight subscribers side by
+side.
 
 ```rust
-use oxirush_security::milenage::{
-    Amf, AutnJob, K, Milenage, Opc, Sqn, VectorJob, authentication_vector_batch,
-    check_autn_batch,
-};
 use oxirush_security::Rand;
+use oxirush_security::batch::{self, AutnJob, VectorJob};
+use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // A thousand subscribers, each with its K, its RAND and its next SQN
@@ -226,7 +226,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut jobs: Vec<_> = (0..1000)
         .map(|n| VectorJob::new(&subscribers[n], &rands[n], &sqns[n], &amf))
         .collect();
-    authentication_vector_batch(&mut jobs);
+    batch::authentication_vectors(&mut jobs);
     let vectors: Vec<_> = jobs.into_iter().filter_map(VectorJob::into_vector).collect();
     println!("AUTN of the last {}", hex::encode(vectors[999].autn().as_octets()));
 
@@ -234,7 +234,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut jobs: Vec<_> = (0..1000)
         .map(|n| AutnJob::new(&subscribers[n], &rands[n], vectors[n].autn()))
         .collect();
-    check_autn_batch(&mut jobs);
+    batch::check_autn(&mut jobs);
     let accepted = jobs.iter().filter(|job| matches!(job.response(), Some(Ok(_)))).count();
     println!("{accepted} AUTNs accepted");
     Ok(())
@@ -387,15 +387,16 @@ SecurityProtected (SHT=IntegrityProtectedAndCiphered, MAC=0xcbbc4fbb, SN=0) Opaq
 
 ## Protect the messages of many UEs in one call
 
-A job is one message with its key, its NAS COUNT and its algorithm. A batch
-gives each job what `nas_cipher` or `nas_mac` would give it, and runs the
-keystream generators and the MAC chains of several jobs side by side.
+With the `batch` feature, a job is one message with its key, its NAS COUNT
+and its algorithm. A batch gives each job what `nas_cipher` or `nas_mac`
+would give it, and runs the keystream generators and the MAC chains of
+several jobs side by side.
 
 ```rust
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection};
 use oxirush_security::{
-    CipherJob, CipheringAlgorithm, Direction, IntegrityAlgorithm, MacJob, NasCount,
-    nea_cipher_batch, nia_mac_batch,
+    CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount,
+    batch::{self, CipherJob, MacJob},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -420,7 +421,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             CipherJob::new(key, count, access.into(), downlink, &mut message[1..], nea[ue])
         })
         .collect();
-    nea_cipher_batch(&mut jobs);
+    batch::cipher(&mut jobs);
 
     // The MAC is over the sequence number and the ciphered message
     let mut jobs: Vec<_> = (messages.iter().enumerate())
@@ -429,7 +430,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             MacJob::new(key, count, access.into(), downlink, message, nia[ue])
         })
         .collect();
-    nia_mac_batch(&mut jobs);
+    batch::mac(&mut jobs);
     for (job, message) in jobs.iter().zip(&messages) {
         if let Some(mac) = job.mac() {
             println!("MAC {mac:08x} of {}", hex::encode(message));
@@ -710,7 +711,7 @@ octets where it was, so make a key where it stays and pass references.
 
 On one core of an AMD Ryzen 7 5700G (Linux 7.0, Rust 1.98.1), at 9dc28da
 on 2026-10-18, for a message of 1,500 octets, alone and as one of sixteen in
-a call of `nea_cipher_batch` or `nia_mac_batch`:
+a call of `batch::cipher` or `batch::mac`:
 
 | | Cipher | MAC | Cipher, one of sixteen | MAC, one of sixteen |
 |---|---|---|---|---|
@@ -719,7 +720,7 @@ a call of `nea_cipher_batch` or `nia_mac_batch`:
 | 128-NEA3, 128-NIA3 (ZUC) | 3.1 µs | 3.4 µs | 0.82 µs | 1.1 µs |
 
 MILENAGE makes an authentication vector in 0.12 µs, and in 0.06 µs as one
-of a thousand in a call of `authentication_vector_batch`. A key
+of a thousand in a call of `batch::authentication_vectors`. A key
 derivation takes 0.22 µs, and SUCI concealment 55 µs with Profile A and
 268 µs with Profile B.
 [`benches/`](benches/README.md) has the benchmarks, the other figures and

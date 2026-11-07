@@ -42,17 +42,18 @@
 //! security contexts keeps contexts for those of AES, where they save
 //! time, and keys for the others.
 
+#[cfg(feature = "batch")]
+use crate::batch::{CipherJob, MacJob};
 use crate::common::aes128::{Expanded, RoundKeys, Schedule, expand, no_round_keys};
-use crate::common::batch::{CipherJob, MacJob};
 use crate::common::error::SecurityError;
 use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm};
 use crate::common::keys::{CipheringKey, IntegrityKey};
-use crate::common::nea::{
-    cipher_bits, cipher_message, cipher_octets, nea2_cipher_keyed, nea2_message_keyed,
-};
-use crate::common::nia::{
-    BitString, CmacBlocks, cmac, cmac_message, cmac_subkeys, mac_message, mac_of_bits,
-};
+use crate::common::nea::{cipher_bits, cipher_message, nea2_message_keyed};
+#[cfg(feature = "batch")]
+use crate::common::nea::{cipher_octets, nea2_cipher_keyed};
+use crate::common::nia::{BitString, CmacBlocks, cmac_message, cmac_subkeys, mac_message};
+#[cfg(feature = "batch")]
+use crate::common::nia::{cmac, mac_of_bits};
 use crate::common::wipe;
 use core::fmt;
 use zeroize::Zeroizing;
@@ -148,8 +149,10 @@ impl IntegrityContext {
         Ok(self.mac_message(count, bearer, direction, bits))
     }
 
-    /// The message as a job of [`nia_mac_batch`](crate::nia_mac_batch),
-    /// which computes its MAC with those of other messages.
+    /// The message as a job of [`batch::mac`](crate::batch::mac), which
+    /// computes its MAC with those of other messages.
+    #[cfg(feature = "batch")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "batch")))]
     pub fn job<'a>(
         &'a self,
         count: impl Into<u32>,
@@ -162,10 +165,12 @@ impl IntegrityContext {
     }
 
     /// The first `bit_length` bits of `message` as a job of
-    /// [`nia_mac_batch`](crate::nia_mac_batch).
+    /// [`batch::mac`](crate::batch::mac).
     ///
     /// A `bit_length` above the length of `message` in bits is
     /// [`SecurityError::BitLengthExceedsData`].
+    #[cfg(feature = "batch")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "batch")))]
     pub fn job_bits<'a>(
         &'a self,
         count: impl Into<u32>,
@@ -185,6 +190,7 @@ impl IntegrityContext {
     }
 
     /// The octets of the key.
+    #[cfg(feature = "batch")]
     pub(crate) fn key(&self) -> &[u8; 16] {
         &self.key
     }
@@ -196,6 +202,7 @@ impl IntegrityContext {
     /// The round keys on the AES instructions and the subkeys of CMAC,
     /// when the context has them.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[cfg(feature = "batch")]
     pub(crate) fn cmac_key(&self) -> Option<crate::common::nia::CmacKey<'_>> {
         let (_, schedule) = self.round_keys().schedule()?;
         Some(crate::common::nia::CmacKey::Keyed(schedule, &self.subkeys))
@@ -221,6 +228,7 @@ impl IntegrityContext {
 
     /// The MAC of the first bits of a message, for a caller that clears
     /// after its own work.
+    #[cfg(feature = "batch")]
     pub(crate) fn mac_of(
         &self,
         count: u32,
@@ -335,9 +343,10 @@ impl CipheringContext {
         })
     }
 
-    /// The message as a job of
-    /// [`nea_cipher_batch`](crate::nea_cipher_batch), which ciphers it
-    /// with other messages.
+    /// The message as a job of [`batch::cipher`](crate::batch::cipher),
+    /// which ciphers it with other messages.
+    #[cfg(feature = "batch")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "batch")))]
     pub fn job<'a>(
         &'a self,
         count: impl Into<u32>,
@@ -349,10 +358,12 @@ impl CipheringContext {
     }
 
     /// The first `bit_length` bits of `data` as a job of
-    /// [`nea_cipher_batch`](crate::nea_cipher_batch).
+    /// [`batch::cipher`](crate::batch::cipher).
     ///
     /// A `bit_length` above the length of `data` in bits is
     /// [`SecurityError::BitLengthExceedsData`].
+    #[cfg(feature = "batch")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "batch")))]
     pub fn job_bits<'a>(
         &'a self,
         count: impl Into<u32>,
@@ -366,6 +377,7 @@ impl CipheringContext {
     }
 
     /// The octets of the key.
+    #[cfg(feature = "batch")]
     pub(crate) fn key(&self) -> &[u8; 16] {
         &self.key
     }
@@ -385,12 +397,14 @@ impl CipheringContext {
 
     /// The round keys on the AES instructions, when the context has them.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[cfg(feature = "batch")]
     pub(crate) fn schedule(&self) -> Option<&crate::common::simd::AesSchedule> {
         let (_, schedule) = RoundKeys::of(&self.expanded, &self.schedule).schedule()?;
         Some(schedule)
     }
 
     /// Cipher whole octets, for a caller that clears after its own work.
+    #[cfg(feature = "batch")]
     pub(crate) fn cipher_whole(
         &self,
         count: u32,
@@ -421,7 +435,8 @@ impl fmt::Debug for CipheringContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::batch::{nea_cipher_batch, nia_mac_batch};
+    #[cfg(feature = "batch")]
+    use crate::batch::{self, CipherJob, MacJob};
     use crate::common::nea::{nea_cipher, nea_cipher_bits};
     use crate::common::nia::{nia_mac, nia_mac_bits};
     use crate::nas_5gs::NasConnection;
@@ -550,6 +565,7 @@ mod tests {
 
     /// The jobs of contexts and those of keys, of every algorithm, in one
     /// batch: each has the value of its message alone.
+    #[cfg(feature = "batch")]
     #[test]
     fn the_jobs_of_contexts_are_computed_in_a_batch() {
         on_every_code(|| {
@@ -588,7 +604,7 @@ mod tests {
                     }
                 })
                 .collect();
-            nia_mac_batch(&mut jobs);
+            batch::mac(&mut jobs);
             for (index, job) in jobs.iter().enumerate() {
                 let message = &messages[index];
                 let bits = match index {
@@ -636,7 +652,7 @@ mod tests {
                     }
                 })
                 .collect();
-            nea_cipher_batch(&mut jobs);
+            batch::cipher(&mut jobs);
             for (index, data) in data.iter().enumerate() {
                 let mut expected = messages[index].clone();
                 let bits = match index {

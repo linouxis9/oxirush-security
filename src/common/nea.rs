@@ -91,6 +91,7 @@ pub(crate) fn cipher_message(
 
 /// Cipher or decipher octets in place with the octets of a key, for a
 /// caller that clears after its own work.
+#[cfg(feature = "batch")]
 pub(crate) fn cipher_octets(
     key: &[u8; 16],
     count: u32,
@@ -236,6 +237,7 @@ pub(crate) fn eea1_key_and_iv(
 ///   Bytes [5..7]:  0x000000
 ///   Bytes [8..15]: block counter (big-endian u64, starts at 0)
 /// ```
+#[cfg(any(test, feature = "batch"))]
 pub(crate) fn nea2_cipher(
     key: &[u8; 16],
     count: u32,
@@ -291,6 +293,7 @@ pub(crate) fn nea2_portable(
 
 /// 128-EEA2 of octets, of which there are some, with a key and its round
 /// keys, for a caller that clears after its own work.
+#[cfg(feature = "batch")]
 pub(crate) fn nea2_cipher_keyed(
     key: &[u8; 16],
     round_keys: RoundKeys<'_>,

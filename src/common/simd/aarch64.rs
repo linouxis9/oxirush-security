@@ -191,4 +191,5 @@ operations! {
 
 sboxes!("neon,aes");
 generators!("neon,aes");
+#[cfg(feature = "batch")]
 lanes!("neon,aes", 4);
