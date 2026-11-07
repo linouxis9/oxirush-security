@@ -756,6 +756,7 @@ benches/compare/compare.sh 3
 ```sh
 cargo test --all-features
 python3 -I tests/five_g_aka_chain.py
+python3 -I tests/interworking_keys.py
 cargo +nightly fuzz run algorithms -- -max_total_time=60
 ```
 
@@ -763,7 +764,8 @@ The algorithms, MILENAGE and SUCI are tested on the 3GPP test data, and
 MILENAGE on every set of TS 35.207 and TS 35.208. TS 33.501 has no test data
 for its key derivations: a second implementation,
 [`tests/five_g_aka_chain.py`](tests/five_g_aka_chain.py), derives the 5G AKA
-chain.
+chain, and [`tests/interworking_keys.py`](tests/interworking_keys.py) the
+keys of a change between 5GS and EPS.
 [`differential/`](https://github.com/linouxis9/oxirush-security/tree/master/differential)
 compares MILENAGE with the `milenage` crate, Open5GS and free5GC on a
 million random subscribers.

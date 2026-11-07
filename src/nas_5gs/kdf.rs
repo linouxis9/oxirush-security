@@ -755,30 +755,96 @@ mod tests {
         );
     }
 
+    /// TS 33.501 Annex A.14 and A.15: FC 0x73 to 0x76, then a NAS COUNT of four
+    /// octets, or an NH of 32, and its length.
     #[test]
-    fn mapped_kamf_vectors() {
-        let kasme = KAsme::new(&counting());
-        let nh = crate::nas_eps::Nh::new(&core::array::from_fn(|i| (i + 32) as u8));
+    fn interworking_keys_take_the_s_of_annex_a_14_and_a_15() {
+        let key = counting();
+        let (kamf, kasme) = (KAmf::new(&key), KAsme::new(&key));
+        let count = count(0x0012_3456);
+        let s = |fc: u8| [fc, 0x00, 0x12, 0x34, 0x56, 0x00, 0x04];
+        assert_eq!(derive_mapped_kasme_idle(&kamf, count), *kdf(&key, &s(0x73)));
         assert_eq!(
-            hex::encode(derive_mapped_kamf_idle(&kasme, count(0x0012_3456)).as_octets()),
-            "eb553a2dc491745c18c4d717b577e068485326c458a726838abe755f38666beb"
+            derive_mapped_kasme_handover(&kamf, count),
+            *kdf(&key, &s(0x74))
         );
-        assert_eq!(
-            hex::encode(derive_mapped_kamf_handover(&kasme, &nh).as_octets()),
-            "38d4b0135f82c7b44cf54c76232badc8ac02744ef43225ade981dcde7ca9ba8f"
-        );
+        assert_eq!(derive_mapped_kamf_idle(&kasme, count), *kdf(&key, &s(0x75)));
+        let nh = crate::nas_eps::Nh::new(&[0x5a; 32]);
+        let mut s = [0x5a; 35];
+        (s[0], s[33], s[34]) = (0x76, 0x00, 0x20);
+        assert_eq!(derive_mapped_kamf_handover(&kasme, &nh), *kdf(&key, &s));
     }
 
     #[test]
-    fn mapped_kasme_vectors() {
-        let kamf = KAmf::new(&counting());
+    fn interworking_keys_match_another_implementation() {
+        // KAMF is the one of the 5G AKA chain below. TS 33.501 Annex A has no
+        // test data for A.14 and A.15: the expected values are those that
+        // `tests/interworking_keys.py` derives with the HMAC-SHA-256 of
+        // Python's standard library, over S strings written octet by octet.
+        use crate::nas_eps::{derive_kenb, derive_nh as derive_eps_nh};
+        let kamf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
+        let kamf = KAmf::new(&octets(kamf));
+
+        // Idle mobility to EPS (§8.5.2, §8.6.1): KASME' of the uplink 5G NAS
+        // COUNT that protects the TAU REQUEST
+        let kasme_idle = derive_mapped_kasme_idle(&kamf, count(0x00a1_b2c3));
         assert_eq!(
-            hex::encode(derive_mapped_kasme_idle(&kamf, count(0x0012_3456)).as_octets()),
-            "e72331cceed3329aefe6d0148472d17d51968ca45e0a0a570bb9e889fe2ee69e"
+            hex::encode(kasme_idle.as_octets()),
+            "a1bea5f001417abdc05e3fc6bc85f1618f91668373365354700e2ea543b68441"
+        );
+
+        // Handover to EPS (§8.3.2): KASME' of the downlink 5G NAS COUNT, KeNB
+        // at the uplink NAS COUNT 2^32 - 1, then NH twice for NCC 2
+        let kasme_ho = derive_mapped_kasme_handover(&kamf, count(0x0003_0201));
+        assert_eq!(
+            hex::encode(kasme_ho.as_octets()),
+            "c722847e47f812639563a633db6dead66f91771ee496f91aa9b229a2257a18b8"
+        );
+        let kenb = derive_kenb(&kasme_ho, AccessKeyCount::Handover);
+        assert_eq!(
+            hex::encode(kenb.as_octets()),
+            "240e9bb04bf57fed420f6da4be255e6e142766cce260596b33b85c7a7f973aee"
+        );
+        let nh_1 = derive_eps_nh(&kasme_ho, &kenb);
+        assert_eq!(
+            hex::encode(nh_1.as_octets()),
+            "248ae0c19a0c57b634c2722ca1927fe725e812cdcf558e8b5c7916a74b7eef8b"
+        );
+        let nh_2 = derive_eps_nh(&kasme_ho, &nh_1);
+        assert_eq!(
+            hex::encode(nh_2.as_octets()),
+            "b25a19bf07ea3c4358bfcd1a2e547aeaa5baa87f63b13ffe77115c5b6e196cce"
+        );
+
+        // Idle mobility back to 5GS (§8.2, §8.6.2): KAMF' of the uplink EPS NAS
+        // COUNT of the TAU REQUEST that the REGISTRATION REQUEST has
+        let kamf_idle = derive_mapped_kamf_idle(&kasme_idle, count(0x0102));
+        assert_eq!(
+            hex::encode(kamf_idle.as_octets()),
+            "e6d9310ca42b930137bda3784d61c16fd1753d5d342af02998df9dd59cd37261"
+        );
+
+        // Handover back to 5GS (§8.4.2): KAMF' of the next NH of the source
+        // MME (NCC 3), the temporary KgNB at the uplink NAS COUNT 2^32 - 1,
+        // and the NH that the AMF keeps for NCC 1
+        let nh_3 = derive_eps_nh(&kasme_ho, &nh_2);
+        assert_eq!(
+            hex::encode(nh_3.as_octets()),
+            "ded8ae70ee0547222d73008bc3665f007d627e63f38f372bd48e233e7a155951"
+        );
+        let kamf_ho = derive_mapped_kamf_handover(&kasme_ho, &nh_3);
+        assert_eq!(
+            hex::encode(kamf_ho.as_octets()),
+            "b8ef6f8a87d2ef16b0b40a9e3f71bdfd224b5f1e0e5a515e260132606767b357"
+        );
+        let kgnb = derive_kgnb(&kamf_ho, AccessKeyCount::Handover);
+        assert_eq!(
+            hex::encode(kgnb.as_octets()),
+            "3ddf3673cdefc1fbe6befe4a0ee371efd0b22c9d7d93ed0467b85946584e011c"
         );
         assert_eq!(
-            hex::encode(derive_mapped_kasme_handover(&kamf, count(0x0012_3456)).as_octets()),
-            "6f4cb30cdb2d7dcc45fc9f2bcf5a10fcb90c2c4cba1ef3deb22917eadafbf832"
+            hex::encode(derive_nh(&kamf_ho, &kgnb).as_octets()),
+            "387f2654a85f4a599ea9366f20e405dcf34e6f04f88b1892d90d42d5c769d531"
         );
     }
 

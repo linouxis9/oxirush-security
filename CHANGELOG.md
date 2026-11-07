@@ -2,6 +2,17 @@
 
 All notable changes to `oxirush-security` are recorded here.
 
+## Unreleased
+
+- The keys of a change between 5GS and EPS are tested against another
+  implementation: `tests/interworking_keys.py` derives KASME' and KAMF' of
+  idle mobility and of a handover (TS 33.501 Annex A.14 and A.15), KeNB at
+  the COUNT 2^32 - 1 with its NH chain (TS 33.401 Annex A.3 and A.4), and
+  the temporary KgNB at 2^32 - 1 with its NH, with the HMAC-SHA-256 of
+  Python's standard library over S strings written octet by octet. They
+  replace values that the crate had computed itself, and a test checks
+  the S of each function of Annex A.14 and A.15.
+
 ## 0.3.0 - 2026-10-24
 
 ### Breaking changes relative to 0.2.0

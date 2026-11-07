@@ -154,15 +154,17 @@ jobs:
       - run: cargo run ${{ matrix.arguments }}
       - run: cargo clippy --all-targets -- -D warnings
 
-  # The 5G AKA chain from another implementation: the HMAC-SHA-256 of
-  # Python's standard library derives the values, and the script fails
-  # when one is not the value that the crate's test expects
+  # The 5G AKA chain and the keys of a change between 5GS and EPS from
+  # another implementation: the HMAC-SHA-256 of Python's standard library
+  # derives the values, and each script fails when one is not the value
+  # that the crate's test expects
   reference-values:
-    name: The 5G AKA chain from another implementation
+    name: The key chains from another implementation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: python3 tests/five_g_aka_chain.py
+      - run: python3 tests/interworking_keys.py
 
   # MILENAGE beside the `milenage` crate, Open5GS and free5GC, on a million
   # random subscribers: every value of the four must be the same
