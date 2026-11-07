@@ -1,6 +1,6 @@
 [package]
 name = "oxirush-security"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "5GS and EPS security in Rust: MILENAGE and 5G AKA, key derivation, NIA/NEA and EIA/EEA (SNOW 3G, AES, ZUC) and SUCI concealment, per 3GPP TS 33.501, TS 33.401 and TS 35.206. Keys wiped, no_std."
 license = "Apache-2.0"
