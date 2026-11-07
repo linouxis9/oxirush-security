@@ -4,25 +4,25 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use oxirush_security::nas_5gs::{Guti, MobileIdentityType, STmsi, Supi};
-use oxirush_security::{NasCount, Plmn, tbcd};
+use oxirush_security::NasCount;
+use oxirush_security::identity::{Guti5g, MobileIdentityType5gs, Plmn, STmsi5g, Supi, tbcd};
 
 fuzz_target!(|bytes: &[u8]| {
     // A 5G-GUTI or a 5G-S-TMSI mobile identity, read as other
     // implementations send it: what is read is written back to the same
     // octets, but for the spare bit of the first
-    let kind = bytes.first().map(|&first| MobileIdentityType::of(first));
-    if let Ok((guti, _)) = Guti::from_nas_octets_tolerant(bytes) {
-        assert_eq!(kind, Some(Ok(MobileIdentityType::Guti)));
+    let kind = bytes.first().map(|&first| MobileIdentityType5gs::of(first));
+    if let Ok((guti, _)) = Guti5g::from_nas_octets_tolerant(bytes) {
+        assert_eq!(kind, Some(Ok(MobileIdentityType5gs::Guti)));
         let octets = guti.to_nas_octets();
         assert_eq!((octets[0], &octets[1..]), (0xf2, &bytes[1..]));
         let (plmn, region) = (guti.plmn(), guti.amf_region_id());
         let (set, pointer, tmsi) = (guti.amf_set_id(), guti.amf_pointer(), guti.tmsi());
-        assert_eq!(Guti::new(plmn, region, set, pointer, tmsi), Ok(guti));
-        assert_eq!(STmsi::new(set, pointer, tmsi), Ok(guti.s_tmsi()));
+        assert_eq!(Guti5g::new(plmn, region, set, pointer, tmsi), Ok(guti));
+        assert_eq!(STmsi5g::new(set, pointer, tmsi), Ok(guti.s_tmsi()));
     }
-    if let Ok((s_tmsi, _)) = STmsi::from_nas_octets_tolerant(bytes) {
-        assert_eq!(kind, Some(Ok(MobileIdentityType::STmsi)));
+    if let Ok((s_tmsi, _)) = STmsi5g::from_nas_octets_tolerant(bytes) {
+        assert_eq!(kind, Some(Ok(MobileIdentityType5gs::STmsi)));
         let octets = s_tmsi.to_nas_octets();
         assert_eq!((octets[0], &octets[1..]), (0xf4, &bytes[1..]));
     }

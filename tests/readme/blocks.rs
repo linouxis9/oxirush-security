@@ -80,9 +80,8 @@ fn block_1() {
 /// The Rust block 2 of README.md.
 fn block_2() {
     use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
-    use oxirush_security::nas_5gs::{
-        Supi, compute_hxres_star, derive_kamf, derive_kausf, derive_kseaf,
-    };
+    use oxirush_security::nas_5gs::{compute_hxres_star, derive_kamf, derive_kausf, derive_kseaf};
+    use oxirush_security::identity::Supi;
     use oxirush_security::Rand;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -246,9 +245,8 @@ fn block_6() {
         derive_kasme, derive_knas_enc, derive_knas_int, nas_cipher, nas_mac,
         service_request_short_mac,
     };
-    use oxirush_security::{
-        Autn, CipheringAlgorithm, Ck, Direction, Ik, IntegrityAlgorithm, NasCount, Plmn,
-    };
+    use oxirush_security::{Autn, CipheringAlgorithm, Ck, Direction, Ik, IntegrityAlgorithm, NasCount};
+    use oxirush_security::identity::Plmn;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
         // KASME from CK, IK, the serving network and the AUTN, then the NAS keys
@@ -395,8 +393,8 @@ fn block_9() {
 
 /// The Rust block 10 of README.md.
 fn block_10() {
-    use oxirush_security::Plmn;
-    use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci, Supi};
+    use oxirush_security::identity::{Plmn, RoutingIndicator, Supi};
+    use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, Suci};
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Home network: its private key, and the public key that its subscribers

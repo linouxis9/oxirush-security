@@ -4,10 +4,8 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use oxirush_security::Plmn;
-use oxirush_security::nas_5gs::{
-    HomeNetworkPrivateKey, Protection, ProtectionScheme, RoutingIndicator, SchemeOutput, Suci, Supi,
-};
+use oxirush_security::identity::{Plmn, ProtectionScheme, RoutingIndicator, Supi};
+use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, SchemeOutput, Suci};
 
 // The home network private keys of TS 33.501 Annex C.4
 const PRIVATE_A: [u8; 32] = [

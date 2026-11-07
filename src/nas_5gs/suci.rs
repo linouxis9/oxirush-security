@@ -41,16 +41,17 @@
 mod ecies;
 
 pub use ecies::{HomeNetworkPrivateKey, HomeNetworkPublicKey};
-pub use oxirush_utils::identity::{ProtectionScheme, RoutingIndicator};
 
 use crate::common::wipe;
-use crate::nas_5gs::{MobileIdentityType, Supi, SupiType};
 use alloc::string::{String, ToString};
 use alloc::{format, vec::Vec};
 use core::fmt;
 use ecies::{MAC_LEN, PROFILE_A_PUBLIC_KEY_LEN, PROFILE_B_PUBLIC_KEY_LEN};
 use oxirush_utils::identity::NaiSuci;
 use oxirush_utils::identity::{self, Fault, ImsiSuci, Plmn, tbcd};
+use oxirush_utils::identity::{
+    MobileIdentityType5gs, ProtectionScheme, RoutingIndicator, Supi, SupiType,
+};
 
 /// The home network identifier of a SUCI (TS 23.003 §2.2B).
 #[non_exhaustive]
@@ -316,11 +317,8 @@ enum Form {
 /// A SUCI with its parts (TS 23.003 §2.2B).
 ///
 /// ```
-/// use oxirush_security::nas_5gs::{
-///     HomeNetwork, HomeNetworkPrivateKey, Protection, ProtectionScheme, RoutingIndicator, Suci,
-///     SuciError,
-/// };
-/// use oxirush_security::Plmn;
+/// use oxirush_security::identity::{Plmn, ProtectionScheme, RoutingIndicator};
+/// use oxirush_security::nas_5gs::{HomeNetwork, HomeNetworkPrivateKey, Protection, Suci, SuciError};
 ///
 /// // The home network has a key pair of Profile A, and gives its
 /// // subscribers the public key with the identifier 1
@@ -382,7 +380,7 @@ impl Suci {
         let Some(&first) = identity.first() else {
             return Err(SuciError::Truncated);
         };
-        if MobileIdentityType::of(first) != Ok(MobileIdentityType::Suci) {
+        if MobileIdentityType5gs::of(first) != Ok(MobileIdentityType5gs::Suci) {
             return Err(SuciError::NotASuci);
         }
         if matches!((first >> 4) & 0x07, 1..=3) {

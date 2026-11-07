@@ -179,7 +179,7 @@ pub const CASES: [(&str, Kind); 26] = [
         "batch::mac of 128-EIA2, 8 x 300 octets, from contexts",
         Kind::Batch,
     ),
-    ("Snow3G::from_bytes", Kind::Generator(true)),
+    ("Snow3G::new", Kind::Generator(true)),
     ("Snow3G::fill", Kind::Generator(true)),
     ("Zuc::new", Kind::Generator(false)),
     ("Zuc::fill", Kind::Generator(false)),
@@ -249,7 +249,7 @@ impl Prepared {
                     *context = Some(IntegrityContext::new(key, cmac));
                 }
             }
-            17 => self.snow3g = Some(Snow3G::from_bytes(&KEY, &IV)),
+            17 => self.snow3g = Some(Snow3G::new(&KEY, &IV)),
             19 => self.zuc = Some(Zuc::new(&KEY, &IV)),
             22..=24 => {
                 let subscriber = Milenage::new(&K::new(&MILENAGE_K), &Opc::new(&MILENAGE_OPC));
@@ -369,7 +369,7 @@ impl Prepared {
                 batch::mac(jobs);
                 jobs.iter().filter_map(MacJob::mac).map(u64::from).sum()
             }
-            16 => self.keep(&ManuallyDrop::new(Snow3G::from_bytes(&KEY, &IV))),
+            16 => self.keep(&ManuallyDrop::new(Snow3G::new(&KEY, &IV))),
             17 => match &mut self.snow3g {
                 Some(generator) => {
                     generator.fill(&mut self.keystream);

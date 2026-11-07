@@ -18,8 +18,10 @@
 //! What `{}` and `{:?}` print: an identity and a value that travels in
 //! clear whole, and no octet of a key.
 
-use oxirush_security::nas_5gs::{Guti, KAmf, KNasInt, ResStar, STmsi, Supi, XresStar};
-use oxirush_security::{Autn, Ck, Ik, Plmn, Rand, milenage};
+use oxirush_security::nas_5gs::{KAmf, KNasInt, ResStar, XresStar};
+
+use oxirush_security::identity::{Guti5g, Plmn, STmsi5g, Supi};
+use oxirush_security::{Autn, Ck, Ik, Rand, milenage};
 
 #[test]
 fn an_identity_is_printed_whole() {
@@ -36,10 +38,10 @@ fn an_identity_is_printed_whole() {
 
     // The 5G-GUTI and the 5G-S-TMSI in their text, by their parts in
     // hexadecimal digits (the forms of oxirush-utils)
-    let guti = Guti::new(plmn, 0xca, 0x3fe, 0x01, 0x1234_5678).unwrap();
+    let guti = Guti5g::new(plmn, 0xca, 0x3fe, 0x01, 0x1234_5678).unwrap();
     assert_eq!(format!("{guti}"), "5g-guti-20893caff8112345678");
     assert_eq!(format!("{guti:?}"), "Guti5g(5g-guti-20893caff8112345678)");
-    let s_tmsi = STmsi::new(0x3fe, 0x01, 0x1234_5678).unwrap();
+    let s_tmsi = STmsi5g::new(0x3fe, 0x01, 0x1234_5678).unwrap();
     assert_eq!(format!("{s_tmsi:?}"), "STmsi5g(5g-s-tmsi-ff8112345678)");
 }
 

@@ -17,10 +17,10 @@
 
 //! The SUCI through the public API, as a SIDF and a UE use it.
 
-use oxirush_security::Plmn;
+use oxirush_security::identity::{Plmn, ProtectionScheme, RoutingIndicator, SupiType};
 use oxirush_security::nas_5gs::{
-    HomeNetwork, HomeNetworkPrivateKey, HomeNetworkPublicKey, KSeaf, Protection, ProtectionScheme,
-    RoutingIndicator, SchemeOutput, Suci, SuciError, SupiType, derive_kamf,
+    HomeNetwork, HomeNetworkPrivateKey, HomeNetworkPublicKey, KSeaf, Protection, SchemeOutput,
+    Suci, SuciError, derive_kamf,
 };
 
 // Home network keys of TS 33.501 Annex C.4.
@@ -316,7 +316,7 @@ fn ecies_profiles_refuse_an_empty_identity_and_its_output() {
 /// null scheme, and the mobile identity, which an IMSI has not from its realm.
 #[test]
 fn a_suci_in_the_nai_format_gives_its_supi_and_its_mobile_identity() {
-    use oxirush_security::nas_5gs::Supi;
+    use oxirush_security::identity::Supi;
     let imsi = "type0.rid678.schid0.userid0123456789@5gc.mnc093.mcc208.3gppnetwork.org";
     let imsi = Suci::from_nai(imsi).unwrap();
     assert_eq!(imsi.to_nas_octets(), Err(SuciError::MncLengthUnknown));
@@ -396,7 +396,7 @@ fn a_suci_that_is_not_one_says_what_is_wrong() {
 /// The SUCI of a GLI or a GCI has the routing indicator 0 alone.
 #[test]
 fn a_gli_or_a_gci_is_concealed_with_the_routing_indicator_0() {
-    use oxirush_security::nas_5gs::Supi;
+    use oxirush_security::identity::Supi;
     for supi in ["gli-QUJDRA==@operator.com", "gci-user17@operator.com"] {
         let supi = Supi::parse(supi).unwrap();
         let routing = RoutingIndicator::new("12").unwrap();
@@ -418,7 +418,7 @@ fn a_gli_or_a_gci_is_concealed_with_the_routing_indicator_0() {
 /// its key identifier is looked at.
 #[test]
 fn a_gli_or_a_gci_is_concealed_with_the_null_scheme_alone() {
-    use oxirush_security::nas_5gs::Supi;
+    use oxirush_security::identity::Supi;
     let public = HomeNetworkPublicKey::profile_a(&octets(PROFILE_A_PUBLIC));
     let zero = RoutingIndicator::new("0").unwrap();
     for supi in ["gli-QUJDRA==@operator.com", "gci-user17@operator.com"] {
@@ -441,7 +441,7 @@ fn a_gli_or_a_gci_is_concealed_with_the_null_scheme_alone() {
 /// it: the identity is refused, before a key is drawn, and the null scheme writes it.
 #[test]
 fn an_anonymous_nai_is_concealed_with_the_null_scheme_alone() {
-    use oxirush_security::nas_5gs::Supi;
+    use oxirush_security::identity::Supi;
     let anonymous = Supi::parse("nai-@example.com").unwrap();
     let public = HomeNetworkPublicKey::profile_a(&octets(PROFILE_A_PUBLIC));
     let protection = Protection::Ecies {

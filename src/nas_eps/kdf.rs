@@ -57,7 +57,8 @@ fn halves(full: Zeroizing<[u8; 32]>) -> ([u8; 16], [u8; 16]) {
 /// ```
 /// use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
 /// use oxirush_security::nas_eps::derive_kasme;
-/// use oxirush_security::{Plmn, Rand};
+/// use oxirush_security::Rand;
+/// use oxirush_security::identity::Plmn;
 ///
 /// // The vector of the subscriber of TS 35.208 test set 1, in the network 208-93
 /// # let octets = |s: &str| hex::decode(s).unwrap();

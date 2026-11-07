@@ -60,16 +60,15 @@ hex = "0.4" # for the examples of this page
 
 | Feature | Adds | Needs |
 |---------|------|-------|
-| none | The algorithms and their contexts, MILENAGE, the key derivations, NAS integrity and ciphering, the choice of the algorithms, the SUPI, the 5G-GUTI and the PLMN | `core` alone, no allocator |
+| none | The algorithms and their contexts, MILENAGE, the key derivations, NAS integrity and ciphering, the choice of the algorithms | `core` alone, no allocator |
 | `batch` | Many messages, or the MILENAGE of many subscribers, in one call: `batch::cipher`, `batch::mac`, `batch::authentication_vectors`, `batch::check_autn` | |
-| `alloc` | What returns a `Vec` or a `String`: `kdf::build_s`, `tbcd::encode`, `tbcd::decode`, `Supi::into_owned` | An allocator |
+| `alloc` | What returns a `Vec` or a `String`: `kdf::build_s`, `Supi::into_owned` | An allocator |
 | `std` | On AArch64 outside Linux, Android and Apple systems, the choice of the vector code at run time | The standard library |
 | `suci` | The SUCI of an IMSI and of a SUPI that is a NAI (RFC 7542), in either form: the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, and a source of random numbers that `getrandom` has for the target |
 | `idna` | The realm and the username of a NAI are checked as internationalized names too | `suci`, and the Unicode tables of `idna` and `unicode-normalization` |
 
-The identities are oxirush-utils' types: `oxirush_security::identity` is its
-module (`Plmn`, `Supi`, `Guti5g`, …), and `nas_5gs` names those of 5GS `Supi`,
-`Guti` and `STmsi`. `tbcd` encodes the digits of an IMSI.
+The identities are oxirush-utils' types, in `oxirush_security::identity`:
+`Plmn`, `Supi`, `Guti5g`, ….
 
 `std` is on by default. Without `std` the crate is
 `no_std`, and it still runs the vector and AES instructions where the
@@ -98,9 +97,8 @@ SQN and the AMF of a challenge.
 
 ```rust
 use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
-use oxirush_security::nas_5gs::{
-    Supi, compute_hxres_star, derive_kamf, derive_kausf, derive_kseaf,
-};
+use oxirush_security::nas_5gs::{compute_hxres_star, derive_kamf, derive_kausf, derive_kseaf};
+use oxirush_security::identity::Supi;
 use oxirush_security::Rand;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -302,9 +300,8 @@ use oxirush_security::nas_eps::{
     derive_kasme, derive_knas_enc, derive_knas_int, nas_cipher, nas_mac,
     service_request_short_mac,
 };
-use oxirush_security::{
-    Autn, CipheringAlgorithm, Ck, Direction, Ik, IntegrityAlgorithm, NasCount, Plmn,
-};
+use oxirush_security::{Autn, CipheringAlgorithm, Ck, Direction, Ik, IntegrityAlgorithm, NasCount};
+use oxirush_security::identity::Plmn;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // KASME from CK, IK, the serving network and the AUTN, then the NAS keys
@@ -546,8 +543,8 @@ SUPI that is a NAI is concealed as a NAI (TS 23.003, 28.7.3). This needs the
 `suci` feature.
 
 ```rust
-use oxirush_security::Plmn;
-use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci, Supi};
+use oxirush_security::identity::{Plmn, RoutingIndicator, Supi};
+use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, Suci};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Home network: its private key, and the public key that its subscribers

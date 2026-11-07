@@ -19,9 +19,11 @@
 //! CK || IK -> KAUSF -> KSEAF -> KAMF -> KNASint / KNASenc -> K_gNB
 
 use oxirush_security::nas_5gs::{
-    Supi, derive_kamf, derive_kamf_prime_idle, derive_kausf, derive_kgnb, derive_knas_enc,
+    derive_kamf, derive_kamf_prime_idle, derive_kausf, derive_kgnb, derive_knas_enc,
     derive_knas_int, derive_kseaf, derive_nh,
 };
+
+use oxirush_security::identity::Supi;
 use oxirush_security::{
     Autn, CipheringAlgorithm, Ck, Ik, IntegrityAlgorithm, NasCount, SecurityError,
 };

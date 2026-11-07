@@ -43,16 +43,10 @@ pub use keys::{
     AccessKey, HresStar, HxresStar, KAmf, KAusf, KGnb, KIab, KN3iwf, KNasEnc, KNasInt, KRrcEnc,
     KRrcInt, KSeaf, KSn, KTnap, KUpEnc, KUpInt, Nh, NodeKey, ResStar, XresStar,
 };
-/// The 5G-GUTI, the 5G-S-TMSI and the types of a 5GS mobile identity
-/// (TS 24.501 §9.11.3.4), and the SUPI with its type (TS 23.003 §2.2A):
-/// the values of oxirush-utils, by the names that this crate gives them.
-pub use oxirush_utils::identity::{
-    Guti5g as Guti, MobileIdentityType5gs as MobileIdentityType, STmsi5g as STmsi, Supi, SupiType,
-};
 pub use security::{NasConnection, nas_cipher, nas_container_mac, nas_mac};
 #[cfg(feature = "suci")]
 #[cfg_attr(docsrs, doc(cfg(feature = "suci")))]
 pub use suci::{
-    HomeNetwork, HomeNetworkPrivateKey, HomeNetworkPublicKey, Protection, ProtectionScheme,
-    RoutingIndicator, SchemeOutput, Suci, SuciError,
+    HomeNetwork, HomeNetworkPrivateKey, HomeNetworkPublicKey, Protection, SchemeOutput, Suci,
+    SuciError,
 };

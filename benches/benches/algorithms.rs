@@ -36,14 +36,14 @@
 //! environment it writes `flamegraph.svg` instead.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
+use oxirush_security::identity::{Plmn, RoutingIndicator, Supi};
 use oxirush_security::nas_5gs::{
-    HomeNetworkPrivateKey, HomeNetworkPublicKey, KNasEnc, KNasInt, NasConnection, Protection,
-    RoutingIndicator, Suci, Supi, derive_kamf, derive_kausf, derive_knas_int, derive_kseaf,
-    nas_cipher, nas_mac,
+    HomeNetworkPrivateKey, HomeNetworkPublicKey, KNasEnc, KNasInt, NasConnection, Protection, Suci,
+    derive_kamf, derive_kausf, derive_knas_int, derive_kseaf, nas_cipher, nas_mac,
 };
 use oxirush_security::{
     Autn, Bearer, CipheringAlgorithm, CipheringContext, Ck, Direction, Ik, IntegrityAlgorithm,
-    IntegrityContext, NasCount, Plmn,
+    IntegrityContext, NasCount,
 };
 use oxirush_security_benches::{PROFILE_A, PROFILE_B, message};
 use pprof::criterion::{Output, PProfProfiler};

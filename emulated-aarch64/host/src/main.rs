@@ -377,7 +377,7 @@ fn secrets_of(kind: Kind) -> Vec<Secret> {
         Kind::Generator(snow3g) => {
             let mut expected = [0u32; 40];
             match snow3g {
-                true => Snow3G::from_bytes(&key, &leftovers::IV).fill(&mut expected),
+                true => Snow3G::new(&key, &leftovers::IV).fill(&mut expected),
                 false => Zuc::new(&key, &leftovers::IV).fill(&mut expected),
             }
             let mut secrets = vec![

@@ -18,11 +18,12 @@
 //! Demonstrate the EPS key derivation chain per TS 33.401 Annex A:
 //! CK || IK -> KASME -> KNASint / KNASenc -> KeNB -> NH
 
+use oxirush_security::identity::Plmn;
 use oxirush_security::nas_eps::{
     derive_kasme, derive_kenb, derive_knas_enc, derive_knas_int, derive_nh,
 };
 use oxirush_security::{
-    Autn, CipheringAlgorithm, Ck, Ik, IntegrityAlgorithm, NasCount, Plmn, SecurityError,
+    Autn, CipheringAlgorithm, Ck, Ik, IntegrityAlgorithm, NasCount, SecurityError,
 };
 
 fn main() -> Result<(), SecurityError> {

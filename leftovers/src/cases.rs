@@ -23,12 +23,12 @@ use crate::values::{
     reversed, s, secret, without, zuc_stages,
 };
 use oxirush_security::batch::{self, CipherJob, MacJob};
+use oxirush_security::identity::{Plmn, Supi};
 use oxirush_security::kdf::{extract_128, kdf};
-use oxirush_security::nas_5gs::{self, NasConnection, Supi};
+use oxirush_security::nas_5gs::{self, NasConnection};
 use oxirush_security::{
     AccessKeyCount, Autn, Bearer, CipheringAlgorithm, CipheringContext, Ck, Direction, Ik,
-    IntegrityAlgorithm, IntegrityContext, NasCount, Plmn, Rand, Snow3G, Zuc, constant_time_eq,
-    nas_eps,
+    IntegrityAlgorithm, IntegrityContext, NasCount, Rand, Snow3G, Zuc, constant_time_eq, nas_eps,
 };
 // The algorithms on a key and a message, which the NAS functions and the contexts run
 use oxirush_security::hooks::{nea_cipher, nea_cipher_bits, nia_mac, nia_mac_bits};
@@ -174,9 +174,13 @@ fn integrity_secrets(key: &[u8; 16], bearer: u8) -> Vec<Secret> {
     // Q are two words each (TS 35.215 §4.4)
     let fresh = u32::from(bearer) << 27;
     let iv = [fresh ^ (1 << 15), COUNT ^ (1 << 31), fresh, COUNT];
-    let word = |at: usize| u32::from_be_bytes(key[at..at + 4].try_into().expect("four octets"));
+    let mut swapped = [0u8; 16];
+    for (at, chunk) in swapped.chunks_mut(4).enumerate() {
+        chunk.copy_from_slice(&key[12 - 4 * at..16 - 4 * at]);
+    }
+    let iv: Vec<u8> = iv.iter().flat_map(|word| word.to_be_bytes()).collect();
     let mut z = [0u32; 5];
-    Snow3G::new(&[word(12), word(8), word(4), word(0)], &iv).fill(&mut z);
+    Snow3G::new(&swapped, iv.as_slice().try_into().expect("16 octets")).fill(&mut z);
     secrets.push(secret("128-EIA1 z1 to z4", &words(&z[..4])));
     secrets.push(secret("128-EIA1 P", &words(&[z[1], z[0]])));
     secrets.push(secret("128-EIA1 Q", &words(&[z[3], z[2]])));
@@ -612,7 +616,7 @@ fn generators(cases: &mut Cases) {
         |words: &[u32]| -> Vec<u8> { words.iter().flat_map(|word| word.to_le_bytes()).collect() };
 
     let mut expected = [0u32; 40];
-    Snow3G::from_bytes(key, iv).fill(&mut expected);
+    Snow3G::new(key, iv).fill(&mut expected);
     let big_endian: Vec<u8> = key
         .chunks(4)
         .flat_map(|word| word.iter().rev().copied().collect::<Vec<u8>>())
@@ -623,30 +627,20 @@ fn generators(cases: &mut Cases) {
         secret("keystream words 0 to 3", &words(&expected[..4])),
         secret("keystream words 36 to 39", &words(&expected[36..])),
     ];
-    cases.add("Snow3G::from_bytes", 3, secrets.clone(), move || {
-        crate::here();
-        let value = spare(Snow3G::from_bytes(black_box(key), black_box(iv)));
-        crate::owned(&value);
-    });
-    let word = |of: &[u8; 16], at: usize| {
-        u32::from_be_bytes(of[at..at + 4].try_into().expect("four octets"))
-    };
-    let key_words: &'static [u32; 4] = kept(core::array::from_fn(|at| word(key, 4 * at)));
-    let iv_words: &'static [u32; 4] = kept(core::array::from_fn(|at| word(iv, 4 * at)));
     cases.add("Snow3G::new", 3, secrets.clone(), move || {
         crate::here();
-        let value = spare(Snow3G::new(black_box(key_words), iv_words));
+        let value = spare(Snow3G::new(black_box(key), black_box(iv)));
         crate::owned(&value);
     });
     cases.add("Snow3G::fill", 3, secrets.clone(), move || {
-        let mut generator = prepared(|| Snow3G::from_bytes(black_box(key), black_box(iv)));
+        let mut generator = prepared(|| Snow3G::new(black_box(key), black_box(iv)));
         let mut keystream = spare(vec![0u32; 40]);
         crate::here();
         generator.fill(black_box(&mut keystream));
     });
     let returned = returned_words(&expected[..4]);
     cases.add_returning("Snow3G::next_word", 3, secrets, returned, move || {
-        let mut generator = prepared(|| Snow3G::from_bytes(black_box(key), black_box(iv)));
+        let mut generator = prepared(|| Snow3G::new(black_box(key), black_box(iv)));
         let mut keystream = spare(vec![0u32; 4]);
         crate::here();
         for word in keystream.iter_mut() {
@@ -1383,7 +1377,8 @@ fn milenage(cases: &mut Cases) {
 /// SUCI with the home network keys and the data of TS 33.501 Annex C.4,
 /// whose intermediate values the Annex gives.
 fn suci(cases: &mut Cases) {
-    use nas_5gs::{HomeNetworkPrivateKey, Protection, RoutingIndicator, Suci};
+    use nas_5gs::{HomeNetworkPrivateKey, Protection, Suci};
+    use oxirush_security::identity::RoutingIndicator;
     let h = |hexadecimal: &str| hex::decode(hexadecimal).expect("hexadecimal digits");
     let plmn = Plmn::new("274", "012").expect("an MCC and an MNC");
     let identity = |scheme: u8, output: &str| -> &'static [u8] {

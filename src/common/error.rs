@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn an_error_of_an_identity_has_it_as_its_source() {
         use core::error::Error;
-        let identity = crate::Plmn::new("208", "9").unwrap_err();
+        let identity = oxirush_utils::identity::Plmn::new("208", "9").unwrap_err();
         let error = SecurityError::from(identity);
         let source = error.source().map(ToString::to_string);
         assert_eq!(source, Some(identity.to_string()));
@@ -165,7 +165,7 @@ mod tests {
                 "invalid parameter: ABBA is 2 to 255 octets long",
             ),
             (
-                SecurityError::from(crate::Plmn::new("208", "9").unwrap_err()),
+                SecurityError::from(oxirush_utils::identity::Plmn::new("208", "9").unwrap_err()),
                 "invalid identity: `mnc` has 1 digit, and must have 2 or 3",
             ),
             (

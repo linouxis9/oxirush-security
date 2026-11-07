@@ -830,7 +830,7 @@ mod tests {
         use crate::common::nia::{BitString, Eia3};
         use core::mem::ManuallyDrop;
         let mut words = [0; 4];
-        let mut snow3g = ManuallyDrop::new(Snow3G::new(&[1, 2, 3, 4], &[5, 6, 7, 8]));
+        let mut snow3g = ManuallyDrop::new(Snow3G::start([1, 2, 3, 4], [5, 6, 7, 8]));
         snow3g.fill(&mut words);
         let mut zuc = ManuallyDrop::new(Zuc::new(&[1; 16], &[2; 16]));
         zuc.fill(&mut words);
@@ -917,8 +917,8 @@ mod tests {
             };
             let pieces: Vec<usize> = (0..40).map(|_| (next() % 9) as usize).collect();
 
-            let mut vector = Snow3G::from_bytes(&key, &iv);
-            let mut reference = scalar(|| Snow3G::from_bytes(&key, &iv));
+            let mut vector = Snow3G::new(&key, &iv);
+            let mut reference = scalar(|| Snow3G::new(&key, &iv));
             for &piece in &pieces {
                 let (mut words, mut expected) = (vec![0; piece], vec![0; piece]);
                 vector.fill(&mut words);

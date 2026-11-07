@@ -309,6 +309,15 @@ fn direction(bit: u8) -> Direction {
     Direction::try_from(bit).unwrap()
 }
 
+/// The octets of four words, as the SNOW 3G of the crate takes a key or an IV.
+fn octets_of(words: &[u32; 4]) -> [u8; 16] {
+    let mut octets = [0; 16];
+    for (chunk, word) in octets.chunks_mut(4).zip(words) {
+        chunk.copy_from_slice(&word.to_be_bytes());
+    }
+    octets
+}
+
 fn h(s: &str) -> Vec<u8> {
     hex::decode(s.split_whitespace().collect::<String>()).unwrap()
 }
@@ -590,7 +599,7 @@ fn snow3g_set4_z2500() {
     let k = [0x0ded7263u32, 0x109cf92e, 0x3352255a, 0x140e0f76];
     let iv = [0x6b68079au32, 0x41a7c4c9, 0x1befd79f, 0x7fdcc233];
     let mut z = [0; 2500];
-    Snow3G::new(&k, &iv).fill(&mut z);
+    Snow3G::new(&octets_of(&k), &octets_of(&iv)).fill(&mut z);
     assert_eq!(z[0], 0xd712c05c);
     assert_eq!(z[2499], 0x9c0db3aa);
 }
@@ -615,7 +624,7 @@ fn snow3g_uea2_intermediate_set1_state() {
     // Doc3 section 3.3: FSM state after init is R1=61DA9249; check z1/z2 only via public API
     let k = [0x2bd6459fu32, 0x82c5b300, 0x952c4910, 0x4881ff48];
     let iv = [0xea024714u32, 0xad5c4d84, 0xdf1f9b25, 0x1c0bf45f];
-    let mut snow = Snow3G::new(&k, &iv);
+    let mut snow = Snow3G::new(&octets_of(&k), &octets_of(&iv));
     assert_eq!(
         [snow.next_word(), snow.next_word()],
         [0xabee9704, 0x7ac31373]
@@ -645,7 +654,7 @@ fn uia2(key: &[u8], count: u32, bearer: u8, dir: u8, message: &[u8], length: u64
     let (fresh, dir) = (u32::from(bearer) << 27, u32::from(dir));
     let iv = [fresh ^ (dir << 15), count ^ (dir << 31), fresh, count];
     let mut z = [0u32; 5];
-    Snow3G::new(&k, &iv).fill(&mut z);
+    Snow3G::new(&octets_of(&k), &octets_of(&iv)).fill(&mut z);
     let (p, q) = (
         u64::from(z[0]) << 32 | u64::from(z[1]),
         u64::from(z[2]) << 32 | u64::from(z[3]),

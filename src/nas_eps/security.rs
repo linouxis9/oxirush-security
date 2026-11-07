@@ -31,7 +31,8 @@ use crate::common::nia::{nia_mac, nia_mac_bits};
 ///
 /// ```
 /// use oxirush_security::nas_eps::{derive_kasme, derive_knas_int, nas_mac};
-/// use oxirush_security::{Autn, Ck, Direction, Ik, IntegrityAlgorithm, NasCount, Plmn};
+/// use oxirush_security::identity::Plmn;
+/// use oxirush_security::{Autn, Ck, Direction, Ik, IntegrityAlgorithm, NasCount};
 ///
 /// // KASME of a CK, an IK and an AUTN, and the EMM STATUS of the example of
 /// // `nas_cipher`, ciphered, after its sequence number
@@ -64,7 +65,8 @@ pub fn nas_mac(
 ///
 /// ```
 /// use oxirush_security::nas_eps::{derive_kasme, derive_knas_enc, nas_cipher};
-/// use oxirush_security::{Autn, CipheringAlgorithm, Ck, Direction, Ik, NasCount, Plmn};
+/// use oxirush_security::identity::Plmn;
+/// use oxirush_security::{Autn, CipheringAlgorithm, Ck, Direction, Ik, NasCount};
 ///
 /// // KASME of a CK, an IK and an AUTN, and an uplink EMM STATUS with cause #3
 /// // and NAS COUNT 0, with 128-EEA2

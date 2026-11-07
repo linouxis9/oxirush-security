@@ -111,7 +111,8 @@ pub fn derive_kseaf(kausf: &KAusf, sn_name: &[u8]) -> Result<KSeaf, SecurityErro
 /// [`SecurityError::InvalidParameter`].
 ///
 /// ```
-/// use oxirush_security::nas_5gs::{KSeaf, Supi, derive_kamf};
+/// use oxirush_security::identity::Supi;
+/// use oxirush_security::nas_5gs::{KSeaf, derive_kamf};
 ///
 /// // The KSEAF of the example of `derive_kseaf`, and the SUPI as an SBI writes it
 /// let k_seaf = "cfddde483bd1318a412e98870f556410905be4fb7500abed93ee16af71bbb3fa";

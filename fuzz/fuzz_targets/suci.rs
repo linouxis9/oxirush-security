@@ -3,9 +3,8 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use oxirush_security::nas_5gs::{
-    HomeNetworkPrivateKey, HomeNetworkPublicKey, ProtectionScheme, Suci, SuciError,
-};
+use oxirush_security::identity::ProtectionScheme;
+use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, HomeNetworkPublicKey, Suci, SuciError};
 
 // The home network private keys of TS 33.501 Annex C.4
 const PRIVATE_A: [u8; 32] = [

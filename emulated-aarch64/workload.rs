@@ -144,7 +144,7 @@ fn snow3g_keystream() -> u64 {
     let (mut random, mut digest) = (Random(0x9e37_79b9_7f4a_7c15), Digest::new());
     for _ in 0..200 {
         let (key, iv): ([u8; 16], [u8; 16]) = (random.octets(), random.octets());
-        let mut generator = Snow3G::from_bytes(&key, &iv);
+        let mut generator = Snow3G::new(&key, &iv);
         // In pieces of every length, so that words are left over
         for _ in 0..12 {
             let mut words = [0u32; 9];

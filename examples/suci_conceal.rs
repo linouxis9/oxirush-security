@@ -23,10 +23,8 @@
 //! - Profile B (secp256r1 ECIES) for a network specific identifier, in the
 //!   NAI format.
 
-use oxirush_security::Plmn;
-use oxirush_security::nas_5gs::{
-    HomeNetworkPrivateKey, Protection, RoutingIndicator, SchemeOutput, Suci, SuciError, Supi,
-};
+use oxirush_security::identity::{Plmn, RoutingIndicator, Supi};
+use oxirush_security::nas_5gs::{HomeNetworkPrivateKey, Protection, SchemeOutput, Suci, SuciError};
 
 fn main() -> Result<(), SuciError> {
     println!("=== SUCI concealment (TS 33.501 Annex C) ===\n");

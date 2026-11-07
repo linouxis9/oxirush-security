@@ -17,6 +17,12 @@ All notable changes to `oxirush-security` are recorded here.
 - `nas_eps::service_request_short_mac` takes the first octet of the message
   and refuses one that is not of a SERVICE REQUEST: it is
   `service_request_short_mac_with_header`, which is gone.
+- The identities are those of `oxirush_security::identity` alone: `Plmn` and
+  `tbcd` at the crate root, `kdf::Zeroizing`, and `Guti`, `STmsi`,
+  `MobileIdentityType`, `Supi`, `SupiType`, `ProtectionScheme` and
+  `RoutingIndicator` of `nas_5gs`, which renamed some of them, are gone.
+- `Snow3G::new` takes the octets of the key and the IV, as `Zuc::new` does:
+  it is `Snow3G::from_bytes`, and the constructor of words is gone.
 - `Implementation` says which code runs, and `Code` with the code of each
   algorithm and the side-by-side counts are gone.
 - The algorithms run through the keyed contexts: `CipheringContext::new(&key,
