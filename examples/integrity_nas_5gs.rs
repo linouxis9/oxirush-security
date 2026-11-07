@@ -21,8 +21,9 @@
 //! `nas_mac` computes the 32-bit MAC of the same message with each
 //! algorithm, and a keyed context gives the same.
 
+use oxirush_security::identity::Algorithm;
 use oxirush_security::nas_5gs::{KNasInt, NasConnection, nas_mac};
-use oxirush_security::{Direction, IntegrityAlgorithm, IntegrityContext, NasCount};
+use oxirush_security::{Direction, IntegrityContext, NasCount};
 
 fn main() {
     // Example 128-bit integrity key (KNASint)
@@ -52,13 +53,17 @@ fn main() {
     let mac = |algorithm| nas_mac(&key, count, connection, direction, message, algorithm);
 
     let algorithms = [
-        IntegrityAlgorithm::NIA1, // SNOW 3G
-        IntegrityAlgorithm::NIA2, // AES-CMAC
-        IntegrityAlgorithm::NIA3, // ZUC
-        IntegrityAlgorithm::NIA0, // null integrity: the MAC is zero
+        Algorithm::Snow3g, // SNOW 3G
+        Algorithm::Aes,    // AES-CMAC
+        Algorithm::Zuc,    // ZUC
+        Algorithm::Null,   // null integrity: the MAC is zero
     ];
     for algorithm in algorithms {
-        println!("{:<8} MAC: 0x{:08x}", algorithm.name_5gs(), mac(algorithm));
+        println!(
+            "{:<8} MAC: 0x{:08x}",
+            format!("{algorithm:?}"),
+            mac(algorithm)
+        );
 
         // A context keeps the key and what the algorithm computes from it
         // alone, for the messages that follow
@@ -68,15 +73,11 @@ fn main() {
             mac(algorithm)
         );
     }
-    assert_eq!(
-        mac(IntegrityAlgorithm::NIA0),
-        0,
-        "NIA0 must always return 0"
-    );
+    assert_eq!(mac(Algorithm::Null), 0, "NIA0 must always return 0");
 
     // Each algorithm produces a different MAC for the same input
-    assert_ne!(mac(IntegrityAlgorithm::NIA1), mac(IntegrityAlgorithm::NIA2));
-    assert_ne!(mac(IntegrityAlgorithm::NIA2), mac(IntegrityAlgorithm::NIA3));
+    assert_ne!(mac(Algorithm::Snow3g), mac(Algorithm::Aes));
+    assert_ne!(mac(Algorithm::Aes), mac(Algorithm::Zuc));
 
     println!("\nAll MACs computed successfully.");
 }

@@ -32,13 +32,14 @@
 //! COUNT.
 use crate::common::aes128::{Aes128, RoundKeys};
 use crate::common::error::SecurityError;
-use crate::common::input::{Bearer, CipheringAlgorithm, Direction, octets_of};
+use crate::common::input::{Bearer, Direction, octets_of};
 use crate::common::keys::CipheringKey;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::common::simd::{AesSchedule, Instructions};
 use crate::common::snow3g::Snow3G;
 use crate::common::wipe;
 use crate::common::zuc::Zuc;
+use oxirush_utils::identity::Algorithm;
 use zeroize::{Zeroize, Zeroizing};
 
 /// Cipher or decipher octets in place with `algorithm`.
@@ -50,7 +51,7 @@ pub fn nea_cipher(
     bearer: Bearer,
     direction: Direction,
     data: &mut [u8],
-    algorithm: CipheringAlgorithm,
+    algorithm: Algorithm,
 ) {
     cipher_message(key.key_octets(), count, bearer, direction, data, algorithm);
 }
@@ -64,17 +65,17 @@ pub(crate) fn cipher_message(
     bearer: Bearer,
     direction: Direction,
     data: &mut [u8],
-    algorithm: CipheringAlgorithm,
+    algorithm: Algorithm,
 ) {
     if data.is_empty() {
         return;
     }
     match algorithm {
-        CipheringAlgorithm::Null => {}
-        CipheringAlgorithm::Snow3g => {
+        Algorithm::Null => {}
+        Algorithm::Snow3g => {
             wipe::message(|| nea1_cipher(key, count, bearer, direction, data));
         }
-        CipheringAlgorithm::Aes => {
+        Algorithm::Aes => {
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if let Some(instructions) = Instructions::detect() {
                 return wipe::aes(|| {
@@ -83,7 +84,7 @@ pub(crate) fn cipher_message(
             }
             wipe::portable(|| nea2_portable(key, count, bearer, direction, data));
         }
-        CipheringAlgorithm::Zuc => {
+        Algorithm::Zuc => {
             wipe::message(|| nea3_cipher(key, count, bearer, direction, data));
         }
     }
@@ -98,13 +99,13 @@ pub(crate) fn cipher_octets(
     bearer: Bearer,
     direction: Direction,
     data: &mut [u8],
-    algorithm: CipheringAlgorithm,
+    algorithm: Algorithm,
 ) {
     match algorithm {
-        CipheringAlgorithm::Null => {}
-        CipheringAlgorithm::Snow3g => nea1_cipher(key, count, bearer, direction, data),
-        CipheringAlgorithm::Aes => nea2_cipher(key, count, bearer, direction, data),
-        CipheringAlgorithm::Zuc => nea3_cipher(key, count, bearer, direction, data),
+        Algorithm::Null => {}
+        Algorithm::Snow3g => nea1_cipher(key, count, bearer, direction, data),
+        Algorithm::Aes => nea2_cipher(key, count, bearer, direction, data),
+        Algorithm::Zuc => nea3_cipher(key, count, bearer, direction, data),
     }
 }
 
@@ -123,7 +124,7 @@ pub fn nea_cipher_bits(
     direction: Direction,
     data: &mut [u8],
     bit_length: u64,
-    algorithm: CipheringAlgorithm,
+    algorithm: Algorithm,
 ) -> Result<(), SecurityError> {
     let key = key.key_octets();
     cipher_bits(data, bit_length, |octets| {
@@ -386,7 +387,7 @@ mod tests {
 
     /// One algorithm over the first bits of the data, by its number.
     fn algorithm_bits(
-        algorithm: CipheringAlgorithm,
+        algorithm: Algorithm,
     ) -> impl Fn(&[u8; 16], u32, Bearer, Direction, &mut [u8], u64) -> Result<(), SecurityError>
     {
         move |key, count, bearer, direction, data, bit_length| {
@@ -402,7 +403,7 @@ mod tests {
         data: &mut [u8],
         bit_length: u64,
     ) -> Result<(), SecurityError> {
-        algorithm_bits(CipheringAlgorithm::Snow3g)(key, count, bearer, direction, data, bit_length)
+        algorithm_bits(Algorithm::Snow3g)(key, count, bearer, direction, data, bit_length)
     }
 
     fn nea2_cipher_bits(
@@ -413,7 +414,7 @@ mod tests {
         data: &mut [u8],
         bit_length: u64,
     ) -> Result<(), SecurityError> {
-        algorithm_bits(CipheringAlgorithm::Aes)(key, count, bearer, direction, data, bit_length)
+        algorithm_bits(Algorithm::Aes)(key, count, bearer, direction, data, bit_length)
     }
 
     fn nea3_cipher_bits(
@@ -424,7 +425,7 @@ mod tests {
         data: &mut [u8],
         bit_length: u64,
     ) -> Result<(), SecurityError> {
-        algorithm_bits(CipheringAlgorithm::Zuc)(key, count, bearer, direction, data, bit_length)
+        algorithm_bits(Algorithm::Zuc)(key, count, bearer, direction, data, bit_length)
     }
 
     fn bearer(value: u8) -> Bearer {
@@ -435,11 +436,11 @@ mod tests {
         Direction::try_from(bit).unwrap()
     }
 
-    const ALGORITHMS: [CipheringAlgorithm; 4] = [
-        CipheringAlgorithm::Null,
-        CipheringAlgorithm::Snow3g,
-        CipheringAlgorithm::Aes,
-        CipheringAlgorithm::Zuc,
+    const ALGORITHMS: [Algorithm; 4] = [
+        Algorithm::Null,
+        Algorithm::Snow3g,
+        Algorithm::Aes,
+        Algorithm::Zuc,
     ];
 
     /// Ciphering twice gives the plaintext back, at every length around the
@@ -452,7 +453,7 @@ mod tests {
             for length in 0..=plaintext.len() {
                 let mut data = plaintext[..length].to_vec();
                 nea_cipher(&key, 42, bearer(1), Direction::Uplink, &mut data, algorithm);
-                if algorithm != CipheringAlgorithm::Null && length >= 8 {
+                if algorithm != Algorithm::Null && length >= 8 {
                     assert_ne!(data, plaintext[..length]);
                 }
                 nea_cipher(&key, 42, bearer(1), Direction::Uplink, &mut data, algorithm);
@@ -472,7 +473,7 @@ mod tests {
             Bearer::ZERO,
             Direction::Uplink,
             &mut data,
-            CipheringAlgorithm::Null,
+            Algorithm::Null,
         );
         assert_eq!(&data[..], &original[..]);
     }
@@ -493,9 +494,9 @@ mod tests {
             nea_cipher(&key, count, bearer, direction, &mut data, algorithm);
             data
         };
-        assert_eq!(dispatched(CipheringAlgorithm::Snow3g), with(nea1_cipher));
-        assert_eq!(dispatched(CipheringAlgorithm::Aes), with(nea2_cipher));
-        assert_eq!(dispatched(CipheringAlgorithm::Zuc), with(nea3_cipher));
+        assert_eq!(dispatched(Algorithm::Snow3g), with(nea1_cipher));
+        assert_eq!(dispatched(Algorithm::Aes), with(nea2_cipher));
+        assert_eq!(dispatched(Algorithm::Zuc), with(nea3_cipher));
         assert_ne!(with(nea1_cipher), with(nea2_cipher));
         assert_ne!(with(nea2_cipher), with(nea3_cipher));
     }

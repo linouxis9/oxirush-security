@@ -20,9 +20,10 @@
 
 use super::keys::{KNasEnc, KNasInt};
 use crate::common::error::SecurityError;
-use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
+use crate::common::input::{Bearer, Direction, NasCount};
 use crate::common::nea::nea_cipher;
 use crate::common::nia::{nia_mac, nia_mac_bits};
+use oxirush_utils::identity::Algorithm;
 
 /// Compute the MAC of an EPS NAS message, with BEARER 0.
 ///
@@ -30,15 +31,16 @@ use crate::common::nia::{nia_mac, nia_mac_bits};
 /// NAS message, ciphered when it is to be.
 ///
 /// ```
+/// use oxirush_security::identity::Algorithm;
 /// use oxirush_security::nas_eps::{derive_kasme, derive_knas_int, nas_mac};
 /// use oxirush_security::identity::Plmn;
-/// use oxirush_security::{Autn, Ck, Direction, Ik, IntegrityAlgorithm, NasCount};
+/// use oxirush_security::{Autn, Ck, Direction, Ik, NasCount};
 ///
 /// // KASME of a CK, an IK and an AUTN, and the EMM STATUS of the example of
 /// // `nas_cipher`, ciphered, after its sequence number
 /// let (ck, ik, autn) = (Ck::new(&[0x11; 16]), Ik::new(&[0x22; 16]), Autn::new(&[0; 16]));
 /// let kasme = derive_kasme(&ck, &ik, Plmn::new("208", "93").unwrap(), &autn);
-/// let eia2 = IntegrityAlgorithm::EIA2;
+/// let eia2 = Algorithm::Aes;
 /// let k_nas_int = derive_knas_int(&kasme, eia2);
 /// let protected = [0x00, 0xb0, 0x2c, 0x47];
 /// let mac = nas_mac(&k_nas_int, NasCount::ZERO, Direction::Uplink, &protected, eia2);
@@ -49,7 +51,7 @@ pub fn nas_mac(
     count: NasCount,
     direction: Direction,
     message: &[u8],
-    algorithm: IntegrityAlgorithm,
+    algorithm: Algorithm,
 ) -> u32 {
     nia_mac(
         key,
@@ -64,15 +66,16 @@ pub fn nas_mac(
 /// Cipher or decipher an EPS NAS message in place, with BEARER 0.
 ///
 /// ```
+/// use oxirush_security::identity::Algorithm;
 /// use oxirush_security::nas_eps::{derive_kasme, derive_knas_enc, nas_cipher};
 /// use oxirush_security::identity::Plmn;
-/// use oxirush_security::{Autn, CipheringAlgorithm, Ck, Direction, Ik, NasCount};
+/// use oxirush_security::{Autn, Ck, Direction, Ik, NasCount};
 ///
 /// // KASME of a CK, an IK and an AUTN, and an uplink EMM STATUS with cause #3
 /// // and NAS COUNT 0, with 128-EEA2
 /// let (ck, ik, autn) = (Ck::new(&[0x11; 16]), Ik::new(&[0x22; 16]), Autn::new(&[0; 16]));
 /// let kasme = derive_kasme(&ck, &ik, Plmn::new("208", "93").unwrap(), &autn);
-/// let eea2 = CipheringAlgorithm::EEA2;
+/// let eea2 = Algorithm::Aes;
 /// let k_nas_enc = derive_knas_enc(&kasme, eea2);
 /// let mut message = [0x07, 0x60, 0x03];
 /// nas_cipher(&k_nas_enc, NasCount::ZERO, Direction::Uplink, &mut message, eea2);
@@ -83,7 +86,7 @@ pub fn nas_cipher(
     count: NasCount,
     direction: Direction,
     data: &mut [u8],
-    algorithm: CipheringAlgorithm,
+    algorithm: Algorithm,
 ) {
     nea_cipher(key, count.get(), Bearer::ZERO, direction, data, algorithm);
 }
@@ -108,7 +111,7 @@ pub fn re_establishment_nas_mac(
     key: &KNasInt,
     ul_count: NasCount,
     target_cell_id: u32,
-    algorithm: IntegrityAlgorithm,
+    algorithm: Algorithm,
 ) -> Result<(u16, u16), SecurityError> {
     if target_cell_id > 0x0fff_ffff {
         return Err(SecurityError::OutOfRange {
@@ -146,7 +149,7 @@ pub fn service_request_short_mac(
     direction: Direction,
     first_octet: u8,
     ksi_and_sequence_number: u8,
-    algorithm: IntegrityAlgorithm,
+    algorithm: Algorithm,
 ) -> Result<u16, SecurityError> {
     if !matches!(first_octet, 0xc7 | 0xd7 | 0xe7 | 0xf7) {
         return Err(SecurityError::InvalidParameter(
@@ -174,16 +177,15 @@ mod tests {
                 &key,
                 NasCount::from_parts(0, 7),
                 0x0123_4567,
-                IntegrityAlgorithm::EIA2
+                Algorithm::Aes
             ),
             Ok((0xe14e, 0xc9e7))
         );
         assert!(
-            re_establishment_nas_mac(&key, NasCount::ZERO, 0x0fff_ffff, IntegrityAlgorithm::EIA2)
-                .is_ok()
+            re_establishment_nas_mac(&key, NasCount::ZERO, 0x0fff_ffff, Algorithm::Aes).is_ok()
         );
         assert_eq!(
-            re_establishment_nas_mac(&key, NasCount::ZERO, 0x1000_0000, IntegrityAlgorithm::EIA2),
+            re_establishment_nas_mac(&key, NasCount::ZERO, 0x1000_0000, Algorithm::Aes),
             Err(SecurityError::OutOfRange {
                 field: "E-UTRAN Cell Identifier",
                 maximum: 0x0fff_ffff,
@@ -198,10 +200,10 @@ mod tests {
         let mut payload = b"EPS NAS security".to_vec();
         let (count, uplink) = (NasCount::from_parts(0, 10), Direction::Uplink);
         for (integrity, ciphering) in [
-            (IntegrityAlgorithm::EIA0, CipheringAlgorithm::EEA0),
-            (IntegrityAlgorithm::EIA1, CipheringAlgorithm::EEA1),
-            (IntegrityAlgorithm::EIA2, CipheringAlgorithm::EEA2),
-            (IntegrityAlgorithm::EIA3, CipheringAlgorithm::EEA3),
+            (Algorithm::Null, Algorithm::Null),
+            (Algorithm::Snow3g, Algorithm::Snow3g),
+            (Algorithm::Aes, Algorithm::Aes),
+            (Algorithm::Zuc, Algorithm::Zuc),
         ] {
             let mac = nas_mac(&int, count, uplink, &payload, integrity);
             assert_eq!(
@@ -225,39 +227,18 @@ mod tests {
         let key = KNasInt::new(&[0x23; 16]);
         let (count, uplink) = (NasCount::from_parts(0, 10), Direction::Uplink);
         let over = |octets: [u8; 2]| {
-            nia_mac(
-                &key,
-                10,
-                Bearer::ZERO,
-                uplink,
-                &octets,
-                IntegrityAlgorithm::EIA2,
-            ) as u16
+            nia_mac(&key, 10, Bearer::ZERO, uplink, &octets, Algorithm::Aes) as u16
         };
         for first_octet in [0xc7, 0xd7, 0xe7, 0xf7] {
             assert_eq!(
-                service_request_short_mac(
-                    &key,
-                    count,
-                    uplink,
-                    first_octet,
-                    0x2a,
-                    IntegrityAlgorithm::EIA2
-                ),
+                service_request_short_mac(&key, count, uplink, first_octet, 0x2a, Algorithm::Aes),
                 Ok(over([first_octet, 0x2a]))
             );
         }
         for first_octet in [0x07, 0x17, 0xb7, 0xc0, 0xc2] {
             assert!(
-                service_request_short_mac(
-                    &key,
-                    count,
-                    uplink,
-                    first_octet,
-                    0x2a,
-                    IntegrityAlgorithm::EIA2
-                )
-                .is_err()
+                service_request_short_mac(&key, count, uplink, first_octet, 0x2a, Algorithm::Aes)
+                    .is_err()
             );
         }
     }

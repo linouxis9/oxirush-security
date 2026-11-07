@@ -17,6 +17,13 @@ All notable changes to `oxirush-security` are recorded here.
 - `nas_eps::service_request_short_mac` takes the first octet of the message
   and refuses one that is not of a SERVICE REQUEST: it is
   `service_request_short_mac_with_header`, which is gone.
+- The algorithm is the `identity::Algorithm` of oxirush-utils, which ciphering
+  and integrity share in 5GS and EPS: `Algorithm::Aes` in the place of
+  `IntegrityAlgorithm::NIA2`, `EIA2`, `CipheringAlgorithm::NEA2` and `EEA2`,
+  and likewise `Null`, `Snow3g` and `Zuc`. `IntegrityAlgorithm`,
+  `CipheringAlgorithm`, their constants, `name_5gs`, `name_eps` and their
+  `Display` are gone. `Algorithm::try_from(identity)` gives back a number that
+  is no algorithm, which `SecurityError::UnsupportedAlgorithm` takes.
 - oxirush-utils 0.2. A SUCI is its `identity::Suci`, that of an IMSI or one in
   the form of a NAI, which reads and writes its octets and its text:
   `nas_5gs::conceal_imsi`, `nas_5gs::conceal_nai` and `nas_5gs::deconceal`

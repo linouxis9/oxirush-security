@@ -23,12 +23,13 @@ use crate::values::{
     reversed, s, secret, without, zuc_stages,
 };
 use oxirush_security::batch::{self, CipherJob, MacJob};
+use oxirush_security::identity::Algorithm;
 use oxirush_security::identity::{Plmn, Supi};
 use oxirush_security::kdf::{extract_128, kdf};
 use oxirush_security::nas_5gs::{self, NasConnection};
 use oxirush_security::{
-    AccessKeyCount, Autn, Bearer, CipheringAlgorithm, CipheringContext, Ck, Direction, Ik,
-    IntegrityAlgorithm, IntegrityContext, NasCount, Rand, Snow3G, Zuc, constant_time_eq, nas_eps,
+    AccessKeyCount, Autn, Bearer, CipheringContext, Ck, Direction, Ik, IntegrityContext, NasCount,
+    Rand, Snow3G, Zuc, constant_time_eq, nas_eps,
 };
 // The algorithms on a key and a message, which the NAS functions and the contexts run
 use oxirush_security::hooks::{nea_cipher, nea_cipher_bits, nia_mac, nia_mac_bits};
@@ -83,15 +84,15 @@ fn octets<const N: usize>(hexadecimal: &str) -> [u8; N] {
 /// The key of the examples of FIPS 197, whose round keys are known.
 const KEY: &str = "2b7e151628aed2a6abf7158809cf4f3c";
 const COUNT: u32 = 0x1234;
-const CIPHERING: [(&str, CipheringAlgorithm); 3] = [
-    ("128-EEA1", CipheringAlgorithm::EEA1),
-    ("128-EEA2", CipheringAlgorithm::EEA2),
-    ("128-EEA3", CipheringAlgorithm::EEA3),
+const CIPHERING: [(&str, Algorithm); 3] = [
+    ("128-EEA1", Algorithm::Snow3g),
+    ("128-EEA2", Algorithm::Aes),
+    ("128-EEA3", Algorithm::Zuc),
 ];
-const INTEGRITY: [(&str, IntegrityAlgorithm); 3] = [
-    ("128-EIA1", IntegrityAlgorithm::EIA1),
-    ("128-EIA2", IntegrityAlgorithm::EIA2),
-    ("128-EIA3", IntegrityAlgorithm::EIA3),
+const INTEGRITY: [(&str, Algorithm); 3] = [
+    ("128-EIA1", Algorithm::Snow3g),
+    ("128-EIA2", Algorithm::Aes),
+    ("128-EIA3", Algorithm::Zuc),
 ];
 
 struct Cases(Vec<Case>);
@@ -141,7 +142,7 @@ pub fn all() -> Vec<Case> {
 
 /// What a ciphering algorithm handles with the key: what is expanded from
 /// it, and the keystream of the message.
-fn ciphering_secrets(key: &[u8; 16], algorithm: CipheringAlgorithm, bearer: u8) -> Vec<Secret> {
+fn ciphering_secrets(key: &[u8; 16], algorithm: Algorithm, bearer: u8) -> Vec<Secret> {
     let key_of_algorithm = nas_eps::KNasEnc::new(key);
     let mut keystream = vec![0u8; 64];
     let (bearer_input, downlink) = (Bearer::new(bearer).expect("five bits"), Direction::Downlink);
@@ -716,7 +717,7 @@ fn derivations(cases: &mut Cases) {
     let res: &'static [u8] = kept(octets::<8>("a54211d5e3ba50bf"));
     let supi = kept(Supi::imsi("208930000000001").expect("an IMSI"));
     let count = NasCount::new(0x01_0203).expect("24 bits");
-    let (nea2, nia2) = (CipheringAlgorithm::NEA2, IntegrityAlgorithm::NIA2);
+    let (nea2, nia2) = (Algorithm::Aes, Algorithm::Aes);
 
     // The keys of the 5GS hierarchy, each distinct
     let key = |first: u8| -> [u8; 32] { core::array::from_fn(|at| first ^ (at as u8 * 7)) };

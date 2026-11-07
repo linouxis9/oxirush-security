@@ -11,13 +11,12 @@
 
 use libfuzzer_sys::fuzz_target;
 use oxirush_security::hooks::{narrow, scalar};
+use oxirush_security::identity::Algorithm;
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt};
 // The algorithms on a key and a message, which the NAS functions and the contexts run
 use oxirush_security::batch::{self, CipherJob, MacJob};
 use oxirush_security::hooks::{nea_cipher, nea_cipher_bits, nia_mac, nia_mac_bits};
-use oxirush_security::{
-    Bearer, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm, IntegrityContext,
-};
+use oxirush_security::{Bearer, CipheringContext, Direction, IntegrityContext};
 
 fuzz_target!(|bytes: &[u8]| {
     // The inputs come from the first octets: a key, a COUNT, a BEARER, a
@@ -30,8 +29,8 @@ fuzz_target!(|bytes: &[u8]| {
     let count = u32::from_be_bytes(head[16..20].try_into().expect("4 octets"));
     let bearer = Bearer::new(head[20] & 0x1f).expect("five bits");
     let direction = Direction::try_from(head[21] & 1).expect("one bit");
-    let integrity = IntegrityAlgorithm::try_from(head[22] & 3).expect("0 to 3");
-    let ciphering = CipheringAlgorithm::try_from(head[22] & 3).expect("0 to 3");
+    let integrity = Algorithm::try_from(head[22] & 3).expect("0 to 3");
+    let ciphering = Algorithm::try_from(head[22] & 3).expect("0 to 3");
     let available = message.len() as u64 * 8;
     let bits = u64::from(u16::from_be_bytes([head[22] >> 2, head[23]])) % (available + 9);
 
@@ -73,8 +72,8 @@ fuzz_target!(|bytes: &[u8]| {
         0 => (head[index % 16] ^ head[22]) & 3,
         _ => head[22] & 3,
     };
-    let integrity_of = |index| IntegrityAlgorithm::try_from(algorithm_of(index)).expect("0 to 3");
-    let ciphering_of = |index| CipheringAlgorithm::try_from(algorithm_of(index)).expect("0 to 3");
+    let integrity_of = |index| Algorithm::try_from(algorithm_of(index)).expect("0 to 3");
+    let ciphering_of = |index| Algorithm::try_from(algorithm_of(index)).expect("0 to 3");
     let key_of = |index: usize| std::array::from_fn(|octet| octets[octet] ^ index as u8);
     let keys: Vec<KNasInt> = (0..others)
         .map(|index| KNasInt::new(&key_of(index)))

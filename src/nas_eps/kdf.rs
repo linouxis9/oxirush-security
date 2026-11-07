@@ -22,11 +22,12 @@ use super::keys::{
     KUpEnc, KUpInt, Kn, LwipPsk, NasToken, Nh, SKwt,
 };
 use crate::SecurityError;
-use crate::common::input::{AccessKeyCount, CipheringAlgorithm, IntegrityAlgorithm, NasCount};
+use crate::common::input::{AccessKeyCount, NasCount};
 use crate::common::kdf::{checked_parameter, derive, derive_algorithm_key, kdf};
 use crate::common::keys::{Autn, Ck, Ik};
 use crate::common::wipe;
 use crate::nas_5gs::KGnb;
+use oxirush_utils::identity::Algorithm;
 use oxirush_utils::identity::Plmn;
 use zeroize::Zeroizing;
 
@@ -152,7 +153,7 @@ pub fn derive_kenb_star(
 
 /// Derive KNASenc, the NAS ciphering key of `algorithm`, from KASME
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x01).
-pub fn derive_knas_enc(kasme: &KAsme, algorithm: CipheringAlgorithm) -> KNasEnc {
+pub fn derive_knas_enc(kasme: &KAsme, algorithm: Algorithm) -> KNasEnc {
     wipe::derivation(|| {
         let key = derive_algorithm_key(kasme.as_octets(), FC_ALGORITHM_KEY, 0x01, algorithm.into());
         KNasEnc::new(&key)
@@ -161,7 +162,7 @@ pub fn derive_knas_enc(kasme: &KAsme, algorithm: CipheringAlgorithm) -> KNasEnc 
 
 /// Derive KNASint, the NAS integrity key of `algorithm`, from KASME
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x02).
-pub fn derive_knas_int(kasme: &KAsme, algorithm: IntegrityAlgorithm) -> KNasInt {
+pub fn derive_knas_int(kasme: &KAsme, algorithm: Algorithm) -> KNasInt {
     wipe::derivation(|| {
         let key = derive_algorithm_key(kasme.as_octets(), FC_ALGORITHM_KEY, 0x02, algorithm.into());
         KNasInt::new(&key)
@@ -175,7 +176,7 @@ pub fn derive_knas_int(kasme: &KAsme, algorithm: IntegrityAlgorithm) -> KNasInt 
 /// (TS 33.401 Annex A.19): [`derive_skgnb`] gives it as the key that
 /// [`nas_5gs::derive_krrc_enc`](crate::nas_5gs::derive_krrc_enc) and the
 /// three beside it take.
-pub fn derive_krrc_enc(kenb: &KEnb, algorithm: CipheringAlgorithm) -> KRrcEnc {
+pub fn derive_krrc_enc(kenb: &KEnb, algorithm: Algorithm) -> KRrcEnc {
     wipe::derivation(|| {
         let key = derive_algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x03, algorithm.into());
         KRrcEnc::new(&key)
@@ -184,7 +185,7 @@ pub fn derive_krrc_enc(kenb: &KEnb, algorithm: CipheringAlgorithm) -> KRrcEnc {
 
 /// Derive KRRCint, the RRC integrity key of `algorithm`, from KeNB
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x04).
-pub fn derive_krrc_int(kenb: &KEnb, algorithm: IntegrityAlgorithm) -> KRrcInt {
+pub fn derive_krrc_int(kenb: &KEnb, algorithm: Algorithm) -> KRrcInt {
     wipe::derivation(|| {
         let key = derive_algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x04, algorithm.into());
         KRrcInt::new(&key)
@@ -193,7 +194,7 @@ pub fn derive_krrc_int(kenb: &KEnb, algorithm: IntegrityAlgorithm) -> KRrcInt {
 
 /// Derive KUPenc, the user plane ciphering key of `algorithm`, from KeNB
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x05).
-pub fn derive_kup_enc(kenb: &KEnb, algorithm: CipheringAlgorithm) -> KUpEnc {
+pub fn derive_kup_enc(kenb: &KEnb, algorithm: Algorithm) -> KUpEnc {
     wipe::derivation(|| {
         let key = derive_algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x05, algorithm.into());
         KUpEnc::new(&key)
@@ -202,7 +203,7 @@ pub fn derive_kup_enc(kenb: &KEnb, algorithm: CipheringAlgorithm) -> KUpEnc {
 
 /// Derive KUPint, the user plane integrity key of `algorithm`, from KeNB
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x06).
-pub fn derive_kup_int(kenb: &KEnb, algorithm: IntegrityAlgorithm) -> KUpInt {
+pub fn derive_kup_int(kenb: &KEnb, algorithm: Algorithm) -> KUpInt {
     wipe::derivation(|| {
         let key = derive_algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x06, algorithm.into());
         KUpInt::new(&key)
@@ -358,10 +359,10 @@ mod tests {
         let expected =
             |kind: u8, identity: u8| *extract_128(&kdf(&key, &[0x15, kind, 0, 1, identity, 0, 1]));
         for (identity, ciphering, integrity) in [
-            (0, CipheringAlgorithm::EEA0, IntegrityAlgorithm::EIA0),
-            (1, CipheringAlgorithm::EEA1, IntegrityAlgorithm::EIA1),
-            (2, CipheringAlgorithm::EEA2, IntegrityAlgorithm::EIA2),
-            (3, CipheringAlgorithm::EEA3, IntegrityAlgorithm::EIA3),
+            (0, Algorithm::Null, Algorithm::Null),
+            (1, Algorithm::Snow3g, Algorithm::Snow3g),
+            (2, Algorithm::Aes, Algorithm::Aes),
+            (3, Algorithm::Zuc, Algorithm::Zuc),
         ] {
             assert_eq!(derive_knas_enc(&kasme, ciphering), expected(0x01, identity));
             assert_eq!(derive_knas_int(&kasme, integrity), expected(0x02, identity));
@@ -433,7 +434,7 @@ mod tests {
         );
         let (kasme, kenb) = (KAsme::new(&counting()), KEnb::new(&counting()));
         assert_eq!(
-            hex::encode(derive_knas_enc(&kasme, CipheringAlgorithm::EEA2).as_octets()),
+            hex::encode(derive_knas_enc(&kasme, Algorithm::Aes).as_octets()),
             "4eb6379f81a769c754e9dc2534ff77b9"
         );
         assert_eq!(
@@ -526,11 +527,8 @@ mod tests {
         assert_eq!(skgnb.as_octets(), derive_skenb(&kenb, 0x0123).as_octets());
         assert_eq!(
             hex::encode(
-                crate::nas_5gs::derive_krrc_enc(
-                    &crate::nas_5gs::KGnb::new(&key),
-                    CipheringAlgorithm::NEA2
-                )
-                .as_octets()
+                crate::nas_5gs::derive_krrc_enc(&crate::nas_5gs::KGnb::new(&key), Algorithm::Aes)
+                    .as_octets()
             ),
             "62e9c027277cfbcea25a0af641e7accf"
         );

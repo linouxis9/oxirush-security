@@ -28,6 +28,7 @@
 //! prints the nanoseconds, the allocations and the octets allocated per
 //! operation, and the peak memory of the program in KiB.
 
+use oxirush_security::identity::Algorithm;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
@@ -125,7 +126,7 @@ fn iv() -> [u8; 16] {
 fn oxirush_security(case: &str, iterations: u64) -> bool {
     use oxirush_security::milenage::{Amf, K as Key, Milenage, Opc, Sqn};
     use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, nas_cipher, nas_mac};
-    use oxirush_security::{CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount, Rand};
+    use oxirush_security::{Direction, NasCount, Rand};
     let count = NasCount::new(COUNT & 0x00ff_ffff).expect("a NAS COUNT");
     let mut data = vec![0x5a_u8; LENGTH];
     let (enc, int) = (KNasEnc::new(&KEY), KNasInt::new(&KEY));
@@ -141,12 +142,12 @@ fn oxirush_security(case: &str, iterations: u64) -> bool {
                 subscriber.authentication_vector(&rand, &sqn, &amf)
             });
         }
-        "nea1" => timed(iterations, || cipher(CipheringAlgorithm::NEA1, &mut data)),
-        "nea2" => timed(iterations, || cipher(CipheringAlgorithm::NEA2, &mut data)),
-        "nea3" => timed(iterations, || cipher(CipheringAlgorithm::NEA3, &mut data)),
-        "nia1" => timed(iterations, || mac(IntegrityAlgorithm::NIA1, &data)),
-        "nia2" => timed(iterations, || mac(IntegrityAlgorithm::NIA2, &data)),
-        "nia3" => timed(iterations, || mac(IntegrityAlgorithm::NIA3, &data)),
+        "nea1" => timed(iterations, || cipher(Algorithm::Snow3g, &mut data)),
+        "nea2" => timed(iterations, || cipher(Algorithm::Aes, &mut data)),
+        "nea3" => timed(iterations, || cipher(Algorithm::Zuc, &mut data)),
+        "nia1" => timed(iterations, || mac(Algorithm::Snow3g, &data)),
+        "nia2" => timed(iterations, || mac(Algorithm::Aes, &data)),
+        "nia3" => timed(iterations, || mac(Algorithm::Zuc, &data)),
         _ => return false,
     }
     true

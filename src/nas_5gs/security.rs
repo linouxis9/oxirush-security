@@ -19,9 +19,10 @@
 
 use super::keys::{KNasEnc, KNasInt};
 use crate::common::error::SecurityError;
-use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
+use crate::common::input::{Bearer, Direction, NasCount};
 use crate::common::nea::nea_cipher;
 use crate::common::nia::nia_mac;
+use oxirush_utils::identity::Algorithm;
 
 /// The NAS connection of a 5GS NAS message, which gives the BEARER input of
 /// the algorithms: the NAS connection identifier 0x01 for 3GPP access and
@@ -68,8 +69,9 @@ impl From<NasConnection> for Bearer {
 /// NAS message, ciphered when it is to be.
 ///
 /// ```
+/// use oxirush_security::identity::Algorithm;
 /// use oxirush_security::nas_5gs::{KNasInt, NasConnection, nas_mac};
-/// use oxirush_security::{Direction, IntegrityAlgorithm, NasCount};
+/// use oxirush_security::{Direction, NasCount};
 ///
 /// // The ciphered REGISTRATION COMPLETE of the example of `nas_cipher`, after its
 /// // sequence number
@@ -77,7 +79,7 @@ impl From<NasConnection> for Bearer {
 /// let k_nas_int = KNasInt::from_slice(&k_nas_int).unwrap();
 /// let (count, access, uplink) = (NasCount::ZERO, NasConnection::ThreeGpp, Direction::Uplink);
 /// let protected = [0x00, 0xb5, 0x7d, 0xd5];
-/// let mac = nas_mac(&k_nas_int, count, access, uplink, &protected, IntegrityAlgorithm::NIA2);
+/// let mac = nas_mac(&k_nas_int, count, access, uplink, &protected, Algorithm::Aes);
 /// assert_eq!(mac, 0x83e4_d009);
 /// ```
 pub fn nas_mac(
@@ -86,7 +88,7 @@ pub fn nas_mac(
     connection: NasConnection,
     direction: Direction,
     message: &[u8],
-    algorithm: IntegrityAlgorithm,
+    algorithm: Algorithm,
 ) -> u32 {
     nia_mac(
         key,
@@ -101,19 +103,20 @@ pub fn nas_mac(
 /// Cipher or decipher a 5GS NAS message in place (TS 33.501 §6.4.4).
 ///
 /// ```
+/// use oxirush_security::identity::Algorithm;
 /// use oxirush_security::nas_5gs::{KNasEnc, NasConnection, nas_cipher};
-/// use oxirush_security::{CipheringAlgorithm, Direction, NasCount};
+/// use oxirush_security::{Direction, NasCount};
 ///
 /// // An uplink REGISTRATION COMPLETE of NAS COUNT 0, with 128-NEA2
 /// let k_nas_enc = hex::decode("f47ae570afde775373d1b313d2176f54").unwrap();
 /// let k_nas_enc = KNasEnc::from_slice(&k_nas_enc).unwrap();
 /// let (count, access, uplink) = (NasCount::ZERO, NasConnection::ThreeGpp, Direction::Uplink);
 /// let mut message = [0x7e, 0x00, 0x43];
-/// nas_cipher(&k_nas_enc, count, access, uplink, &mut message, CipheringAlgorithm::NEA2);
+/// nas_cipher(&k_nas_enc, count, access, uplink, &mut message, Algorithm::Aes);
 /// assert_eq!(message, [0xb5, 0x7d, 0xd5]);
 ///
 /// // The same call deciphers
-/// nas_cipher(&k_nas_enc, count, access, uplink, &mut message, CipheringAlgorithm::NEA2);
+/// nas_cipher(&k_nas_enc, count, access, uplink, &mut message, Algorithm::Aes);
 /// assert_eq!(message, [0x7e, 0x00, 0x43]);
 /// ```
 pub fn nas_cipher(
@@ -122,7 +125,7 @@ pub fn nas_cipher(
     connection: NasConnection,
     direction: Direction,
     data: &mut [u8],
-    algorithm: CipheringAlgorithm,
+    algorithm: Algorithm,
 ) {
     nea_cipher(
         key,
@@ -148,7 +151,7 @@ pub fn nas_cipher(
 /// The inputs are fixed: COUNT is 2^32 - 1, DIRECTION is 1, and BEARER is
 /// the NAS connection identifier for 3GPP access, 0x01. The COUNT is used
 /// only for this MAC and does not change the NAS COUNTs.
-pub fn nas_container_mac(key: &KNasInt, message: &[u8], algorithm: IntegrityAlgorithm) -> u32 {
+pub fn nas_container_mac(key: &KNasInt, message: &[u8], algorithm: Algorithm) -> u32 {
     nia_mac(
         key,
         u32::MAX,
@@ -183,15 +186,15 @@ mod tests {
                 bearer(1),
                 Direction::Downlink,
                 &container,
-                IntegrityAlgorithm::NIA2,
+                Algorithm::Aes,
             )
         };
         assert_eq!(
-            nas_container_mac(&key, &container, IntegrityAlgorithm::NIA2),
+            nas_container_mac(&key, &container, Algorithm::Aes),
             mac(0xffff_ffff)
         );
         assert_ne!(
-            nas_container_mac(&key, &container, IntegrityAlgorithm::NIA2),
+            nas_container_mac(&key, &container, Algorithm::Aes),
             mac(0x00ff_ffff)
         );
     }
@@ -218,7 +221,7 @@ mod tests {
                 connection,
                 Direction::Uplink,
                 &payload,
-                IntegrityAlgorithm::NIA2,
+                Algorithm::Aes,
             )
         };
         assert_eq!(mac(NasConnection::ThreeGpp), 0x7f88_ff87);
@@ -230,7 +233,7 @@ mod tests {
                 bearer(2),
                 Direction::Uplink,
                 &payload,
-                IntegrityAlgorithm::NIA2
+                Algorithm::Aes
             )
         );
     }
@@ -251,7 +254,7 @@ mod tests {
             connection,
             uplink,
             &mut ciphered,
-            CipheringAlgorithm::NEA2,
+            Algorithm::Aes,
         );
         let mut expected = payload;
         nea_cipher(
@@ -260,7 +263,7 @@ mod tests {
             bearer(1),
             uplink,
             &mut expected,
-            CipheringAlgorithm::NEA2,
+            Algorithm::Aes,
         );
         assert_eq!(ciphered, expected);
         assert_ne!(ciphered, payload);

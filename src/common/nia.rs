@@ -31,7 +31,7 @@
 use crate::common::aes128::{Aes128, RoundKeys};
 use crate::common::ct::{clmul64, clmul128, mask64};
 use crate::common::error::SecurityError;
-use crate::common::input::{Bearer, Direction, IntegrityAlgorithm, octets_of};
+use crate::common::input::{Bearer, Direction, octets_of};
 use crate::common::keys::IntegrityKey;
 use crate::common::nea::ctr_prefix;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -39,6 +39,7 @@ use crate::common::simd::{AesSchedule, Instructions};
 use crate::common::snow3g::Snow3G;
 use crate::common::wipe;
 use crate::common::zuc::Zuc;
+use oxirush_utils::identity::Algorithm;
 use zeroize::{Zeroize, Zeroizing};
 
 /// Compute the 32-bit MAC of a message of whole octets with `algorithm`.
@@ -50,7 +51,7 @@ pub fn nia_mac(
     bearer: Bearer,
     direction: Direction,
     message: &[u8],
-    algorithm: IntegrityAlgorithm,
+    algorithm: Algorithm,
 ) -> u32 {
     let (key, message) = (key.key_octets(), BitString::whole(message));
     mac_message(key, count, bearer, direction, message, algorithm)
@@ -69,7 +70,7 @@ pub fn nia_mac_bits(
     direction: Direction,
     message: &[u8],
     bit_length: u64,
-    algorithm: IntegrityAlgorithm,
+    algorithm: Algorithm,
 ) -> Result<u32, SecurityError> {
     let (key, bits) = (key.key_octets(), BitString::new(message, bit_length)?);
     Ok(mac_message(key, count, bearer, direction, bits, algorithm))
@@ -84,14 +85,12 @@ pub(crate) fn mac_message(
     bearer: Bearer,
     direction: Direction,
     message: BitString<'_>,
-    algorithm: IntegrityAlgorithm,
+    algorithm: Algorithm,
 ) -> u32 {
     match algorithm {
-        IntegrityAlgorithm::Null => 0,
-        IntegrityAlgorithm::Snow3g => {
-            wipe::message(|| eia1(key, count, bearer, direction, message))
-        }
-        IntegrityAlgorithm::Aes => {
+        Algorithm::Null => 0,
+        Algorithm::Snow3g => wipe::message(|| eia1(key, count, bearer, direction, message)),
+        Algorithm::Aes => {
             let blocks = CmacBlocks::new(count, bearer, direction, message);
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if let Some(instructions) = Instructions::detect() {
@@ -99,7 +98,7 @@ pub(crate) fn mac_message(
             }
             wipe::portable(|| eia2_portable(key, &blocks))
         }
-        IntegrityAlgorithm::Zuc => wipe::message(|| eia3(key, count, bearer, direction, message)),
+        Algorithm::Zuc => wipe::message(|| eia3(key, count, bearer, direction, message)),
     }
 }
 
@@ -112,13 +111,13 @@ pub(crate) fn mac_of_bits(
     bearer: Bearer,
     direction: Direction,
     message: BitString<'_>,
-    algorithm: IntegrityAlgorithm,
+    algorithm: Algorithm,
 ) -> u32 {
     match algorithm {
-        IntegrityAlgorithm::Null => 0,
-        IntegrityAlgorithm::Snow3g => eia1(key, count, bearer, direction, message),
-        IntegrityAlgorithm::Aes => eia2(key, count, bearer, direction, message),
-        IntegrityAlgorithm::Zuc => eia3(key, count, bearer, direction, message),
+        Algorithm::Null => 0,
+        Algorithm::Snow3g => eia1(key, count, bearer, direction, message),
+        Algorithm::Aes => eia2(key, count, bearer, direction, message),
+        Algorithm::Zuc => eia3(key, count, bearer, direction, message),
     }
 }
 
@@ -804,14 +803,7 @@ mod tests {
         direction: Direction,
         message: &[u8],
     ) -> u32 {
-        nia_mac(
-            key,
-            count,
-            bearer,
-            direction,
-            message,
-            IntegrityAlgorithm::Snow3g,
-        )
+        nia_mac(key, count, bearer, direction, message, Algorithm::Snow3g)
     }
 
     fn nia1_mac_bits(
@@ -822,7 +814,7 @@ mod tests {
         message: &[u8],
         bit_length: u64,
     ) -> Result<u32, SecurityError> {
-        let algorithm = IntegrityAlgorithm::Snow3g;
+        let algorithm = Algorithm::Snow3g;
         nia_mac_bits(
             key, count, bearer, direction, message, bit_length, algorithm,
         )
@@ -835,14 +827,7 @@ mod tests {
         direction: Direction,
         message: &[u8],
     ) -> u32 {
-        nia_mac(
-            key,
-            count,
-            bearer,
-            direction,
-            message,
-            IntegrityAlgorithm::Aes,
-        )
+        nia_mac(key, count, bearer, direction, message, Algorithm::Aes)
     }
 
     fn nia2_mac_bits(
@@ -853,7 +838,7 @@ mod tests {
         message: &[u8],
         bit_length: u64,
     ) -> Result<u32, SecurityError> {
-        let algorithm = IntegrityAlgorithm::Aes;
+        let algorithm = Algorithm::Aes;
         nia_mac_bits(
             key, count, bearer, direction, message, bit_length, algorithm,
         )
@@ -866,14 +851,7 @@ mod tests {
         direction: Direction,
         message: &[u8],
     ) -> u32 {
-        nia_mac(
-            key,
-            count,
-            bearer,
-            direction,
-            message,
-            IntegrityAlgorithm::Zuc,
-        )
+        nia_mac(key, count, bearer, direction, message, Algorithm::Zuc)
     }
 
     fn nia3_mac_bits(
@@ -884,7 +862,7 @@ mod tests {
         message: &[u8],
         bit_length: u64,
     ) -> Result<u32, SecurityError> {
-        let algorithm = IntegrityAlgorithm::Zuc;
+        let algorithm = Algorithm::Zuc;
         nia_mac_bits(
             key, count, bearer, direction, message, bit_length, algorithm,
         )
@@ -1544,7 +1522,7 @@ mod tests {
                 Bearer::ZERO,
                 Direction::Uplink,
                 &[0x7E, 0x00, 0x41],
-                IntegrityAlgorithm::Null
+                Algorithm::Null
             ),
             0
         );
@@ -1561,19 +1539,19 @@ mod tests {
         let mac = |algorithm| nia_mac(&key, count, bearer, direction, msg, algorithm);
 
         let nia1 = nia1_mac(&key, count, bearer, direction, msg);
-        assert_eq!(mac(IntegrityAlgorithm::Snow3g), nia1);
+        assert_eq!(mac(Algorithm::Snow3g), nia1);
         assert_eq!(
             nia1_mac_bits(&key, count, bearer, direction, msg, bits),
             Ok(nia1)
         );
         let nia2 = nia2_mac(&key, count, bearer, direction, msg);
-        assert_eq!(mac(IntegrityAlgorithm::Aes), nia2);
+        assert_eq!(mac(Algorithm::Aes), nia2);
         assert_eq!(
             nia2_mac_bits(&key, count, bearer, direction, msg, bits),
             Ok(nia2)
         );
         let nia3 = nia3_mac(&key, count, bearer, direction, msg);
-        assert_eq!(mac(IntegrityAlgorithm::Zuc), nia3);
+        assert_eq!(mac(Algorithm::Zuc), nia3);
         assert_eq!(
             nia3_mac_bits(&key, count, bearer, direction, msg, bits),
             Ok(nia3)
@@ -1593,11 +1571,7 @@ mod tests {
         let message: Vec<u8> = (0..40u8)
             .map(|octet| octet.wrapping_mul(37) ^ 0x5a)
             .collect();
-        for algorithm in [
-            IntegrityAlgorithm::Snow3g,
-            IntegrityAlgorithm::Aes,
-            IntegrityAlgorithm::Zuc,
-        ] {
+        for algorithm in [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc] {
             let mac = |message: &[u8], bits| {
                 nia_mac_bits(
                     &key,
@@ -1638,10 +1612,10 @@ mod tests {
         });
         let (bearer, direction) = (Bearer::MAX, Direction::Downlink);
         for algorithm in [
-            IntegrityAlgorithm::Null,
-            IntegrityAlgorithm::Snow3g,
-            IntegrityAlgorithm::Aes,
-            IntegrityAlgorithm::Zuc,
+            Algorithm::Null,
+            Algorithm::Snow3g,
+            Algorithm::Aes,
+            Algorithm::Zuc,
         ] {
             assert_eq!(
                 nia_mac_bits(&key, 7, bearer, direction, &message, 17, algorithm),

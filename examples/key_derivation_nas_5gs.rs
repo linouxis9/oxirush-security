@@ -23,10 +23,9 @@ use oxirush_security::nas_5gs::{
     derive_knas_int, derive_kseaf, derive_nh,
 };
 
+use oxirush_security::identity::Algorithm;
 use oxirush_security::identity::Supi;
-use oxirush_security::{
-    Autn, CipheringAlgorithm, Ck, Ik, IntegrityAlgorithm, NasCount, SecurityError,
-};
+use oxirush_security::{Autn, Ck, Ik, NasCount, SecurityError};
 
 fn main() -> Result<(), SecurityError> {
     // Example 5G AKA outputs, and the AUTN of the authentication: SQN xor
@@ -53,11 +52,11 @@ fn main() -> Result<(), SecurityError> {
     println!("KAMF:  {}", hex::encode(k_amf.as_octets()));
 
     // KAMF -> KNASint, the 128-bit integrity key of the selected algorithm
-    let k_nas_int = derive_knas_int(&k_amf, IntegrityAlgorithm::NIA2);
+    let k_nas_int = derive_knas_int(&k_amf, Algorithm::Aes);
     println!("KNASint (NIA2): {}", hex::encode(k_nas_int.as_octets()));
 
     // KAMF -> KNASenc, the 128-bit ciphering key of the selected algorithm
-    let k_nas_enc = derive_knas_enc(&k_amf, CipheringAlgorithm::NEA2);
+    let k_nas_enc = derive_knas_enc(&k_amf, Algorithm::Aes);
     println!("KNASenc (NEA2): {}", hex::encode(k_nas_enc.as_octets()));
 
     // KAMF -> KAMF' for idle mobility, with the uplink NAS COUNT

@@ -21,8 +21,9 @@
 //! NAS bearer 0, and the SERVICE REQUEST short MAC takes its two least
 //! significant octets (TS 24.301 §9.9.3.28).
 
+use oxirush_security::identity::Algorithm;
 use oxirush_security::nas_eps::{KNasInt, nas_mac, service_request_short_mac};
-use oxirush_security::{Direction, IntegrityAlgorithm, NasCount};
+use oxirush_security::{Direction, NasCount};
 
 fn main() {
     // Example 128-bit integrity key (KNASint)
@@ -49,19 +50,19 @@ fn main() {
     let mac = |algorithm| nas_mac(&key, count, direction, &message, algorithm);
 
     let algorithms = [
-        IntegrityAlgorithm::EIA1, // SNOW 3G
-        IntegrityAlgorithm::EIA2, // AES-CMAC
-        IntegrityAlgorithm::EIA3, // ZUC
-        IntegrityAlgorithm::EIA0, // null integrity: the MAC is zero
+        Algorithm::Snow3g, // SNOW 3G
+        Algorithm::Aes,    // AES-CMAC
+        Algorithm::Zuc,    // ZUC
+        Algorithm::Null,   // null integrity: the MAC is zero
     ];
     for algorithm in algorithms {
-        println!("{:<8} MAC: 0x{:08x}", algorithm.name_eps(), mac(algorithm));
+        println!(
+            "{:<8} MAC: 0x{:08x}",
+            format!("{algorithm:?}"),
+            mac(algorithm)
+        );
     }
-    assert_eq!(
-        mac(IntegrityAlgorithm::EIA0),
-        0,
-        "EIA0 must always return 0"
-    );
+    assert_eq!(mac(Algorithm::Null), 0, "EIA0 must always return 0");
 
     // SERVICE REQUEST: KSI 1, and the five low bits of the NAS COUNT, 0x16
     let ksi_and_sequence_number = (1 << 5) | 0x16;
@@ -71,7 +72,7 @@ fn main() {
         direction,
         0xc7,
         ksi_and_sequence_number,
-        IntegrityAlgorithm::EIA2,
+        Algorithm::Aes,
     )
     .expect("the first octet of a SERVICE REQUEST");
     println!("SERVICE REQUEST short MAC (EIA2): 0x{short_mac:04x}");
@@ -83,8 +84,8 @@ fn main() {
     assert_eq!(estimated, Ok(count));
 
     // Each algorithm produces a different MAC for the same input
-    assert_ne!(mac(IntegrityAlgorithm::EIA1), mac(IntegrityAlgorithm::EIA2));
-    assert_ne!(mac(IntegrityAlgorithm::EIA2), mac(IntegrityAlgorithm::EIA3));
+    assert_ne!(mac(Algorithm::Snow3g), mac(Algorithm::Aes));
+    assert_ne!(mac(Algorithm::Aes), mac(Algorithm::Zuc));
 
     println!("\nAll MACs computed successfully.");
 }

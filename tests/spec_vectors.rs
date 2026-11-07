@@ -296,11 +296,9 @@ const MAC_SETS_1_TO_5: &[Mac] = &[
 
 #[cfg(feature = "batch")]
 use oxirush_security::batch::{self, CipherJob, MacJob};
+use oxirush_security::identity::Algorithm;
 use oxirush_security::nas_eps::{KNasEnc, KNasInt};
-use oxirush_security::{
-    Bearer, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm, IntegrityContext,
-    Snow3G, Zuc,
-};
+use oxirush_security::{Bearer, CipheringContext, Direction, IntegrityContext, Snow3G, Zuc};
 
 fn bearer(value: u8) -> Bearer {
     Bearer::new(value).unwrap()
@@ -332,17 +330,17 @@ fn integrity_key(v: &Mac) -> KNasInt {
 }
 
 /// The algorithm of a set, from its name.
-fn ciphering(v: &Enc) -> CipheringAlgorithm {
+fn ciphering(v: &Enc) -> Algorithm {
     match &v.name[..4] {
-        "eea1" => CipheringAlgorithm::EEA1,
-        "eea2" => CipheringAlgorithm::EEA2,
-        _ => CipheringAlgorithm::EEA3,
+        "eea1" => Algorithm::Snow3g,
+        "eea2" => Algorithm::Aes,
+        _ => Algorithm::Zuc,
     }
 }
-fn integrity(v: &Mac) -> IntegrityAlgorithm {
+fn integrity(v: &Mac) -> Algorithm {
     match &v.name[..4] {
-        "eia1" => IntegrityAlgorithm::EIA1,
-        _ => IntegrityAlgorithm::EIA3,
+        "eia1" => Algorithm::Snow3g,
+        _ => Algorithm::Zuc,
     }
 }
 
@@ -556,8 +554,8 @@ fn the_mac_sets_in_one_batch() {
     }));
     // TS 33.401 Annex C.2.7 reuses the inputs of 128-EIA1 test set 6
     let set_6 = sets.iter().position(|v| v.name == "eia1_6").unwrap();
-    jobs.push(job(set_6, IntegrityAlgorithm::EIA2));
-    let context = IntegrityContext::new(&keys[set_6], IntegrityAlgorithm::EIA2);
+    jobs.push(job(set_6, Algorithm::Aes));
+    let context = IntegrityContext::new(&keys[set_6], Algorithm::Aes);
     let (v, message) = (sets[set_6], &messages[set_6]);
     let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
     jobs.push(
@@ -583,7 +581,7 @@ fn eia2_set_7() {
     let key = integrity_key(v);
     let msg = h(v.msg);
     let (bearer, dir, bits) = (bearer(v.bearer), direction(v.dir), v.len as u64);
-    let algorithm = IntegrityAlgorithm::EIA2;
+    let algorithm = Algorithm::Aes;
     let context = IntegrityContext::new(&key, algorithm);
     assert_eq!(
         context.mac_bits(v.count, bearer, dir, &msg, bits),
@@ -635,7 +633,7 @@ fn eia2_all_byte_aligned_sets_through_a_context() {
     // C.2.2
     let key = KNasInt::from_slice(&h("d3c5d592327fb11c4035c6680af8c6d1")).unwrap();
     let message = h("484583d5afe082ae");
-    let (count, bearer, algorithm) = (0x398a59b4_u32, bearer(0x1a), IntegrityAlgorithm::EIA2);
+    let (count, bearer, algorithm) = (0x398a59b4_u32, bearer(0x1a), Algorithm::Aes);
     let context = IntegrityContext::new(&key, algorithm);
     assert_eq!(
         context.mac(count, bearer, Direction::Downlink, &message),
@@ -698,7 +696,7 @@ fn eia1_is_uia2_for_a_downlink_count_of_the_high_bit() {
     let v = MAC_SETS_1_TO_5.iter().find(|v| v.name == "eia1_3").unwrap();
     assert!(v.count >> 31 == 1);
     let (key, msg) = (integrity_key(v), h(v.msg));
-    let (bits, algorithm) = (v.len as u64, IntegrityAlgorithm::EIA1);
+    let (bits, algorithm) = (v.len as u64, Algorithm::Snow3g);
     let context = IntegrityContext::new(&key, algorithm);
     let mac = context.mac_bits(v.count, bearer(v.bearer), direction(1), &msg, bits);
     assert_eq!(mac, Ok(uia2(&h(v.key), v.count, v.bearer, 1, &msg, bits)));

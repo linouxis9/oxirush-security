@@ -26,13 +26,14 @@
 //! carry-less products of 128-EIA1 and 128-EIA3, and the AES of
 //! MILENAGE, several blocks of one key at a time.
 
+use oxirush_security::identity::Algorithm;
 use oxirush_security::milenage::{Amf, K, Milenage, Op, Opc, Sqn};
 
 use oxirush_security::batch::{self, AutnJob, CipherJob, MacJob, VectorJob};
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt};
 use oxirush_security::{
-    Autn, Bearer, CipheringAlgorithm, CipheringContext, Direction, Implementation,
-    IntegrityAlgorithm, IntegrityContext, Rand, SecurityError, Snow3G, Zuc, implementation,
+    Autn, Bearer, CipheringContext, Direction, Implementation, IntegrityContext, Rand,
+    SecurityError, Snow3G, Zuc, implementation,
 };
 
 /// The cases, by their names.
@@ -121,16 +122,8 @@ impl Digest {
     }
 }
 
-const CIPHERING: [CipheringAlgorithm; 3] = [
-    CipheringAlgorithm::Snow3g,
-    CipheringAlgorithm::Aes,
-    CipheringAlgorithm::Zuc,
-];
-const INTEGRITY: [IntegrityAlgorithm; 3] = [
-    IntegrityAlgorithm::Snow3g,
-    IntegrityAlgorithm::Aes,
-    IntegrityAlgorithm::Zuc,
-];
+const CIPHERING: [Algorithm; 3] = [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc];
+const INTEGRITY: [Algorithm; 3] = [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc];
 
 /// The lengths of the messages: every one up to 160 octets, and some
 /// around the sizes of the blocks and of a packet.
@@ -379,7 +372,7 @@ fn batches_of(seed: u64, keyed: bool) -> u64 {
 /// A test set of a ciphering algorithm: the key, COUNT, BEARER, DIRECTION,
 /// the length in bits, the plaintext and the ciphertext.
 type CipherSet = (
-    CipheringAlgorithm,
+    Algorithm,
     [u8; 16],
     u32,
     u8,
@@ -391,7 +384,7 @@ type CipherSet = (
 
 /// A test set of an integrity algorithm, with the message and the MAC.
 type MacSet = (
-    IntegrityAlgorithm,
+    Algorithm,
     [u8; 16],
     u32,
     u8,
@@ -405,7 +398,7 @@ type MacSet = (
 /// 128-EEA3 test set 1 of the ZUC test data.
 const CIPHER_SETS: [CipherSet; 3] = [
     (
-        CipheringAlgorithm::Snow3g,
+        Algorithm::Snow3g,
         [
             0x2b, 0xd6, 0x45, 0x9f, 0x82, 0xc5, 0xb3, 0x00, 0x95, 0x2c, 0x49, 0x10, 0x48, 0x81,
             0xff, 0x48,
@@ -436,7 +429,7 @@ const CIPHER_SETS: [CipherSet; 3] = [
         ],
     ),
     (
-        CipheringAlgorithm::Aes,
+        Algorithm::Aes,
         [
             0xd3, 0xc5, 0xd5, 0x92, 0x32, 0x7f, 0xb1, 0x1c, 0x40, 0x35, 0xc6, 0x68, 0x0a, 0xf8,
             0xc6, 0xd1,
@@ -457,7 +450,7 @@ const CIPHER_SETS: [CipherSet; 3] = [
         ],
     ),
     (
-        CipheringAlgorithm::Zuc,
+        Algorithm::Zuc,
         [
             0x17, 0x3d, 0x14, 0xba, 0x50, 0x03, 0x73, 0x1d, 0x7a, 0x60, 0x04, 0x94, 0x70, 0xf0,
             0x0a, 0x29,
@@ -481,7 +474,7 @@ const CIPHER_SETS: [CipherSet; 3] = [
 /// 128-EIA3 test set 2 of the ZUC test data.
 const MAC_SETS: [MacSet; 3] = [
     (
-        IntegrityAlgorithm::Snow3g,
+        Algorithm::Snow3g,
         [
             0x2b, 0xd6, 0x45, 0x9f, 0x82, 0xc5, 0xb3, 0x00, 0x95, 0x2c, 0x49, 0x10, 0x48, 0x81,
             0xff, 0x48,
@@ -496,7 +489,7 @@ const MAC_SETS: [MacSet; 3] = [
         0x731f_1165,
     ),
     (
-        IntegrityAlgorithm::Aes,
+        Algorithm::Aes,
         [
             0xd3, 0xc5, 0xd5, 0x92, 0x32, 0x7f, 0xb1, 0x1c, 0x40, 0x35, 0xc6, 0x68, 0x0a, 0xf8,
             0xc6, 0xd1,
@@ -509,7 +502,7 @@ const MAC_SETS: [MacSet; 3] = [
         0xb937_87e6,
     ),
     (
-        IntegrityAlgorithm::Zuc,
+        Algorithm::Zuc,
         [
             0x47, 0x05, 0x41, 0x25, 0x56, 0x1e, 0xb2, 0xdd, 0xa9, 0x40, 0x59, 0xda, 0x05, 0x09,
             0x78, 0x50,
@@ -663,7 +656,7 @@ fn nea_cipher(
     bearer: Bearer,
     direction: Direction,
     data: &mut [u8],
-    algorithm: CipheringAlgorithm,
+    algorithm: Algorithm,
 ) {
     CipheringContext::new(key, algorithm).cipher(count, bearer, direction, data);
 }
@@ -676,7 +669,7 @@ fn nea_cipher_bits(
     direction: Direction,
     data: &mut [u8],
     bits: u64,
-    algorithm: CipheringAlgorithm,
+    algorithm: Algorithm,
 ) -> Result<(), SecurityError> {
     CipheringContext::new(key, algorithm).cipher_bits(count, bearer, direction, data, bits)
 }
@@ -688,7 +681,7 @@ fn nia_mac(
     bearer: Bearer,
     direction: Direction,
     message: &[u8],
-    algorithm: IntegrityAlgorithm,
+    algorithm: Algorithm,
 ) -> u32 {
     IntegrityContext::new(key, algorithm).mac(count, bearer, direction, message)
 }
@@ -701,7 +694,7 @@ fn nia_mac_bits(
     direction: Direction,
     message: &[u8],
     bits: u64,
-    algorithm: IntegrityAlgorithm,
+    algorithm: Algorithm,
 ) -> Result<u32, SecurityError> {
     IntegrityContext::new(key, algorithm).mac_bits(count, bearer, direction, message, bits)
 }

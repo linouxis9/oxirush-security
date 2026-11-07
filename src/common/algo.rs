@@ -23,24 +23,21 @@
 //! to algorithm 2 and bit 5 to algorithm 3, so one function reads the octet
 //! of either system.
 
-use crate::common::input::{CipheringAlgorithm, IntegrityAlgorithm};
+use oxirush_utils::identity::Algorithm;
 
 /// The integrity algorithms that an operator prefers by default: 2, then 1,
 /// then 3. The null algorithm is left out: ordinary signalling must not use
 /// it.
-pub const DEFAULT_INTEGRITY_PREFERENCE: &[IntegrityAlgorithm] = &[
-    IntegrityAlgorithm::Aes,
-    IntegrityAlgorithm::Snow3g,
-    IntegrityAlgorithm::Zuc,
-];
+pub const DEFAULT_INTEGRITY_PREFERENCE: &[Algorithm] =
+    &[Algorithm::Aes, Algorithm::Snow3g, Algorithm::Zuc];
 
 /// The ciphering algorithms that an operator prefers by default: 2, then 1,
 /// then 3, then the null algorithm.
-pub const DEFAULT_CIPHERING_PREFERENCE: &[CipheringAlgorithm] = &[
-    CipheringAlgorithm::Aes,
-    CipheringAlgorithm::Snow3g,
-    CipheringAlgorithm::Zuc,
-    CipheringAlgorithm::Null,
+pub const DEFAULT_CIPHERING_PREFERENCE: &[Algorithm] = &[
+    Algorithm::Aes,
+    Algorithm::Snow3g,
+    Algorithm::Zuc,
+    Algorithm::Null,
 ];
 
 /// The first integrity algorithm of an operator's `preference` that the UE
@@ -49,20 +46,18 @@ pub const DEFAULT_CIPHERING_PREFERENCE: &[CipheringAlgorithm] = &[
 ///
 /// `capability` is the octet of the integrity algorithms of a UE security
 /// capability: 5G-IA0 to 5G-IA7 or EIA0 to EIA7. A preference with
-/// [`IntegrityAlgorithm::Null`] permits null integrity, which is for
+/// [`Algorithm::Null`] permits null integrity, which is for
 /// unauthenticated emergency sessions only.
 ///
 /// ```
-/// use oxirush_security::{DEFAULT_INTEGRITY_PREFERENCE, IntegrityAlgorithm, select_integrity_algorithm};
+/// use oxirush_security::identity::Algorithm;
+/// use oxirush_security::{DEFAULT_INTEGRITY_PREFERENCE, select_integrity_algorithm};
 ///
 /// // A UE security capability of IA1 and IA2, then one of IA0 alone
-/// assert_eq!(select_integrity_algorithm(0x60, DEFAULT_INTEGRITY_PREFERENCE), Some(IntegrityAlgorithm::NIA2));
+/// assert_eq!(select_integrity_algorithm(0x60, DEFAULT_INTEGRITY_PREFERENCE), Some(Algorithm::Aes));
 /// assert_eq!(select_integrity_algorithm(0x80, DEFAULT_INTEGRITY_PREFERENCE), None);
 /// ```
-pub fn select_integrity_algorithm(
-    capability: u8,
-    preference: &[IntegrityAlgorithm],
-) -> Option<IntegrityAlgorithm> {
+pub fn select_integrity_algorithm(capability: u8, preference: &[Algorithm]) -> Option<Algorithm> {
     preference
         .iter()
         .copied()
@@ -77,16 +72,14 @@ pub fn select_integrity_algorithm(
 /// or EEA0 to EEA7.
 ///
 /// ```
-/// use oxirush_security::{CipheringAlgorithm, DEFAULT_CIPHERING_PREFERENCE, select_ciphering_algorithm};
+/// use oxirush_security::identity::Algorithm;
+/// use oxirush_security::{DEFAULT_CIPHERING_PREFERENCE, select_ciphering_algorithm};
 ///
 /// // A UE security capability of EA0, EA1 and EA2, then one of EA0 alone
-/// assert_eq!(select_ciphering_algorithm(0xe0, DEFAULT_CIPHERING_PREFERENCE), Some(CipheringAlgorithm::NEA2));
-/// assert_eq!(select_ciphering_algorithm(0x80, DEFAULT_CIPHERING_PREFERENCE), Some(CipheringAlgorithm::NEA0));
+/// assert_eq!(select_ciphering_algorithm(0xe0, DEFAULT_CIPHERING_PREFERENCE), Some(Algorithm::Aes));
+/// assert_eq!(select_ciphering_algorithm(0x80, DEFAULT_CIPHERING_PREFERENCE), Some(Algorithm::Null));
 /// ```
-pub fn select_ciphering_algorithm(
-    capability: u8,
-    preference: &[CipheringAlgorithm],
-) -> Option<CipheringAlgorithm> {
+pub fn select_ciphering_algorithm(capability: u8, preference: &[Algorithm]) -> Option<Algorithm> {
     preference
         .iter()
         .copied()
@@ -102,15 +95,13 @@ fn supported(capability: u8, identifier: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use CipheringAlgorithm as Nea;
-    use IntegrityAlgorithm as Nia;
 
     #[test]
     fn integrity_prefers_nia2() {
         // All algorithms supported → picks NIA2
         assert_eq!(
             select_integrity_algorithm(0xF0, DEFAULT_INTEGRITY_PREFERENCE),
-            Some(Nia::NIA2)
+            Some(Algorithm::Aes)
         );
     }
 
@@ -118,7 +109,7 @@ mod tests {
     fn integrity_nia1_when_no_nia2() {
         assert_eq!(
             select_integrity_algorithm(0xD0, DEFAULT_INTEGRITY_PREFERENCE),
-            Some(Nia::NIA1)
+            Some(Algorithm::Snow3g)
         ); // NIA0 + NIA1 + NIA3
     }
 
@@ -126,7 +117,7 @@ mod tests {
     fn integrity_nia3_when_only_nia3_nia0() {
         assert_eq!(
             select_integrity_algorithm(0x90, DEFAULT_INTEGRITY_PREFERENCE),
-            Some(Nia::NIA3)
+            Some(Algorithm::Zuc)
         ); // NIA0 + NIA3
     }
 
@@ -156,7 +147,7 @@ mod tests {
     fn ciphering_prefers_nea2() {
         assert_eq!(
             select_ciphering_algorithm(0xF0, DEFAULT_CIPHERING_PREFERENCE),
-            Some(Nea::NEA2)
+            Some(Algorithm::Aes)
         );
     }
 
@@ -164,7 +155,7 @@ mod tests {
     fn ciphering_nea1_when_no_nea2() {
         assert_eq!(
             select_ciphering_algorithm(0xC0, DEFAULT_CIPHERING_PREFERENCE),
-            Some(Nea::NEA1)
+            Some(Algorithm::Snow3g)
         ); // NEA0 + NEA1
     }
 
@@ -172,7 +163,7 @@ mod tests {
     fn ciphering_nea3_when_only_nea3() {
         assert_eq!(
             select_ciphering_algorithm(0x10, DEFAULT_CIPHERING_PREFERENCE),
-            Some(Nea::NEA3)
+            Some(Algorithm::Zuc)
         );
     }
 
@@ -181,7 +172,7 @@ mod tests {
         // Only NEA0 bit set → NEA0 selected
         assert_eq!(
             select_ciphering_algorithm(0x80, DEFAULT_CIPHERING_PREFERENCE),
-            Some(Nea::NEA0)
+            Some(Algorithm::Null)
         );
     }
 
@@ -200,20 +191,20 @@ mod tests {
     #[test]
     fn operator_order_and_explicit_null_policy_are_honoured() {
         assert_eq!(
-            select_integrity_algorithm(0x70, &[Nia::Zuc, Nia::Snow3g, Nia::Aes]),
-            Some(Nia::Zuc)
+            select_integrity_algorithm(0x70, &[Algorithm::Zuc, Algorithm::Snow3g, Algorithm::Aes]),
+            Some(Algorithm::Zuc)
         );
         assert_eq!(
-            select_ciphering_algorithm(0x70, &[Nea::Snow3g, Nea::Zuc, Nea::Aes]),
-            Some(Nea::Snow3g)
+            select_ciphering_algorithm(0x70, &[Algorithm::Snow3g, Algorithm::Zuc, Algorithm::Aes]),
+            Some(Algorithm::Snow3g)
         );
         assert_eq!(
-            select_integrity_algorithm(0x80, &[Nia::Aes, Nia::Snow3g, Nia::Zuc]),
+            select_integrity_algorithm(0x80, &[Algorithm::Aes, Algorithm::Snow3g, Algorithm::Zuc]),
             None
         );
         assert_eq!(
-            select_integrity_algorithm(0x80, &[Nia::Null]),
-            Some(Nia::Null)
+            select_integrity_algorithm(0x80, &[Algorithm::Null]),
+            Some(Algorithm::Null)
         );
         assert_eq!(select_ciphering_algorithm(0xf0, &[]), None);
     }

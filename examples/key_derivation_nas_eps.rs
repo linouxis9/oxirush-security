@@ -18,13 +18,12 @@
 //! Demonstrate the EPS key derivation chain per TS 33.401 Annex A:
 //! CK || IK -> KASME -> KNASint / KNASenc -> KeNB -> NH
 
+use oxirush_security::identity::Algorithm;
 use oxirush_security::identity::Plmn;
 use oxirush_security::nas_eps::{
     derive_kasme, derive_kenb, derive_knas_enc, derive_knas_int, derive_nh,
 };
-use oxirush_security::{
-    Autn, CipheringAlgorithm, Ck, Ik, IntegrityAlgorithm, NasCount, SecurityError,
-};
+use oxirush_security::{Autn, Ck, Ik, NasCount, SecurityError};
 
 fn main() -> Result<(), SecurityError> {
     // Example key material; in practice CK, IK and AUTN come from EPS AKA
@@ -38,11 +37,11 @@ fn main() -> Result<(), SecurityError> {
     println!("KASME: {}", hex::encode(k_asme.as_octets()));
 
     // KASME -> KNASint, the 128-bit integrity key of the selected algorithm
-    let k_nas_int = derive_knas_int(&k_asme, IntegrityAlgorithm::EIA2);
+    let k_nas_int = derive_knas_int(&k_asme, Algorithm::Aes);
     println!("KNASint (EIA2): {}", hex::encode(k_nas_int.as_octets()));
 
     // KASME -> KNASenc, the 128-bit ciphering key of the selected algorithm
-    let k_nas_enc = derive_knas_enc(&k_asme, CipheringAlgorithm::EEA2);
+    let k_nas_enc = derive_knas_enc(&k_asme, Algorithm::Aes);
     println!("KNASenc (EEA2): {}", hex::encode(k_nas_enc.as_octets()));
 
     // KASME -> KeNB (for initial context setup), with the uplink NAS COUNT

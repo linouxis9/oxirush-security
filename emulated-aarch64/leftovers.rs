@@ -27,13 +27,14 @@
 
 use core::mem::ManuallyDrop;
 use oxirush_security::batch::{self, CipherJob, MacJob, VectorJob};
+use oxirush_security::identity::Algorithm;
 use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
 use oxirush_security::nas_5gs::{
     KAmf, KNasEnc, KNasInt, NasConnection, derive_knas_int, nas_cipher, nas_mac,
 };
 use oxirush_security::{
-    Autn, Bearer, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm,
-    IntegrityContext, NasCount, Rand, Snow3G, Zuc, constant_time_eq,
+    Autn, Bearer, CipheringContext, Direction, IntegrityContext, NasCount, Rand, Snow3G, Zuc,
+    constant_time_eq,
 };
 
 /// The key of the examples of FIPS 197, whose round keys are known.
@@ -113,16 +114,8 @@ static INTS: [KNasInt; MESSAGES] = [
     KNasInt::new(&key_of(8)),
 ];
 
-pub const CIPHERING: [CipheringAlgorithm; 3] = [
-    CipheringAlgorithm::Snow3g,
-    CipheringAlgorithm::Aes,
-    CipheringAlgorithm::Zuc,
-];
-pub const INTEGRITY: [IntegrityAlgorithm; 3] = [
-    IntegrityAlgorithm::Snow3g,
-    IntegrityAlgorithm::Aes,
-    IntegrityAlgorithm::Zuc,
-];
+pub const CIPHERING: [Algorithm; 3] = [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc];
+pub const INTEGRITY: [Algorithm; 3] = [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc];
 
 /// What an operation is, for the host to know which values to look for.
 #[derive(Clone, Copy, PartialEq)]
@@ -240,7 +233,7 @@ impl Prepared {
 
     /// Make what operation `case` takes.
     pub fn prepare(&mut self, case: usize) {
-        let (aes, cmac) = (CipheringAlgorithm::Aes, IntegrityAlgorithm::Aes);
+        let (aes, cmac) = (Algorithm::Aes, Algorithm::Aes);
         match case {
             10 => self.ciphering = Some(CipheringContext::new(&ENC, aes)),
             12 => self.integrity = Some(IntegrityContext::new(&INT, cmac)),
@@ -316,7 +309,7 @@ impl Prepared {
                 .into()
             }
             9 => {
-                let context = CipheringContext::new(&ENC, CipheringAlgorithm::Aes);
+                let context = CipheringContext::new(&ENC, Algorithm::Aes);
                 self.keep(&ManuallyDrop::new(context))
             }
             10 => match &self.ciphering {
@@ -327,7 +320,7 @@ impl Prepared {
                 None => u64::MAX,
             },
             11 => {
-                let context = IntegrityContext::new(&INT, IntegrityAlgorithm::Aes);
+                let context = IntegrityContext::new(&INT, Algorithm::Aes);
                 self.keep(&ManuallyDrop::new(context))
             }
             12 => match &self.integrity {
@@ -386,7 +379,7 @@ impl Prepared {
                 None => u64::MAX,
             },
             20 => {
-                let key = derive_knas_int(&K_AMF, IntegrityAlgorithm::Aes);
+                let key = derive_knas_int(&K_AMF, Algorithm::Aes);
                 self.keep(&ManuallyDrop::new(key))
             }
             21 => constant_time_eq(&KEY, ENC.as_octets()).into(),

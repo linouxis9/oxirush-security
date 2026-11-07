@@ -788,11 +788,12 @@ impl Zuc {
 mod tests {
     use super::{available, scalar};
     use crate::common::ct::{clmul64, clmul128};
-    use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm};
+    use crate::common::input::{Bearer, Direction};
     use crate::common::nea::{nea_cipher, nea_cipher_bits};
     use crate::common::nia::{nia_mac, nia_mac_bits};
     use crate::common::snow3g::Snow3G;
     use crate::common::zuc::Zuc;
+    use oxirush_utils::identity::Algorithm;
 
     /// The vector generator of ZUC is wiped whole: its stages, where they start, and
     /// R1 and R2.
@@ -955,11 +956,7 @@ mod tests {
             let message: Vec<u8> = (0..length).map(|_| next() as u8).collect();
             let bits = (8 * length as u64).saturating_sub(next() % 8);
 
-            for algorithm in [
-                CipheringAlgorithm::Snow3g,
-                CipheringAlgorithm::Aes,
-                CipheringAlgorithm::Zuc,
-            ] {
+            for algorithm in [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc] {
                 let (mut data, mut expected) = (message.clone(), message.clone());
                 nea_cipher(&key, count, bearer, direction, &mut data, algorithm);
                 scalar(|| nea_cipher(&key, count, bearer, direction, &mut expected, algorithm));
@@ -983,11 +980,7 @@ mod tests {
                 assert_eq!(data, expected, "{algorithm:?}, {bits} bits");
             }
 
-            for algorithm in [
-                IntegrityAlgorithm::Snow3g,
-                IntegrityAlgorithm::Aes,
-                IntegrityAlgorithm::Zuc,
-            ] {
+            for algorithm in [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc] {
                 let mac = nia_mac(&key, count, bearer, direction, &message, algorithm);
                 let expected =
                     scalar(|| nia_mac(&key, count, bearer, direction, &message, algorithm));

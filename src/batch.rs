@@ -68,7 +68,7 @@
 
 use crate::common::context::{CipheringContext, IntegrityContext};
 use crate::common::error::SecurityError;
-use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, octets_of};
+use crate::common::input::{Bearer, Direction, octets_of};
 use crate::common::keys::{CipheringKey, IntegrityKey};
 use crate::common::nea::cipher_octets;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -76,11 +76,12 @@ use crate::common::nea::nea2_instructions;
 use crate::common::nia::{BitString, mac_of_bits};
 use crate::common::wipe;
 pub use crate::milenage::batch::{AutnJob, VectorJob, authentication_vectors, check_autn};
+use oxirush_utils::identity::Algorithm;
 
 /// A message to cipher or to decipher in a batch: its key, the COUNT, the
 /// BEARER and the DIRECTION of the algorithm, its octets and its algorithm.
 pub struct CipherJob<'a> {
-    algorithm: CipheringAlgorithm,
+    algorithm: Algorithm,
     key: &'a [u8; 16],
     /// The context that the job comes from, if it comes from one.
     context: Option<&'a CipheringContext>,
@@ -104,7 +105,7 @@ impl<'a> CipherJob<'a> {
         bearer: Bearer,
         direction: Direction,
         data: &'a mut [u8],
-        algorithm: CipheringAlgorithm,
+        algorithm: Algorithm,
     ) -> Self {
         Self {
             algorithm,
@@ -155,7 +156,7 @@ impl<'a> CipherJob<'a> {
         direction: Direction,
         data: &'a mut [u8],
         bit_length: u64,
-        algorithm: CipheringAlgorithm,
+        algorithm: Algorithm,
     ) -> Result<Self, SecurityError> {
         Self::new(key, count, bearer, direction, data, algorithm).with_bits(bit_length)
     }
@@ -215,15 +216,16 @@ impl<'a> CipherJob<'a> {
 /// operation. Each call ciphers every job once more.
 ///
 /// ```
+/// use oxirush_security::identity::Algorithm;
 /// use oxirush_security::nas_5gs::{KNasEnc, NasConnection, nas_cipher};
 /// use oxirush_security::batch::{self, CipherJob};
-/// use oxirush_security::{CipheringAlgorithm, Direction, NasCount};
+/// use oxirush_security::{Direction, NasCount};
 ///
 /// // The downlink messages of two UEs, each with its key and its NAS COUNT
 /// let keys = [KNasEnc::new(&[0x11; 16]), KNasEnc::new(&[0x22; 16])];
 /// let counts = [NasCount::new(7).unwrap(), NasCount::ZERO];
 /// let (access, downlink) = (NasConnection::ThreeGpp, Direction::Downlink);
-/// let nea1 = CipheringAlgorithm::NEA1;
+/// let nea1 = Algorithm::Snow3g;
 /// let mut messages = [vec![0x7e, 0x00, 0x54, 0x43, 0x90], vec![0x7e, 0x00, 0x5d, 0x02]];
 /// let mut jobs: Vec<_> = (messages.iter_mut().zip(&keys).zip(counts))
 ///     .map(|((message, key), count)| {
@@ -245,7 +247,7 @@ pub fn cipher(jobs: &mut [CipherJob<'_>]) {
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let done = false;
 
-    let ciphered = |job: &&mut CipherJob<'_>| job.algorithm != CipheringAlgorithm::Null;
+    let ciphered = |job: &&mut CipherJob<'_>| job.algorithm != Algorithm::Null;
     if !done && jobs.iter_mut().any(|job| ciphered(&job)) {
         wipe::portable(|| {
             let ciphered = jobs.iter_mut().filter(ciphered);
@@ -260,7 +262,7 @@ pub fn cipher(jobs: &mut [CipherJob<'_>]) {
 /// A message whose MAC is computed in a batch: its key, the COUNT, the
 /// BEARER and the DIRECTION of the algorithm, its octets and its algorithm.
 pub struct MacJob<'a> {
-    algorithm: IntegrityAlgorithm,
+    algorithm: Algorithm,
     key: &'a [u8; 16],
     /// The context that the job comes from, if it comes from one.
     context: Option<&'a IntegrityContext>,
@@ -280,7 +282,7 @@ impl<'a> MacJob<'a> {
         bearer: Bearer,
         direction: Direction,
         message: &'a [u8],
-        algorithm: IntegrityAlgorithm,
+        algorithm: Algorithm,
     ) -> Self {
         Self {
             algorithm,
@@ -328,7 +330,7 @@ impl<'a> MacJob<'a> {
         direction: Direction,
         message: &'a [u8],
         bit_length: u64,
-        algorithm: IntegrityAlgorithm,
+        algorithm: Algorithm,
     ) -> Result<Self, SecurityError> {
         let mut job = Self::new(key, count, bearer, direction, message, algorithm);
         job.message = BitString::new(message, bit_length)?;
@@ -368,14 +370,15 @@ impl<'a> MacJob<'a> {
 /// returns.
 ///
 /// ```
+/// use oxirush_security::identity::Algorithm;
 /// use oxirush_security::nas_5gs::{KNasInt, NasConnection, nas_mac};
 /// use oxirush_security::batch::{self, MacJob};
-/// use oxirush_security::{Direction, IntegrityAlgorithm, NasCount};
+/// use oxirush_security::{Direction, NasCount};
 ///
 /// // The uplink messages of two UEs, each with its key, its NAS COUNT and its algorithm
 /// let keys = [KNasInt::new(&[0x44; 16]), KNasInt::new(&[0x55; 16])];
 /// let counts = [NasCount::new(7).unwrap(), NasCount::ZERO];
-/// let algorithms = [IntegrityAlgorithm::NIA2, IntegrityAlgorithm::NIA1];
+/// let algorithms = [Algorithm::Aes, Algorithm::Snow3g];
 /// let (access, uplink) = (NasConnection::ThreeGpp, Direction::Uplink);
 /// let messages = [[0x07, 0x7e, 0x00, 0x43], [0x00, 0x7e, 0x00, 0x43]];
 /// let mut jobs: Vec<_> = (0..2)
@@ -399,7 +402,7 @@ pub fn mac(jobs: &mut [MacJob<'_>]) {
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let done = false;
 
-    let null = |job: &&mut MacJob<'_>| job.algorithm == IntegrityAlgorithm::Null;
+    let null = |job: &&mut MacJob<'_>| job.algorithm == Algorithm::Null;
     jobs.iter_mut()
         .filter(null)
         .for_each(|job| job.mac = Some(0));
@@ -415,8 +418,8 @@ pub fn mac(jobs: &mut [MacJob<'_>]) {
 /// them.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod lanes {
-    use super::{CipherJob, MacJob};
-    use crate::common::input::{Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm};
+    use super::{Algorithm, CipherJob, MacJob};
+    use crate::common::input::{Bearer, Direction};
     use crate::common::nea::{eea1_key_and_iv, eea3_iv};
     use crate::common::nia::{
         BitString, CmacBlocks, CmacKey, EIA1_WORDS, Eia3, cmac_lanes, cmac_lanes_keyed,
@@ -440,7 +443,7 @@ mod lanes {
     fn mac_aes(instructions: Instructions, jobs: &mut [MacJob<'_>]) {
         let mut jobs = jobs
             .iter_mut()
-            .filter(|job| job.algorithm == IntegrityAlgorithm::Aes);
+            .filter(|job| job.algorithm == Algorithm::Aes);
         loop {
             let mut group: [Option<&mut MacJob<'_>>; AES_GROUP] = [const { None }; AES_GROUP];
             let mut count = 0;
@@ -497,9 +500,9 @@ mod lanes {
         let of = |algorithm| move |job: &&mut CipherJob<'_>| job.algorithm == algorithm;
         let count = |algorithm| jobs.iter().filter(|job| job.algorithm == algorithm).count();
         let (of_snow3g, of_zuc, of_aes) = (
-            count(CipheringAlgorithm::Snow3g),
-            count(CipheringAlgorithm::Zuc),
-            count(CipheringAlgorithm::Aes),
+            count(Algorithm::Snow3g),
+            count(Algorithm::Zuc),
+            count(Algorithm::Aes),
         );
         // The counter blocks of a message are encrypted eight at a time:
         // there is nothing that a second message would add. The work that
@@ -509,7 +512,7 @@ mod lanes {
         // Each piece of work ends with the bits of its messages that are
         // not ciphered put back: nothing follows the clearing.
         if of_aes > 0 {
-            let of_aes = jobs.iter_mut().filter(of(CipheringAlgorithm::Aes));
+            let of_aes = jobs.iter_mut().filter(of(Algorithm::Aes));
             wipe::aes(|| {
                 of_aes.for_each(|job| {
                     job.aes(instructions);
@@ -519,17 +522,17 @@ mod lanes {
         }
         if of_snow3g > 0 {
             wipe::lanes(|| {
-                let streams = jobs.iter_mut().filter(of(CipheringAlgorithm::Snow3g));
+                let streams = jobs.iter_mut().filter(of(Algorithm::Snow3g));
                 snow3g_lanes(of_snow3g, streams.map(CipherStream::snow3g));
-                let ciphered = jobs.iter_mut().filter(of(CipheringAlgorithm::Snow3g));
+                let ciphered = jobs.iter_mut().filter(of(Algorithm::Snow3g));
                 ciphered.for_each(|job| job.restore());
             });
         }
         if of_zuc > 0 {
             wipe::lanes(|| {
-                let streams = jobs.iter_mut().filter(of(CipheringAlgorithm::Zuc));
+                let streams = jobs.iter_mut().filter(of(Algorithm::Zuc));
                 zuc_lanes(of_zuc, streams.map(CipherStream::zuc));
-                let ciphered = jobs.iter_mut().filter(of(CipheringAlgorithm::Zuc));
+                let ciphered = jobs.iter_mut().filter(of(Algorithm::Zuc));
                 ciphered.for_each(|job| job.restore());
             });
         }
@@ -547,16 +550,16 @@ mod lanes {
         let of = |algorithm| move |job: &&mut MacJob<'_>| job.algorithm == algorithm;
         let count = |algorithm| jobs.iter().filter(|job| job.algorithm == algorithm).count();
         let (of_snow3g, of_zuc, of_aes) = (
-            count(IntegrityAlgorithm::Snow3g),
-            count(IntegrityAlgorithm::Zuc),
-            count(IntegrityAlgorithm::Aes),
+            count(Algorithm::Snow3g),
+            count(Algorithm::Zuc),
+            count(Algorithm::Aes),
         );
         if of_snow3g > 0 {
-            let streams = jobs.iter_mut().filter(of(IntegrityAlgorithm::Snow3g));
+            let streams = jobs.iter_mut().filter(of(Algorithm::Snow3g));
             wipe::lanes(|| snow3g_lanes(of_snow3g, streams.map(Eia1Stream::new)));
         }
         if of_zuc > 0 {
-            let streams = jobs.iter_mut().filter(of(IntegrityAlgorithm::Zuc));
+            let streams = jobs.iter_mut().filter(of(Algorithm::Zuc));
             wipe::lanes(|| zuc_lanes(of_zuc, streams.map(Eia3Stream::new)));
         }
         if of_aes > 0 {
@@ -794,7 +797,7 @@ mod tests {
                 let expected: Vec<Vec<u8>> = messages
                     .iter()
                     .map(|message| {
-                        let algorithm = CipheringAlgorithm::try_from(message.algorithm).unwrap();
+                        let algorithm = Algorithm::try_from(message.algorithm).unwrap();
                         let mut data = message.data.clone();
                         let (key, count) = (&message.key, message.count);
                         let (bearer, direction) = (message.bearer, message.direction);
@@ -814,7 +817,7 @@ mod tests {
                 let mut jobs: Vec<CipherJob<'_>> = messages
                     .iter_mut()
                     .map(|message| {
-                        let algorithm = CipheringAlgorithm::try_from(message.algorithm).unwrap();
+                        let algorithm = Algorithm::try_from(message.algorithm).unwrap();
                         let (key, count) = (&message.key, message.count);
                         let (bearer, direction) = (message.bearer, message.direction);
                         let data = &mut message.data[..];
@@ -855,7 +858,7 @@ mod tests {
                 let mut jobs: Vec<MacJob<'_>> = messages
                     .iter()
                     .map(|message| {
-                        let algorithm = IntegrityAlgorithm::try_from(message.algorithm).unwrap();
+                        let algorithm = Algorithm::try_from(message.algorithm).unwrap();
                         let (key, count) = (&message.key, message.count);
                         let (bearer, direction) = (message.bearer, message.direction);
                         match message.bits {
@@ -878,7 +881,7 @@ mod tests {
                 assert!(jobs.iter().all(|job| job.mac().is_none()));
                 super::mac(&mut jobs);
                 for (index, (message, job)) in messages.iter().zip(&jobs).enumerate() {
-                    let algorithm = IntegrityAlgorithm::try_from(message.algorithm).unwrap();
+                    let algorithm = Algorithm::try_from(message.algorithm).unwrap();
                     let bits = message.bits.unwrap_or(8 * message.data.len() as u64);
                     let expected = nia_mac_bits(
                         &message.key,
@@ -919,8 +922,8 @@ mod tests {
                     for message in &mut messages {
                         message.data = (0..length).map(|_| next() as u8).collect();
                     }
-                    let cipher = CipheringAlgorithm::try_from(algorithm).unwrap();
-                    let integrity = IntegrityAlgorithm::try_from(algorithm).unwrap();
+                    let cipher = Algorithm::try_from(algorithm).unwrap();
+                    let integrity = Algorithm::try_from(algorithm).unwrap();
 
                     let mut macs: Vec<MacJob<'_>> = messages
                         .iter()
@@ -978,7 +981,7 @@ mod tests {
                     .iter()
                     .zip(&mut data)
                     .map(|(m, data)| {
-                        let algorithm = CipheringAlgorithm::try_from(m.algorithm).unwrap();
+                        let algorithm = Algorithm::try_from(m.algorithm).unwrap();
                         CipherJob::new(&m.key, m.count, m.bearer, m.direction, data, algorithm)
                     })
                     .collect();
@@ -987,7 +990,7 @@ mod tests {
                 let mut macs: Vec<MacJob<'_>> = messages
                     .iter()
                     .map(|m| {
-                        let algorithm = IntegrityAlgorithm::try_from(m.algorithm).unwrap();
+                        let algorithm = Algorithm::try_from(m.algorithm).unwrap();
                         MacJob::new(&m.key, m.count, m.bearer, m.direction, &m.data, algorithm)
                     })
                     .collect();
@@ -1006,7 +1009,7 @@ mod tests {
         let key = [0; 16];
         let (bearer, uplink) = (Bearer::ZERO, Direction::Uplink);
         let mut data = [0u8; 2];
-        let cipher = CipheringAlgorithm::Snow3g;
+        let cipher = Algorithm::Snow3g;
         assert!(CipherJob::bits(&key, 0, bearer, uplink, &mut data, 16, cipher).is_ok());
         assert_eq!(
             CipherJob::bits(&key, 0, bearer, uplink, &mut data, 17, cipher).err(),
@@ -1015,7 +1018,7 @@ mod tests {
                 octets: 2
             })
         );
-        let integrity = IntegrityAlgorithm::Zuc;
+        let integrity = Algorithm::Zuc;
         assert!(MacJob::bits(&key, 0, bearer, uplink, &data, 16, integrity).is_ok());
         assert_eq!(
             MacJob::bits(&key, 0, bearer, uplink, &data, 17, integrity).err(),
@@ -1033,8 +1036,8 @@ mod tests {
         let count = crate::NasCount::new(0x01_0203).unwrap();
         let uplink = Direction::Uplink;
         for algorithm in 0..=3 {
-            let cipher = CipheringAlgorithm::try_from(algorithm).unwrap();
-            let integrity = IntegrityAlgorithm::try_from(algorithm).unwrap();
+            let cipher = Algorithm::try_from(algorithm).unwrap();
+            let integrity = Algorithm::try_from(algorithm).unwrap();
             let enc = nas_5gs::KNasEnc::new(&[0x11; 16]);
             let int = nas_5gs::KNasInt::new(&[0x22; 16]);
             for connection in [

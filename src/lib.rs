@@ -20,18 +20,20 @@
 //! TS 33.102, TS 33.501 and TS 33.401.
 //!
 //! ```rust
+//! use oxirush_security::identity::Algorithm;
 //! use oxirush_security::nas_5gs::{
 //!     KAmf, NasConnection, derive_knas_enc, derive_knas_int, nas_cipher, nas_mac,
 //! };
-//! use oxirush_security::{CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
+//! use oxirush_security::{Direction, NasCount};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // KAMF, the key of the AMF
 //!     let k_amf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
 //!     let k_amf = KAmf::from_slice(&hex::decode(k_amf)?)?;
 //!
-//!     // The NAS keys of the algorithms that the AMF selected
-//!     let (nea2, nia2) = (CipheringAlgorithm::NEA2, IntegrityAlgorithm::NIA2);
+//!     // The NAS keys of the algorithms that the AMF selected: 128-NEA2 and
+//!     // 128-NIA2, both AES
+//!     let (nea2, nia2) = (Algorithm::Aes, Algorithm::Aes);
 //!     let k_nas_enc = derive_knas_enc(&k_amf, nea2);
 //!     let k_nas_int = derive_knas_int(&k_amf, nia2);
 //!     println!("KNASenc {}", hex::encode(k_nas_enc.as_octets()));
@@ -149,7 +151,7 @@
 //! | RAND, AUTN | [`Rand`] and [`Autn`], built and viewed as a key is. They travel in clear: `{:?}` prints their octets, as it prints an identity whole |
 //! | SQN, AMF, MAC-A, MAC-S, AUTS | The public values of [`milenage`], built, viewed and printed as RAND is. [`milenage::Sqn`] takes a number with `try_from`, which refuses one above 2^48 - 1 |
 //! | The MAC of an AUTN or an AUTS | `Err(MacFailure)` when it is not the one that K gives |
-//! | Algorithm | [`IntegrityAlgorithm`] and [`CipheringAlgorithm`], under both names (`NIA2` and `EIA2`). `try_from(u8)` refuses 4 and above |
+//! | Algorithm | `identity::Algorithm` of oxirush-utils, which ciphering and integrity share in both systems: `Aes` is 128-NIA2, 128-NEA2, 128-EIA2 and 128-EEA2. `try_from(u8)` gives back 4 and above |
 //! | NAS COUNT | [`NasCount`], 24 bits. `next` and `estimate` refuse to wrap around |
 //! | COUNT of the KgNB and KeNB derivations | A `NasCount`, or [`AccessKeyCount::Handover`] for the 2^32 - 1 of a handover |
 //! | NAS connection of 5GS | [`nas_5gs::NasConnection`]: `ThreeGpp` (identifier 1) or `Non3Gpp` (2) |
@@ -472,9 +474,7 @@ pub use common::code::{Implementation, implementation};
 pub use common::context::{CipheringContext, IntegrityContext};
 pub use common::ct::constant_time_eq;
 pub use common::error::SecurityError;
-pub use common::input::{
-    AccessKeyCount, Bearer, CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount,
-};
+pub use common::input::{AccessKeyCount, Bearer, Direction, NasCount};
 pub use common::keys::{Autn, CipheringKey, Ck, Ik, IntegrityKey, Rand};
 pub use common::snow3g::Snow3G;
 pub use common::zuc::Zuc;

@@ -36,6 +36,7 @@
 //! environment it writes `flamegraph.svg` instead.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
+use oxirush_security::identity::Algorithm;
 use oxirush_security::identity::{Plmn, RoutingIndicator, Supi};
 use oxirush_security::nas_5gs::{
     HomeNetworkPrivateKey, HomeNetworkPublicKey, KNasEnc, KNasInt, NasConnection, Protection,
@@ -43,8 +44,7 @@ use oxirush_security::nas_5gs::{
     nas_mac,
 };
 use oxirush_security::{
-    Autn, Bearer, CipheringAlgorithm, CipheringContext, Ck, Direction, Ik, IntegrityAlgorithm,
-    IntegrityContext, NasCount,
+    Autn, Bearer, CipheringContext, Ck, Direction, Ik, IntegrityContext, NasCount,
 };
 use oxirush_security_benches::{PROFILE_A, PROFILE_B, message};
 use pprof::criterion::{Output, PProfProfiler};
@@ -60,9 +60,9 @@ fn ciphers(criterion: &mut Criterion) {
     for form in ["cipher", "cipher-context"] {
         let mut group = criterion.benchmark_group(form);
         for (name, algorithm) in [
-            ("128-EEA1", CipheringAlgorithm::Snow3g),
-            ("128-EEA2", CipheringAlgorithm::Aes),
-            ("128-EEA3", CipheringAlgorithm::Zuc),
+            ("128-EEA1", Algorithm::Snow3g),
+            ("128-EEA2", Algorithm::Aes),
+            ("128-EEA3", Algorithm::Zuc),
         ] {
             let context = CipheringContext::new(&key, algorithm);
             for octets in SIZES {
@@ -90,9 +90,9 @@ fn macs(criterion: &mut Criterion) {
     for form in ["mac", "mac-context"] {
         let mut group = criterion.benchmark_group(form);
         for (name, algorithm) in [
-            ("128-EIA1", IntegrityAlgorithm::Snow3g),
-            ("128-EIA2", IntegrityAlgorithm::Aes),
-            ("128-EIA3", IntegrityAlgorithm::Zuc),
+            ("128-EIA1", Algorithm::Snow3g),
+            ("128-EIA2", Algorithm::Aes),
+            ("128-EIA3", Algorithm::Zuc),
         ] {
             let context = IntegrityContext::new(&key, algorithm);
             for octets in SIZES {
@@ -133,7 +133,7 @@ fn key_derivations(criterion: &mut Criterion) {
         bencher.iter(|| derive_kamf(black_box(&k_seaf), supi.identity(), &[0, 0]))
     });
     group.bench_function("KNASint", |bencher| {
-        bencher.iter(|| derive_knas_int(black_box(&k_amf), IntegrityAlgorithm::NIA2))
+        bencher.iter(|| derive_knas_int(black_box(&k_amf), Algorithm::Aes))
     });
     group.finish();
 }

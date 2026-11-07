@@ -37,6 +37,7 @@
 //!
 //! usage: oxirush-security-emulated-host <guest ELF file>
 
+use oxirush_security::identity::Algorithm;
 use std::process::ExitCode;
 use unicorn_engine::unicorn_const::{Arch, Mode, Prot};
 use unicorn_engine::{Arm64CpuModel, RegisterARM64, Unicorn};
@@ -332,7 +333,7 @@ impl Left {
 /// The values that an operation of `leftovers.rs` must not leave.
 fn secrets_of(kind: Kind) -> Vec<Secret> {
     use oxirush_security::nas_5gs::{KAmf, KNasEnc, derive_knas_int};
-    use oxirush_security::{Bearer, CipheringContext, Direction, IntegrityAlgorithm, Snow3G, Zuc};
+    use oxirush_security::{Bearer, CipheringContext, Direction, Snow3G, Zuc};
     let (key, bearer) = (
         leftovers::KEY,
         Bearer::new(leftovers::BEARER).expect("five bits"),
@@ -390,7 +391,7 @@ fn secrets_of(kind: Kind) -> Vec<Secret> {
         }
         Kind::Derivation => {
             let kamf = KAmf::new(&leftovers::KAMF);
-            let derived = derive_knas_int(&kamf, IntegrityAlgorithm::Aes);
+            let derived = derive_knas_int(&kamf, Algorithm::Aes);
             // The key that is derived is the program's, in its memory
             let _ = derived;
             let s = values::s(0x69, &[&[0x02], &[0x02]]);

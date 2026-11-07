@@ -9,10 +9,11 @@ TS 33.102, TS 33.501 and TS 33.401: MILENAGE, key derivation, NAS integrity
 and ciphering, and SUCI concealment.
 
 ```rust
+use oxirush_security::identity::Algorithm;
 use oxirush_security::nas_5gs::{
     KAmf, NasConnection, derive_knas_enc, derive_knas_int, nas_cipher, nas_mac,
 };
-use oxirush_security::{CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount};
+use oxirush_security::{Direction, NasCount};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // KAMF, the key of the AMF, as the 5G AKA example below derives it
@@ -20,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let k_amf = KAmf::from_slice(&hex::decode(k_amf)?)?;
 
     // The NAS keys of the algorithms that the AMF selected
-    let (nea2, nia2) = (CipheringAlgorithm::NEA2, IntegrityAlgorithm::NIA2);
+    let (nea2, nia2) = (Algorithm::Aes, Algorithm::Aes);
     let k_nas_enc = derive_knas_enc(&k_amf, nea2);
     let k_nas_int = derive_knas_int(&k_amf, nia2);
     println!("KNASenc {}", hex::encode(k_nas_enc.as_octets()));
@@ -250,15 +251,14 @@ This is the receiving side of the first example: it checks the MAC before
 it deciphers.
 
 ```rust
+use oxirush_security::identity::Algorithm;
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, nas_cipher, nas_mac};
-use oxirush_security::{
-    CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount, constant_time_eq,
-};
+use oxirush_security::{Direction, NasCount, constant_time_eq};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let k_nas_enc = KNasEnc::from_slice(&hex::decode("f47ae570afde775373d1b313d2176f54")?)?;
     let k_nas_int = KNasInt::from_slice(&hex::decode("28ddb5356880149b9fee22f2367522a4")?)?;
-    let (nea2, nia2) = (CipheringAlgorithm::NEA2, IntegrityAlgorithm::NIA2);
+    let (nea2, nia2) = (Algorithm::Aes, Algorithm::Aes);
 
     // What came after the security header: the MAC, the sequence number and
     // the ciphered message
@@ -296,18 +296,19 @@ In EPS the functions are in `nas_eps`, and take no NAS connection: the
 BEARER of EPS NAS is zero.
 
 ```rust
+use oxirush_security::identity::Algorithm;
 use oxirush_security::nas_eps::{
     derive_kasme, derive_knas_enc, derive_knas_int, nas_cipher, nas_mac,
     service_request_short_mac,
 };
-use oxirush_security::{Autn, CipheringAlgorithm, Ck, Direction, Ik, IntegrityAlgorithm, NasCount};
+use oxirush_security::{Autn, Ck, Direction, Ik, NasCount};
 use oxirush_security::identity::Plmn;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // KASME from CK, IK, the serving network and the AUTN, then the NAS keys
     let (ck, ik, autn) = (Ck::new(&[0x11; 16]), Ik::new(&[0x22; 16]), Autn::new(&[0; 16]));
     let kasme = derive_kasme(&ck, &ik, Plmn::new("208", "93")?, &autn);
-    let (eea2, eia2) = (CipheringAlgorithm::EEA2, IntegrityAlgorithm::EIA2);
+    let (eea2, eia2) = (Algorithm::Aes, Algorithm::Aes);
     let (knas_enc, knas_int) = (derive_knas_enc(&kasme, eea2), derive_knas_int(&kasme, eia2));
 
     // An uplink EMM STATUS with cause #3 and NAS COUNT 0
@@ -391,19 +392,18 @@ would give it, and runs the keystream generators and the MAC chains of
 several jobs side by side.
 
 ```rust
+use oxirush_security::identity::Algorithm;
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection};
-use oxirush_security::{
-    CipheringAlgorithm, Direction, IntegrityAlgorithm, NasCount,
-    batch::{self, CipherJob, MacJob},
-};
+use oxirush_security::batch::{self, CipherJob, MacJob};
+use oxirush_security::{Direction, NasCount};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Three UEs: the NAS keys, the downlink NAS COUNT and the algorithms of each
     let k_nas_enc = [[0x11; 16], [0x22; 16], [0x33; 16]].each_ref().map(KNasEnc::new);
     let k_nas_int = [[0x44; 16], [0x55; 16], [0x66; 16]].each_ref().map(KNasInt::new);
     let counts = [NasCount::new(7)?, NasCount::new(0)?, NasCount::new(41)?];
-    let nea = [CipheringAlgorithm::NEA2, CipheringAlgorithm::NEA1, CipheringAlgorithm::NEA2];
-    let nia = [IntegrityAlgorithm::NIA2, IntegrityAlgorithm::NIA1, IntegrityAlgorithm::NIA2];
+    let nea = [Algorithm::Aes, Algorithm::Snow3g, Algorithm::Aes];
+    let nia = [Algorithm::Aes, Algorithm::Snow3g, Algorithm::Aes];
     let (access, downlink) = (NasConnection::ThreeGpp, Direction::Downlink);
 
     // The sequence number and the message of each
@@ -454,16 +454,14 @@ from the key alone: the round keys of AES and the subkeys of CMAC. It
 serves both directions, and its `job` goes into a batch.
 
 ```rust
+use oxirush_security::identity::Algorithm;
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection};
-use oxirush_security::{
-    CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm, IntegrityContext,
-    NasCount,
-};
+use oxirush_security::{CipheringContext, Direction, IntegrityContext, NasCount};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The contexts of a UE, made once, when its NAS keys are derived
-    let ciphering = CipheringContext::new(&KNasEnc::new(&[0x11; 16]), CipheringAlgorithm::NEA2);
-    let integrity = IntegrityContext::new(&KNasInt::new(&[0x44; 16]), IntegrityAlgorithm::NIA2);
+    let ciphering = CipheringContext::new(&KNasEnc::new(&[0x11; 16]), Algorithm::Aes);
+    let integrity = IntegrityContext::new(&KNasInt::new(&[0x44; 16]), Algorithm::Aes);
     let (access, downlink) = (NasConnection::ThreeGpp, Direction::Downlink);
 
     // Each downlink message takes the next NAS COUNT
@@ -614,10 +612,9 @@ A keyed context takes what the algorithms take: any 32-bit COUNT, a 5-bit
 BEARER and a length in bits.
 
 ```rust
+use oxirush_security::identity::Algorithm;
 use oxirush_security::nas_eps::{KNasEnc, KNasInt};
-use oxirush_security::{
-    Bearer, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm, IntegrityContext,
-};
+use oxirush_security::{Bearer, CipheringContext, Direction, IntegrityContext};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 128-EEA2 test set 1 of TS 33.401 Annex C.1.1: 253 bits. A key type
@@ -625,7 +622,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let k = KNasEnc::from_slice(&hex::decode("d3c5d592327fb11c4035c6680af8c6d1")?)?;
     let mut data = hex::decode("981ba6824c1bfb1ab485472029b71d808ce33e2cc3c0b5fc1f3de8a6dc66b1f0")?;
     let (count, bearer, downlink) = (0x398a_59b4_u32, Bearer::new(0x15)?, Direction::Downlink);
-    let context = CipheringContext::new(&k, CipheringAlgorithm::EEA2);
+    let context = CipheringContext::new(&k, Algorithm::Aes);
     context.cipher_bits(count, bearer, downlink, &mut data, 253)?;
     println!("{}", hex::encode(&data));
 
@@ -633,7 +630,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let k = KNasInt::from_slice(&hex::decode("2bd6459f82c5b300952c49104881ff48")?)?;
     let message = hex::decode("3332346263393840")?;
     let (count, bearer, uplink) = (0x38a6_f056_u32, Bearer::new(0x18)?, Direction::Uplink);
-    let context = IntegrityContext::new(&k, IntegrityAlgorithm::EIA2);
+    let context = IntegrityContext::new(&k, Algorithm::Aes);
     let mac = context.mac_bits(count, bearer, uplink, &message, 58)?;
     println!("{mac:08x}");
     Ok(())
@@ -648,41 +645,36 @@ e9fed8a63d155304d71df20bf3e82214b20ed7dad2f233dc3c22d7bdeeed8e78
 ## Select the algorithms
 
 ```rust
+use oxirush_security::identity::Algorithm;
 use oxirush_security::{
-    CipheringAlgorithm, DEFAULT_CIPHERING_PREFERENCE, DEFAULT_INTEGRITY_PREFERENCE,
-    IntegrityAlgorithm, select_ciphering_algorithm, select_integrity_algorithm,
+    DEFAULT_CIPHERING_PREFERENCE, DEFAULT_INTEGRITY_PREFERENCE, select_ciphering_algorithm,
+    select_integrity_algorithm,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The EA and IA octets of a UE security capability: EA0, EA1 and EA2, and
     // IA1 and IA2. 128-NEA2 and 128-NIA2 are AES, 128-NEA1 and 128-NIA1 SNOW 3G
-    let nia = select_integrity_algorithm(0x60, DEFAULT_INTEGRITY_PREFERENCE);
     println!("{:?}", select_ciphering_algorithm(0xe0, DEFAULT_CIPHERING_PREFERENCE));
-    println!("{nia:?}");
+    println!("{:?}", select_integrity_algorithm(0x60, DEFAULT_INTEGRITY_PREFERENCE));
 
     // An operator's order in the place of NIA2, NIA1, NIA3
-    let order = [IntegrityAlgorithm::NIA1, IntegrityAlgorithm::NIA2];
+    let order = [Algorithm::Snow3g, Algorithm::Aes];
     println!("{:?}", select_integrity_algorithm(0x60, &order));
 
-    // An identifier from a message: 4 to 7 are reserved
-    println!("{:?}", CipheringAlgorithm::try_from(2));
-    println!("{:?}", IntegrityAlgorithm::try_from(5));
-
-    // The name of an algorithm in each system, for a log
-    if let Some(selected) = nia {
-        println!("{} in 5GS, {} in EPS", selected.name_5gs(), selected.name_eps());
-    }
+    // An identity from a message, which ciphering and integrity share: 4 to 7
+    // are reserved, and given back
+    println!("{:?}", Algorithm::try_from(2));
+    println!("{:?}", Algorithm::try_from(5));
     Ok(())
 }
 ```
 
 ```text
-Some(Aes (128-NEA2/128-EEA2))
-Some(Aes (128-NIA2/128-EIA2))
-Some(Snow3g (128-NIA1/128-EIA1))
-Ok(Aes (128-NEA2/128-EEA2))
-Err(UnsupportedAlgorithm(5))
-128-NIA2 in 5GS, 128-EIA2 in EPS
+Some(Aes)
+Some(Aes)
+Some(Snow3g)
+Ok(Aes)
+Err(5)
 ```
 
 ## What an operation leaves

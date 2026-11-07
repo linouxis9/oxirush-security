@@ -33,11 +33,9 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 use oxirush_security::batch::{self, CipherJob, MacJob};
+use oxirush_security::identity::Algorithm;
 use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, nas_cipher, nas_mac};
-use oxirush_security::{
-    Bearer, CipheringAlgorithm, CipheringContext, Direction, IntegrityAlgorithm, IntegrityContext,
-    NasCount,
-};
+use oxirush_security::{Bearer, CipheringContext, Direction, IntegrityContext, NasCount};
 use oxirush_security_benches::message;
 use pprof::criterion::{Output, PProfProfiler};
 use std::hint::black_box;
@@ -57,9 +55,9 @@ fn ciphers_of<const N: usize>(criterion: &mut Criterion) {
         let mut group = criterion.benchmark_group(format!("{N}x{octets}"));
         group.throughput(Throughput::Bytes((N * octets) as u64));
         for (name, algorithm) in [
-            ("128-EEA1", CipheringAlgorithm::Snow3g),
-            ("128-EEA2", CipheringAlgorithm::Aes),
-            ("128-EEA3", CipheringAlgorithm::Zuc),
+            ("128-EEA1", Algorithm::Snow3g),
+            ("128-EEA2", Algorithm::Aes),
+            ("128-EEA3", Algorithm::Zuc),
         ] {
             let keys = keys::<N>().each_ref().map(KNasEnc::new);
             let contexts = keys
@@ -87,7 +85,7 @@ fn ciphers_of<const N: usize>(criterion: &mut Criterion) {
             });
             // A context saves the key expansion of AES, and nothing of the
             // two other algorithms
-            if algorithm != CipheringAlgorithm::Aes {
+            if algorithm != Algorithm::Aes {
                 continue;
             }
             group.bench_function(BenchmarkId::new(name, "single-context"), |bencher| {
@@ -118,9 +116,9 @@ fn macs_of<const N: usize>(criterion: &mut Criterion) {
         let mut group = criterion.benchmark_group(format!("{N}x{octets}"));
         group.throughput(Throughput::Bytes((N * octets) as u64));
         for (name, algorithm) in [
-            ("128-EIA1", IntegrityAlgorithm::Snow3g),
-            ("128-EIA2", IntegrityAlgorithm::Aes),
-            ("128-EIA3", IntegrityAlgorithm::Zuc),
+            ("128-EIA1", Algorithm::Snow3g),
+            ("128-EIA2", Algorithm::Aes),
+            ("128-EIA3", Algorithm::Zuc),
         ] {
             let keys = keys::<N>().each_ref().map(KNasInt::new);
             let contexts = keys
@@ -152,7 +150,7 @@ fn macs_of<const N: usize>(criterion: &mut Criterion) {
             });
             // A context saves the key expansion of AES and the subkeys of
             // CMAC, and nothing of the two other algorithms
-            if algorithm != IntegrityAlgorithm::Aes {
+            if algorithm != Algorithm::Aes {
                 continue;
             }
             group.bench_function(BenchmarkId::new(name, "single-context"), |bencher| {

@@ -22,11 +22,12 @@ use super::keys::{
     KRrcInt, KSeaf, KSn, KTnap, KUpEnc, KUpInt, Nh, NodeKey, ResStar, XresStar,
 };
 use crate::SecurityError;
-use crate::common::input::{AccessKeyCount, CipheringAlgorithm, IntegrityAlgorithm, NasCount};
+use crate::common::input::{AccessKeyCount, NasCount};
 use crate::common::kdf::{checked_parameter, derive, derive_algorithm_key, low_128};
 use crate::common::keys::{Autn, Ck, Ik, Rand};
 use crate::common::wipe;
 use crate::nas_eps::KAsme;
+use oxirush_utils::identity::Algorithm;
 use zeroize::Zeroizing;
 
 /// FC of the algorithm key derivation function (TS 33.501 Annex A.8).
@@ -138,15 +139,15 @@ pub fn derive_kamf(kseaf: &KSeaf, supi: &str, abba: &[u8]) -> Result<KAmf, Secur
 /// (TS 33.501 Annex A.8, algorithm type distinguisher 0x01).
 ///
 /// ```
-/// use oxirush_security::CipheringAlgorithm;
+/// use oxirush_security::identity::Algorithm;
 /// use oxirush_security::nas_5gs::{KAmf, derive_knas_enc};
 ///
 /// let k_amf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
 /// let k_amf = KAmf::from_slice(&hex::decode(k_amf).unwrap()).unwrap();
-/// let k_nas_enc = derive_knas_enc(&k_amf, CipheringAlgorithm::NEA2);
+/// let k_nas_enc = derive_knas_enc(&k_amf, Algorithm::Aes);
 /// assert_eq!(hex::encode(k_nas_enc.as_octets()), "f47ae570afde775373d1b313d2176f54");
 /// ```
-pub fn derive_knas_enc(kamf: &KAmf, algorithm: CipheringAlgorithm) -> KNasEnc {
+pub fn derive_knas_enc(kamf: &KAmf, algorithm: Algorithm) -> KNasEnc {
     wipe::derivation(|| {
         let key = derive_algorithm_key(kamf.as_octets(), FC_ALGORITHM_KEY, 0x01, algorithm.into());
         KNasEnc::new(&key)
@@ -157,15 +158,15 @@ pub fn derive_knas_enc(kamf: &KAmf, algorithm: CipheringAlgorithm) -> KNasEnc {
 /// (TS 33.501 Annex A.8, algorithm type distinguisher 0x02).
 ///
 /// ```
-/// use oxirush_security::IntegrityAlgorithm;
+/// use oxirush_security::identity::Algorithm;
 /// use oxirush_security::nas_5gs::{KAmf, derive_knas_int};
 ///
 /// let k_amf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
 /// let k_amf = KAmf::from_slice(&hex::decode(k_amf).unwrap()).unwrap();
-/// let k_nas_int = derive_knas_int(&k_amf, IntegrityAlgorithm::NIA2);
+/// let k_nas_int = derive_knas_int(&k_amf, Algorithm::Aes);
 /// assert_eq!(hex::encode(k_nas_int.as_octets()), "28ddb5356880149b9fee22f2367522a4");
 /// ```
-pub fn derive_knas_int(kamf: &KAmf, algorithm: IntegrityAlgorithm) -> KNasInt {
+pub fn derive_knas_int(kamf: &KAmf, algorithm: Algorithm) -> KNasInt {
     wipe::derivation(|| {
         let key = derive_algorithm_key(kamf.as_octets(), FC_ALGORITHM_KEY, 0x02, algorithm.into());
         KNasInt::new(&key)
@@ -305,7 +306,7 @@ pub fn derive_kn3iwf(kamf: &KAmf, ul_nas_count: NasCount) -> KN3iwf {
 /// (TS 33.401 Annex A.19), like the three functions that follow:
 /// [`nas_eps::derive_skgnb`](crate::nas_eps::derive_skgnb) gives it as a
 /// [`KGnb`].
-pub fn derive_krrc_enc(key: &impl NodeKey, algorithm: CipheringAlgorithm) -> KRrcEnc {
+pub fn derive_krrc_enc(key: &impl NodeKey, algorithm: Algorithm) -> KRrcEnc {
     wipe::derivation(|| {
         let key = derive_algorithm_key(key.key_octets(), FC_ALGORITHM_KEY, 0x03, algorithm.into());
         KRrcEnc::new(&key)
@@ -314,7 +315,7 @@ pub fn derive_krrc_enc(key: &impl NodeKey, algorithm: CipheringAlgorithm) -> KRr
 
 /// Derive KRRCint, the RRC integrity key of `algorithm`, from KgNB or KSN
 /// (TS 33.501 Annex A.8, algorithm type distinguisher 0x04).
-pub fn derive_krrc_int(key: &impl NodeKey, algorithm: IntegrityAlgorithm) -> KRrcInt {
+pub fn derive_krrc_int(key: &impl NodeKey, algorithm: Algorithm) -> KRrcInt {
     wipe::derivation(|| {
         let key = derive_algorithm_key(key.key_octets(), FC_ALGORITHM_KEY, 0x04, algorithm.into());
         KRrcInt::new(&key)
@@ -323,7 +324,7 @@ pub fn derive_krrc_int(key: &impl NodeKey, algorithm: IntegrityAlgorithm) -> KRr
 
 /// Derive KUPenc, the user plane ciphering key of `algorithm`, from KgNB
 /// or KSN (TS 33.501 Annex A.8, algorithm type distinguisher 0x05).
-pub fn derive_kup_enc(key: &impl NodeKey, algorithm: CipheringAlgorithm) -> KUpEnc {
+pub fn derive_kup_enc(key: &impl NodeKey, algorithm: Algorithm) -> KUpEnc {
     wipe::derivation(|| {
         let key = derive_algorithm_key(key.key_octets(), FC_ALGORITHM_KEY, 0x05, algorithm.into());
         KUpEnc::new(&key)
@@ -332,7 +333,7 @@ pub fn derive_kup_enc(key: &impl NodeKey, algorithm: CipheringAlgorithm) -> KUpE
 
 /// Derive KUPint, the user plane integrity key of `algorithm`, from KgNB
 /// or KSN (TS 33.501 Annex A.8, algorithm type distinguisher 0x06).
-pub fn derive_kup_int(key: &impl NodeKey, algorithm: IntegrityAlgorithm) -> KUpInt {
+pub fn derive_kup_int(key: &impl NodeKey, algorithm: Algorithm) -> KUpInt {
     wipe::derivation(|| {
         let key = derive_algorithm_key(key.key_octets(), FC_ALGORITHM_KEY, 0x06, algorithm.into());
         KUpInt::new(&key)
@@ -661,7 +662,7 @@ mod tests {
             "ca3c93d0e70afc503dd7e7661a6b4bdb56f80ebab8358ee1b4c86d952a494fcb"
         );
         assert_eq!(
-            hex::encode(derive_krrc_int(&kgnb, IntegrityAlgorithm::NIA2).as_octets()),
+            hex::encode(derive_krrc_int(&kgnb, Algorithm::Aes).as_octets()),
             "fe7a7f2bf63c9a96fcf854c507e52227"
         );
         assert_eq!(
@@ -726,10 +727,10 @@ mod tests {
         let expected =
             |kind: u8, identity: u8| *extract_128(&kdf(&key, &[0x69, kind, 0, 1, identity, 0, 1]));
         for (identity, ciphering, integrity) in [
-            (0, CipheringAlgorithm::NEA0, IntegrityAlgorithm::NIA0),
-            (1, CipheringAlgorithm::NEA1, IntegrityAlgorithm::NIA1),
-            (2, CipheringAlgorithm::NEA2, IntegrityAlgorithm::NIA2),
-            (3, CipheringAlgorithm::NEA3, IntegrityAlgorithm::NIA3),
+            (0, Algorithm::Null, Algorithm::Null),
+            (1, Algorithm::Snow3g, Algorithm::Snow3g),
+            (2, Algorithm::Aes, Algorithm::Aes),
+            (3, Algorithm::Zuc, Algorithm::Zuc),
         ] {
             assert_eq!(derive_knas_enc(&kamf, ciphering), expected(0x01, identity));
             assert_eq!(derive_knas_int(&kamf, integrity), expected(0x02, identity));
@@ -1047,11 +1048,11 @@ mod tests {
             "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4"
         );
         assert_eq!(
-            hex::encode(derive_knas_enc(&kamf, CipheringAlgorithm::NEA2).as_octets()),
+            hex::encode(derive_knas_enc(&kamf, Algorithm::Aes).as_octets()),
             "f47ae570afde775373d1b313d2176f54"
         );
         assert_eq!(
-            hex::encode(derive_knas_int(&kamf, IntegrityAlgorithm::NIA2).as_octets()),
+            hex::encode(derive_knas_int(&kamf, Algorithm::Aes).as_octets()),
             "28ddb5356880149b9fee22f2367522a4"
         );
         let kgnb = derive_kgnb(&kamf, NasCount::ZERO);
