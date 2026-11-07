@@ -2,7 +2,7 @@
 
 All notable changes to `oxirush-security` are recorded here.
 
-## 0.4.0 - Unreleased
+## 0.4.0 - 2026-11-07
 
 ### Changed
 
