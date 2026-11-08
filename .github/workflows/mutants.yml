@@ -281,11 +281,17 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-mutants@27.1.0
+      # The mutants are named by their function, and by the column of the hook of the
+      # targets other than x86-64 and AArch64, as .cargo/mutants.toml names it. simd/mod.rs
+      # has a `clear` for x86-64 and one for AArch64, of the same name: the one of x86-64
+      # is the one whose diff removes its instructions.
       - run: >-
           cargo mutants --no-config --all-features --list --json --diff
           -f src/common/wipe.rs -f src/lib.rs -f src/common/simd/mod.rs
-          -F 'Clear<DEPTH>|in after$|hooks::|allowed::|stack_pointer|mod\.rs:221:5: replace clear with \(\)$'
-          -E 'replace Clear<DEPTH>::now with|wipe\.rs:242:16:'
+          -F 'Clear<DEPTH>|in after$|hooks::|allowed::|stack_pointer|mod\.rs:.*: replace clear with \(\)$'
+          -E 'replace Clear<DEPTH>::now with|wipe\.rs:\d+:16: delete ! in Clear<DEPTH>::clear$'
+          | jq '[.[] | select((.name | endswith(": replace clear with ()") | not)
+          or (.diff | contains("vzeroall")))]'
           > leftovers-mutants.json
       - run: python3 .github/mutants-leftovers.py leftovers-mutants.json ${{ matrix.shard }} 2
       - uses: actions/upload-artifact@v4
@@ -313,9 +319,12 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-mutants@27.1.0
+      # The `clear` of AArch64, of the same name as that of x86-64: the one whose diff
+      # removes the instructions of AArch64.
       - run: >-
           cargo mutants --no-config --all-features --list --json --diff
-          -f src/common/simd/mod.rs -F 'mod\.rs:340:5: replace clear with \(\)$'
+          -f src/common/simd/mod.rs -F 'mod\.rs:.*: replace clear with \(\)$'
+          | jq '[.[] | select(.diff | contains("stp xzr, xzr"))]'
           > emulated-mutants.json
       - run: python3 .github/mutants-leftovers.py emulated-mutants.json 0 1 emulated-aarch64
       - uses: actions/upload-artifact@v4
