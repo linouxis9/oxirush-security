@@ -730,7 +730,7 @@ searches the memory for keys, round keys and keystream after each
 operation, and finds none. CI compares the vector code with the scalar code
 on x86-64, AArch64 and an emulated AArch64 processor
 ([`emulated-aarch64/`](https://github.com/linouxis9/oxirush-security/tree/master/emulated-aarch64)),
-and fuzzes the four targets of
+and fuzzes the six targets of
 [`fuzz/`](https://github.com/linouxis9/oxirush-security/tree/master/fuzz).
 The only `unsafe` code calls the vector code and clears the stack and the
 registers. `examples/` has five programs: `key_derivation_nas_5gs`,
