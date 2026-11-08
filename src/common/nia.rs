@@ -1119,31 +1119,33 @@ mod tests {
 
     #[test]
     fn nia_mac_is_each_algorithm_on_whole_octets() {
-        let key = [0x47u8; 16];
-        let msg = &[0xABu8; 11];
-        let bits = (msg.len() * 8) as u64;
-        let (count, bearer, direction) = (0x12345678, bearer(3), Direction::Downlink);
-        let mac = |algorithm| nia_mac(&key, count, bearer, direction, msg, algorithm);
+        crate::bounded(|| {
+            let key = [0x47u8; 16];
+            let msg = &[0xABu8; 11];
+            let bits = (msg.len() * 8) as u64;
+            let (count, bearer, direction) = (0x12345678, bearer(3), Direction::Downlink);
+            let mac = |algorithm| nia_mac(&key, count, bearer, direction, msg, algorithm);
 
-        let nia1 = nia1_mac(&key, count, bearer, direction, msg);
-        assert_eq!(mac(Algorithm::Snow3g), nia1);
-        assert_eq!(
-            nia1_mac_bits(&key, count, bearer, direction, msg, bits),
-            Ok(nia1)
-        );
-        let nia2 = nia2_mac(&key, count, bearer, direction, msg);
-        assert_eq!(mac(Algorithm::Aes), nia2);
-        assert_eq!(
-            nia2_mac_bits(&key, count, bearer, direction, msg, bits),
-            Ok(nia2)
-        );
-        let nia3 = nia3_mac(&key, count, bearer, direction, msg);
-        assert_eq!(mac(Algorithm::Zuc), nia3);
-        assert_eq!(
-            nia3_mac_bits(&key, count, bearer, direction, msg, bits),
-            Ok(nia3)
-        );
-        assert!(nia1 != nia2 && nia2 != nia3 && nia1 != nia3);
+            let nia1 = nia1_mac(&key, count, bearer, direction, msg);
+            assert_eq!(mac(Algorithm::Snow3g), nia1);
+            assert_eq!(
+                nia1_mac_bits(&key, count, bearer, direction, msg, bits),
+                Ok(nia1)
+            );
+            let nia2 = nia2_mac(&key, count, bearer, direction, msg);
+            assert_eq!(mac(Algorithm::Aes), nia2);
+            assert_eq!(
+                nia2_mac_bits(&key, count, bearer, direction, msg, bits),
+                Ok(nia2)
+            );
+            let nia3 = nia3_mac(&key, count, bearer, direction, msg);
+            assert_eq!(mac(Algorithm::Zuc), nia3);
+            assert_eq!(
+                nia3_mac_bits(&key, count, bearer, direction, msg, bits),
+                Ok(nia3)
+            );
+            assert!(nia1 != nia2 && nia2 != nia3 && nia1 != nia3);
+        });
     }
 
     /// The bits after `bit_length` in the last octet are not part of the
@@ -1151,78 +1153,82 @@ mod tests {
     /// of 8), with every algorithm and at every length of a short message.
     #[test]
     fn unused_bits_of_the_last_octet_are_ignored() {
-        let key: [u8; 16] = hex::decode("2bd6459f82c5b300952c49104881ff48")
-            .unwrap()
-            .try_into()
-            .unwrap();
-        let message: Vec<u8> = (0..40u8)
-            .map(|octet| octet.wrapping_mul(37) ^ 0x5a)
-            .collect();
-        for algorithm in [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc] {
-            let mac = |message: &[u8], bits| {
-                nia_mac_bits(
-                    &key,
-                    0x38a6f056,
-                    bearer(0x1f),
-                    Direction::Uplink,
-                    message,
-                    bits,
-                    algorithm,
-                )
+        crate::bounded(|| {
+            let key: [u8; 16] = hex::decode("2bd6459f82c5b300952c49104881ff48")
                 .unwrap()
-            };
-            for bits in 1..=(message.len() as u64 * 8) {
-                let octets = bits.div_ceil(8) as usize;
-                let unused = (octets as u64 * 8 - bits) as u32;
-                // The octets after the last one, and the bits after the last
-                // one, change nothing
-                let mut changed = message.clone();
-                changed[octets - 1] ^= ((1u16 << unused) - 1) as u8;
-                for octet in &mut changed[octets..] {
-                    *octet ^= 0xff;
+                .try_into()
+                .unwrap();
+            let message: Vec<u8> = (0..40u8)
+                .map(|octet| octet.wrapping_mul(37) ^ 0x5a)
+                .collect();
+            for algorithm in [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc] {
+                let mac = |message: &[u8], bits| {
+                    nia_mac_bits(
+                        &key,
+                        0x38a6f056,
+                        bearer(0x1f),
+                        Direction::Uplink,
+                        message,
+                        bits,
+                        algorithm,
+                    )
+                    .unwrap()
+                };
+                for bits in 1..=(message.len() as u64 * 8) {
+                    let octets = bits.div_ceil(8) as usize;
+                    let unused = (octets as u64 * 8 - bits) as u32;
+                    // The octets after the last one, and the bits after the last
+                    // one, change nothing
+                    let mut changed = message.clone();
+                    changed[octets - 1] ^= ((1u16 << unused) - 1) as u8;
+                    for octet in &mut changed[octets..] {
+                        *octet ^= 0xff;
+                    }
+                    assert_eq!(mac(&message, bits), mac(&changed, bits), "{bits}");
+                    // The last bit of the message does
+                    changed[octets - 1] ^= 1 << unused;
+                    assert_ne!(mac(&message, bits), mac(&changed, bits), "{bits}");
                 }
-                assert_eq!(mac(&message, bits), mac(&changed, bits), "{bits}");
-                // The last bit of the message does
-                changed[octets - 1] ^= 1 << unused;
-                assert_ne!(mac(&message, bits), mac(&changed, bits), "{bits}");
             }
-        }
+        });
     }
 
     #[test]
     fn a_bit_length_longer_than_the_message_is_an_error() {
-        let key = [0x5a; 16];
-        let message = [0xa5, 0x58];
-        let refused = Err(SecurityError::BitLengthExceedsData {
-            bits: 17,
-            octets: 2,
-        });
-        let (bearer, direction) = (Bearer::MAX, Direction::Downlink);
-        for algorithm in [
-            Algorithm::Null,
-            Algorithm::Snow3g,
-            Algorithm::Aes,
-            Algorithm::Zuc,
-        ] {
+        crate::bounded(|| {
+            let key = [0x5a; 16];
+            let message = [0xa5, 0x58];
+            let refused = Err(SecurityError::BitLengthExceedsData {
+                bits: 17,
+                octets: 2,
+            });
+            let (bearer, direction) = (Bearer::MAX, Direction::Downlink);
+            for algorithm in [
+                Algorithm::Null,
+                Algorithm::Snow3g,
+                Algorithm::Aes,
+                Algorithm::Zuc,
+            ] {
+                assert_eq!(
+                    nia_mac_bits(&key, 7, bearer, direction, &message, 17, algorithm),
+                    refused
+                );
+                assert!(nia_mac_bits(&key, 7, bearer, direction, &message, 16, algorithm).is_ok());
+                assert!(nia_mac_bits(&key, 7, bearer, direction, &[], 0, algorithm).is_ok());
+            }
             assert_eq!(
-                nia_mac_bits(&key, 7, bearer, direction, &message, 17, algorithm),
+                nia1_mac_bits(&key, 7, bearer, direction, &message, 17),
                 refused
             );
-            assert!(nia_mac_bits(&key, 7, bearer, direction, &message, 16, algorithm).is_ok());
-            assert!(nia_mac_bits(&key, 7, bearer, direction, &[], 0, algorithm).is_ok());
-        }
-        assert_eq!(
-            nia1_mac_bits(&key, 7, bearer, direction, &message, 17),
-            refused
-        );
-        assert_eq!(
-            nia2_mac_bits(&key, 7, bearer, direction, &message, 17),
-            refused
-        );
-        assert_eq!(
-            nia3_mac_bits(&key, 7, bearer, direction, &message, 17),
-            refused
-        );
-        assert!(nia1_mac_bits(&key, 7, bearer, direction, &message, u64::MAX).is_err());
+            assert_eq!(
+                nia2_mac_bits(&key, 7, bearer, direction, &message, 17),
+                refused
+            );
+            assert_eq!(
+                nia3_mac_bits(&key, 7, bearer, direction, &message, 17),
+                refused
+            );
+            assert!(nia1_mac_bits(&key, 7, bearer, direction, &message, u64::MAX).is_err());
+        });
     }
 }

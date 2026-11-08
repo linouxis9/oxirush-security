@@ -453,6 +453,28 @@ pub mod nas_eps;
 #[doc = include_str!("../README.md")]
 struct Readme;
 
+/// Runs the unit test `test` on a thread of its own, and ends the run when it takes more
+/// than 15 s: a loop of a generator or of a MAC that never ends cannot be stopped, and the
+/// run would wait for it. The tests that the mutants of such a loop hold are bounded so.
+#[cfg(test)]
+fn bounded(test: impl FnOnce() + Send + 'static) {
+    use std::io::Write;
+    let name = std::thread::current().name().unwrap_or("a test").to_owned();
+    let (done, finished) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        test();
+        let _ = done.send(());
+    });
+    let bound = core::time::Duration::from_secs(15);
+    if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = finished.recv_timeout(bound) {
+        let _ = writeln!(std::io::stderr(), "{name} still runs after {bound:?}");
+        std::process::exit(101);
+    }
+    if let Err(panic) = thread.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
 /// The key derivation function of TS 33.220 Annex B.2, of which every
 /// derivation of [`nas_5gs`] and of [`nas_eps`] is a use: for a
 /// derivation that the crate does not have.

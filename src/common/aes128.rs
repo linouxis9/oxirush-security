@@ -317,7 +317,9 @@ mod tests {
         let aes = Aes128::new(&key);
         let prefix = [0x39, 0x8a, 0x59, 0xb4, 0xac, 0, 0, 0];
         let text: [u8; 301] = core::array::from_fn(|at| (at as u8).wrapping_mul(7));
-        for length in (0..=145).chain([255, 256, 257, 300, 301]) {
+        // No octet last: a loop of blocks that runs while there is none, which never ends
+        // there, leaves the octets of the others as they were first
+        for length in (1..=145).chain([255, 256, 257, 300, 301, 0]) {
             // Each block from the encryption of its counter block
             let mut expected = text;
             for (number, octets) in expected[..length].chunks_mut(16).enumerate() {

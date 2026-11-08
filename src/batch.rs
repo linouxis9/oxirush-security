@@ -786,7 +786,9 @@ mod tests {
 
     #[test]
     fn a_batch_ciphers_each_message_as_the_function_of_one_message_does() {
-        on_every_path(ciphers_as_one_message);
+        crate::bounded(|| {
+            on_every_path(ciphers_as_one_message);
+        });
     }
 
     fn ciphers_as_one_message() {
@@ -847,7 +849,9 @@ mod tests {
 
     #[test]
     fn a_batch_gives_each_message_the_mac_of_the_function_of_one_message() {
-        on_every_path(macs_as_one_message);
+        crate::bounded(|| {
+            on_every_path(macs_as_one_message);
+        });
     }
 
     fn macs_as_one_message() {
@@ -910,7 +914,9 @@ mod tests {
     /// generators at work together from the first clock to the last.
     #[test]
     fn a_batch_of_equal_messages_is_the_messages_one_by_one() {
-        on_every_path(equal_messages_one_by_one);
+        crate::bounded(|| {
+            on_every_path(equal_messages_one_by_one);
+        });
     }
 
     fn equal_messages_one_by_one() {
@@ -971,37 +977,39 @@ mod tests {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn a_batch_is_the_same_on_every_path() {
-        use crate::common::simd::{narrow, scalar};
-        let mut next = random(0x082e_fa98_ec4e_6c89);
-        for size in BATCHES.into_iter().cycle().take(20 * BATCHES.len()) {
-            let messages = messages(&mut next, size);
-            let run = || {
-                let mut data: Vec<Vec<u8>> = messages.iter().map(|m| m.data.clone()).collect();
-                let mut ciphers: Vec<CipherJob<'_>> = messages
-                    .iter()
-                    .zip(&mut data)
-                    .map(|(m, data)| {
-                        let algorithm = Algorithm::try_from(m.algorithm).unwrap();
-                        CipherJob::new(&m.key, m.count, m.bearer, m.direction, data, algorithm)
-                    })
-                    .collect();
-                super::cipher(&mut ciphers);
-                drop(ciphers);
-                let mut macs: Vec<MacJob<'_>> = messages
-                    .iter()
-                    .map(|m| {
-                        let algorithm = Algorithm::try_from(m.algorithm).unwrap();
-                        MacJob::new(&m.key, m.count, m.bearer, m.direction, &m.data, algorithm)
-                    })
-                    .collect();
-                super::mac(&mut macs);
-                let macs: Vec<Option<u32>> = macs.iter().map(MacJob::mac).collect();
-                (data, macs)
-            };
-            let expected = scalar(run);
-            assert_eq!(narrow(run), expected, "{size} messages, four generators");
-            assert_eq!(run(), expected, "{size} messages");
-        }
+        crate::bounded(|| {
+            use crate::common::simd::{narrow, scalar};
+            let mut next = random(0x082e_fa98_ec4e_6c89);
+            for size in BATCHES.into_iter().cycle().take(20 * BATCHES.len()) {
+                let messages = messages(&mut next, size);
+                let run = || {
+                    let mut data: Vec<Vec<u8>> = messages.iter().map(|m| m.data.clone()).collect();
+                    let mut ciphers: Vec<CipherJob<'_>> = messages
+                        .iter()
+                        .zip(&mut data)
+                        .map(|(m, data)| {
+                            let algorithm = Algorithm::try_from(m.algorithm).unwrap();
+                            CipherJob::new(&m.key, m.count, m.bearer, m.direction, data, algorithm)
+                        })
+                        .collect();
+                    super::cipher(&mut ciphers);
+                    drop(ciphers);
+                    let mut macs: Vec<MacJob<'_>> = messages
+                        .iter()
+                        .map(|m| {
+                            let algorithm = Algorithm::try_from(m.algorithm).unwrap();
+                            MacJob::new(&m.key, m.count, m.bearer, m.direction, &m.data, algorithm)
+                        })
+                        .collect();
+                    super::mac(&mut macs);
+                    let macs: Vec<Option<u32>> = macs.iter().map(MacJob::mac).collect();
+                    (data, macs)
+                };
+                let expected = scalar(run);
+                assert_eq!(narrow(run), expected, "{size} messages, four generators");
+                assert_eq!(run(), expected, "{size} messages");
+            }
+        });
     }
 
     #[test]
@@ -1033,27 +1041,54 @@ mod tests {
     /// connection in 5GS and of BEARER 0 in EPS.
     #[test]
     fn the_jobs_of_nas_messages_give_what_the_nas_functions_give() {
-        let count = crate::NasCount::new(0x01_0203).unwrap();
-        let uplink = Direction::Uplink;
-        for algorithm in 0..=3 {
-            let cipher = Algorithm::try_from(algorithm).unwrap();
-            let integrity = Algorithm::try_from(algorithm).unwrap();
-            let enc = nas_5gs::KNasEnc::new(&[0x11; 16]);
-            let int = nas_5gs::KNasInt::new(&[0x22; 16]);
-            for connection in [
-                nas_5gs::NasConnection::ThreeGpp,
-                nas_5gs::NasConnection::Non3Gpp,
-            ] {
-                let mut expected = *b"a 5GS NAS message";
-                nas_5gs::nas_cipher(&enc, count, connection, uplink, &mut expected, cipher);
-                let mac = nas_5gs::nas_mac(&int, count, connection, uplink, &expected, integrity);
+        crate::bounded(|| {
+            let count = crate::NasCount::new(0x01_0203).unwrap();
+            let uplink = Direction::Uplink;
+            for algorithm in 0..=3 {
+                let cipher = Algorithm::try_from(algorithm).unwrap();
+                let integrity = Algorithm::try_from(algorithm).unwrap();
+                let enc = nas_5gs::KNasEnc::new(&[0x11; 16]);
+                let int = nas_5gs::KNasInt::new(&[0x22; 16]);
+                for connection in [
+                    nas_5gs::NasConnection::ThreeGpp,
+                    nas_5gs::NasConnection::Non3Gpp,
+                ] {
+                    let mut expected = *b"a 5GS NAS message";
+                    nas_5gs::nas_cipher(&enc, count, connection, uplink, &mut expected, cipher);
+                    let mac =
+                        nas_5gs::nas_mac(&int, count, connection, uplink, &expected, integrity);
 
-                let mut data = [*b"a 5GS NAS message"; 5];
+                    let mut data = [*b"a 5GS NAS message"; 5];
+                    let mut jobs: Vec<_> = data
+                        .iter_mut()
+                        .map(|data| {
+                            let bearer = connection.into();
+                            CipherJob::new(&enc, count.get(), bearer, uplink, data, cipher)
+                        })
+                        .collect();
+                    super::cipher(&mut jobs);
+                    assert_eq!(data, [expected; 5]);
+                    let mut jobs: Vec<_> = data
+                        .iter()
+                        .map(|data| {
+                            let bearer = connection.into();
+                            MacJob::new(&int, count.get(), bearer, uplink, data, integrity)
+                        })
+                        .collect();
+                    super::mac(&mut jobs);
+                    assert!(jobs.iter().all(|job| job.mac() == Some(mac)));
+                }
+
+                let enc = nas_eps::KNasEnc::new(&[0x11; 16]);
+                let int = nas_eps::KNasInt::new(&[0x22; 16]);
+                let mut expected = *b"an EPS NAS message";
+                nas_eps::nas_cipher(&enc, count, uplink, &mut expected, cipher);
+                let mac = nas_eps::nas_mac(&int, count, uplink, &expected, integrity);
+                let mut data = [*b"an EPS NAS message"; 5];
                 let mut jobs: Vec<_> = data
                     .iter_mut()
                     .map(|data| {
-                        let bearer = connection.into();
-                        CipherJob::new(&enc, count.get(), bearer, uplink, data, cipher)
+                        CipherJob::new(&enc, count.get(), Bearer::ZERO, uplink, data, cipher)
                     })
                     .collect();
                 super::cipher(&mut jobs);
@@ -1061,32 +1096,12 @@ mod tests {
                 let mut jobs: Vec<_> = data
                     .iter()
                     .map(|data| {
-                        let bearer = connection.into();
-                        MacJob::new(&int, count.get(), bearer, uplink, data, integrity)
+                        MacJob::new(&int, count.get(), Bearer::ZERO, uplink, data, integrity)
                     })
                     .collect();
                 super::mac(&mut jobs);
                 assert!(jobs.iter().all(|job| job.mac() == Some(mac)));
             }
-
-            let enc = nas_eps::KNasEnc::new(&[0x11; 16]);
-            let int = nas_eps::KNasInt::new(&[0x22; 16]);
-            let mut expected = *b"an EPS NAS message";
-            nas_eps::nas_cipher(&enc, count, uplink, &mut expected, cipher);
-            let mac = nas_eps::nas_mac(&int, count, uplink, &expected, integrity);
-            let mut data = [*b"an EPS NAS message"; 5];
-            let mut jobs: Vec<_> = data
-                .iter_mut()
-                .map(|data| CipherJob::new(&enc, count.get(), Bearer::ZERO, uplink, data, cipher))
-                .collect();
-            super::cipher(&mut jobs);
-            assert_eq!(data, [expected; 5]);
-            let mut jobs: Vec<_> = data
-                .iter()
-                .map(|data| MacJob::new(&int, count.get(), Bearer::ZERO, uplink, data, integrity))
-                .collect();
-            super::mac(&mut jobs);
-            assert!(jobs.iter().all(|job| job.mac() == Some(mac)));
-        }
+        });
     }
 }

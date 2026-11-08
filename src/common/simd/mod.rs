@@ -826,30 +826,32 @@ mod tests {
     /// 128-EIA3.
     #[test]
     fn what_wipes_itself_is_zero_once_dropped() {
-        use crate::common::nia::{BitString, Eia3};
-        use core::mem::ManuallyDrop;
-        let mut words = [0; 4];
-        let mut snow3g = ManuallyDrop::new(Snow3G::start([1, 2, 3, 4], [5, 6, 7, 8]));
-        snow3g.fill(&mut words);
-        let mut zuc = ManuallyDrop::new(Zuc::new(&[1; 16], &[2; 16]));
-        zuc.fill(&mut words);
-        let message = [0x5a; 9];
-        let mut eia3 = ManuallyDrop::new(Eia3::new(BitString::whole(&message)));
-        let keystream: Vec<u32> = (1..=eia3.words() as u32)
-            .map(|i| 0x9e37_79b9u32.wrapping_mul(i))
-            .collect();
-        eia3.take(&keystream);
-        assert!(!snow3g.is_wiped() && !zuc.is_wiped() && !eia3.is_wiped());
-        // SAFETY: each value is dropped once and only read after: its fields
-        // are integers, which its drop sets to zero and leaves in place.
-        unsafe {
-            ManuallyDrop::drop(&mut snow3g);
-            ManuallyDrop::drop(&mut zuc);
-            ManuallyDrop::drop(&mut eia3);
-        }
-        assert!(snow3g.is_wiped());
-        assert!(zuc.is_wiped());
-        assert!(eia3.is_wiped());
+        crate::bounded(|| {
+            use crate::common::nia::{BitString, Eia3};
+            use core::mem::ManuallyDrop;
+            let mut words = [0; 4];
+            let mut snow3g = ManuallyDrop::new(Snow3G::start([1, 2, 3, 4], [5, 6, 7, 8]));
+            snow3g.fill(&mut words);
+            let mut zuc = ManuallyDrop::new(Zuc::new(&[1; 16], &[2; 16]));
+            zuc.fill(&mut words);
+            let message = [0x5a; 9];
+            let mut eia3 = ManuallyDrop::new(Eia3::new(BitString::whole(&message)));
+            let keystream: Vec<u32> = (1..=eia3.words() as u32)
+                .map(|i| 0x9e37_79b9u32.wrapping_mul(i))
+                .collect();
+            eia3.take(&keystream);
+            assert!(!snow3g.is_wiped() && !zuc.is_wiped() && !eia3.is_wiped());
+            // SAFETY: each value is dropped once and only read after: its fields
+            // are integers, which its drop sets to zero and leaves in place.
+            unsafe {
+                ManuallyDrop::drop(&mut snow3g);
+                ManuallyDrop::drop(&mut zuc);
+                ManuallyDrop::drop(&mut eia3);
+            }
+            assert!(snow3g.is_wiped());
+            assert!(zuc.is_wiped());
+            assert!(eia3.is_wiped());
+        });
     }
 
     /// The instructions are found where the vector paths are, and not where
@@ -943,54 +945,57 @@ mod tests {
     /// number of bits of the last octet.
     #[test]
     fn the_six_algorithms_give_the_same_on_both_paths() {
-        vector_path();
-        let mut next = random(0xd1b5_4a32_d192_ed03);
-        let lengths = (0..=300).chain([511, 512, 513, 767, 768, 1500, 2999, 3000]);
-        for length in lengths {
-            let key: [u8; 16] = octets(&mut next);
-            let count = next() as u32;
-            let bearer = Bearer::new((next() % 32) as u8).unwrap();
-            let direction = Direction::try_from((next() % 2) as u8).unwrap();
-            let message: Vec<u8> = (0..length).map(|_| next() as u8).collect();
-            let bits = (8 * length as u64).saturating_sub(next() % 8);
+        crate::bounded(|| {
+            vector_path();
+            let mut next = random(0xd1b5_4a32_d192_ed03);
+            let lengths = (0..=300).chain([511, 512, 513, 767, 768, 1500, 2999, 3000]);
+            for length in lengths {
+                let key: [u8; 16] = octets(&mut next);
+                let count = next() as u32;
+                let bearer = Bearer::new((next() % 32) as u8).unwrap();
+                let direction = Direction::try_from((next() % 2) as u8).unwrap();
+                let message: Vec<u8> = (0..length).map(|_| next() as u8).collect();
+                let bits = (8 * length as u64).saturating_sub(next() % 8);
 
-            for algorithm in [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc] {
-                let (mut data, mut expected) = (message.clone(), message.clone());
-                nea_cipher(&key, count, bearer, direction, &mut data, algorithm);
-                scalar(|| nea_cipher(&key, count, bearer, direction, &mut expected, algorithm));
-                assert_eq!(data, expected, "{algorithm:?}, {length} octets");
+                for algorithm in [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc] {
+                    let (mut data, mut expected) = (message.clone(), message.clone());
+                    nea_cipher(&key, count, bearer, direction, &mut data, algorithm);
+                    scalar(|| nea_cipher(&key, count, bearer, direction, &mut expected, algorithm));
+                    assert_eq!(data, expected, "{algorithm:?}, {length} octets");
 
-                let (mut data, mut expected) = (message.clone(), message.clone());
-                nea_cipher_bits(&key, count, bearer, direction, &mut data, bits, algorithm)
+                    let (mut data, mut expected) = (message.clone(), message.clone());
+                    nea_cipher_bits(&key, count, bearer, direction, &mut data, bits, algorithm)
+                        .unwrap();
+                    scalar(|| {
+                        nea_cipher_bits(
+                            &key,
+                            count,
+                            bearer,
+                            direction,
+                            &mut expected,
+                            bits,
+                            algorithm,
+                        )
+                    })
                     .unwrap();
-                scalar(|| {
-                    nea_cipher_bits(
-                        &key,
-                        count,
-                        bearer,
-                        direction,
-                        &mut expected,
-                        bits,
-                        algorithm,
-                    )
-                })
-                .unwrap();
-                assert_eq!(data, expected, "{algorithm:?}, {bits} bits");
-            }
+                    assert_eq!(data, expected, "{algorithm:?}, {bits} bits");
+                }
 
-            for algorithm in [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc] {
-                let mac = nia_mac(&key, count, bearer, direction, &message, algorithm);
-                let expected =
-                    scalar(|| nia_mac(&key, count, bearer, direction, &message, algorithm));
-                assert_eq!(mac, expected, "{algorithm:?}, {length} octets");
+                for algorithm in [Algorithm::Snow3g, Algorithm::Aes, Algorithm::Zuc] {
+                    let mac = nia_mac(&key, count, bearer, direction, &message, algorithm);
+                    let expected =
+                        scalar(|| nia_mac(&key, count, bearer, direction, &message, algorithm));
+                    assert_eq!(mac, expected, "{algorithm:?}, {length} octets");
 
-                let mac = nia_mac_bits(&key, count, bearer, direction, &message, bits, algorithm);
-                let expected = scalar(|| {
-                    nia_mac_bits(&key, count, bearer, direction, &message, bits, algorithm)
-                });
-                assert_eq!(mac, expected, "{algorithm:?}, {bits} bits");
+                    let mac =
+                        nia_mac_bits(&key, count, bearer, direction, &message, bits, algorithm);
+                    let expected = scalar(|| {
+                        nia_mac_bits(&key, count, bearer, direction, &message, bits, algorithm)
+                    });
+                    assert_eq!(mac, expected, "{algorithm:?}, {bits} bits");
+                }
             }
-        }
+        });
     }
 
     #[test]

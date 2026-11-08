@@ -475,39 +475,41 @@ mod tests {
 
     #[test]
     fn an_integrity_context_gives_the_macs_of_the_function() {
-        on_every_code(|| {
-            for identifier in 0..=3 {
-                let algorithm = Algorithm::try_from(identifier).unwrap();
-                let key: [u8; 16] = octets(identifier.into(), 16).try_into().unwrap();
-                let context = IntegrityContext::new(&key, algorithm);
-                assert_eq!(context.algorithm(), algorithm);
-                for (index, length) in LENGTHS.into_iter().enumerate() {
-                    let message = octets(length as u32 + 7, length);
-                    let count = 0xfedc_ba00 + index as u32;
-                    let bearer = Bearer::new(index as u8 * 2).unwrap();
-                    for direction in [Direction::Uplink, Direction::Downlink] {
-                        assert_eq!(
-                            context.mac(count, bearer, direction, &message),
-                            nia_mac(&key, count, bearer, direction, &message, algorithm),
-                            "{algorithm:?} of {length} octets"
-                        );
-                        for bits in (8 * length as u64).saturating_sub(9)..=8 * length as u64 {
+        crate::bounded(|| {
+            on_every_code(|| {
+                for identifier in 0..=3 {
+                    let algorithm = Algorithm::try_from(identifier).unwrap();
+                    let key: [u8; 16] = octets(identifier.into(), 16).try_into().unwrap();
+                    let context = IntegrityContext::new(&key, algorithm);
+                    assert_eq!(context.algorithm(), algorithm);
+                    for (index, length) in LENGTHS.into_iter().enumerate() {
+                        let message = octets(length as u32 + 7, length);
+                        let count = 0xfedc_ba00 + index as u32;
+                        let bearer = Bearer::new(index as u8 * 2).unwrap();
+                        for direction in [Direction::Uplink, Direction::Downlink] {
                             assert_eq!(
-                                context.mac_bits(count, bearer, direction, &message, bits),
-                                nia_mac_bits(
-                                    &key, count, bearer, direction, &message, bits, algorithm
-                                ),
-                                "{algorithm:?} of {bits} bits"
+                                context.mac(count, bearer, direction, &message),
+                                nia_mac(&key, count, bearer, direction, &message, algorithm),
+                                "{algorithm:?} of {length} octets"
                             );
+                            for bits in (8 * length as u64).saturating_sub(9)..=8 * length as u64 {
+                                assert_eq!(
+                                    context.mac_bits(count, bearer, direction, &message, bits),
+                                    nia_mac_bits(
+                                        &key, count, bearer, direction, &message, bits, algorithm
+                                    ),
+                                    "{algorithm:?} of {bits} bits"
+                                );
+                            }
                         }
                     }
+                    let bits = 8 * 4 + 1;
+                    assert_eq!(
+                        context.mac_bits(0u32, Bearer::ZERO, Direction::Uplink, &[0; 4], bits),
+                        Err(SecurityError::BitLengthExceedsData { bits, octets: 4 })
+                    );
                 }
-                let bits = 8 * 4 + 1;
-                assert_eq!(
-                    context.mac_bits(0u32, Bearer::ZERO, Direction::Uplink, &[0; 4], bits),
-                    Err(SecurityError::BitLengthExceedsData { bits, octets: 4 })
-                );
-            }
+            });
         });
     }
 
@@ -571,116 +573,118 @@ mod tests {
     #[cfg(feature = "batch")]
     #[test]
     fn the_jobs_of_contexts_are_computed_in_a_batch() {
-        on_every_code(|| {
-            let keys: Vec<[u8; 16]> = (0..24).map(|index| [index as u8 + 1; 16]).collect();
-            let messages: Vec<Vec<u8>> = (0..24)
-                .map(|index| octets(index, 3 * index as usize))
-                .collect();
-            let integrity = |index: usize| Algorithm::try_from(index as u8 % 4).unwrap();
-            let ciphering = |index: usize| Algorithm::try_from(index as u8 % 4).unwrap();
-            let (bearer, direction) = (Bearer::new(3).unwrap(), Direction::Downlink);
+        crate::bounded(|| {
+            on_every_code(|| {
+                let keys: Vec<[u8; 16]> = (0..24).map(|index| [index as u8 + 1; 16]).collect();
+                let messages: Vec<Vec<u8>> = (0..24)
+                    .map(|index| octets(index, 3 * index as usize))
+                    .collect();
+                let integrity = |index: usize| Algorithm::try_from(index as u8 % 4).unwrap();
+                let ciphering = |index: usize| Algorithm::try_from(index as u8 % 4).unwrap();
+                let (bearer, direction) = (Bearer::new(3).unwrap(), Direction::Downlink);
 
-            let contexts: Vec<IntegrityContext> = (0..24)
-                .map(|index| IntegrityContext::new(&keys[index], integrity(index)))
-                .collect();
-            let mut jobs: Vec<MacJob<'_>> = (0..24)
-                .map(|index| {
-                    let (count, message) = (index as u32, &messages[index][..]);
-                    // Every third message has the octets of its key, and
-                    // every fifth the first bits of its message
-                    if index % 3 == 0 {
-                        MacJob::new(
-                            &keys[index],
-                            count,
-                            bearer,
-                            direction,
-                            message,
-                            integrity(index),
-                        )
-                    } else if index % 5 == 0 {
-                        let bits = 8 * message.len() as u64 - 3;
-                        contexts[index]
-                            .job_bits(count, bearer, direction, message, bits)
-                            .unwrap()
-                    } else {
-                        contexts[index].job(count, bearer, direction, message)
-                    }
-                })
-                .collect();
-            batch::mac(&mut jobs);
-            for (index, job) in jobs.iter().enumerate() {
-                let message = &messages[index];
-                let bits = match index {
-                    index if index % 3 != 0 && index % 5 == 0 => 8 * message.len() as u64 - 3,
-                    _ => 8 * message.len() as u64,
-                };
-                let algorithm = integrity(index);
-                let expected = nia_mac_bits(
-                    &keys[index],
-                    index as u32,
-                    bearer,
-                    direction,
-                    message,
-                    bits,
-                    algorithm,
+                let contexts: Vec<IntegrityContext> = (0..24)
+                    .map(|index| IntegrityContext::new(&keys[index], integrity(index)))
+                    .collect();
+                let mut jobs: Vec<MacJob<'_>> = (0..24)
+                    .map(|index| {
+                        let (count, message) = (index as u32, &messages[index][..]);
+                        // Every third message has the octets of its key, and
+                        // every fifth the first bits of its message
+                        if index % 3 == 0 {
+                            MacJob::new(
+                                &keys[index],
+                                count,
+                                bearer,
+                                direction,
+                                message,
+                                integrity(index),
+                            )
+                        } else if index % 5 == 0 {
+                            let bits = 8 * message.len() as u64 - 3;
+                            contexts[index]
+                                .job_bits(count, bearer, direction, message, bits)
+                                .unwrap()
+                        } else {
+                            contexts[index].job(count, bearer, direction, message)
+                        }
+                    })
+                    .collect();
+                batch::mac(&mut jobs);
+                for (index, job) in jobs.iter().enumerate() {
+                    let message = &messages[index];
+                    let bits = match index {
+                        index if index % 3 != 0 && index % 5 == 0 => 8 * message.len() as u64 - 3,
+                        _ => 8 * message.len() as u64,
+                    };
+                    let algorithm = integrity(index);
+                    let expected = nia_mac_bits(
+                        &keys[index],
+                        index as u32,
+                        bearer,
+                        direction,
+                        message,
+                        bits,
+                        algorithm,
+                    );
+                    assert_eq!(job.mac(), expected.ok(), "message {index}, {algorithm:?}");
+                }
+
+                let contexts: Vec<CipheringContext> = (0..24)
+                    .map(|index| CipheringContext::new(&keys[index], ciphering(index)))
+                    .collect();
+                let mut data = messages.clone();
+                let mut jobs: Vec<CipherJob<'_>> = data
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(index, data)| {
+                        let count = index as u32;
+                        if index % 3 == 0 {
+                            CipherJob::new(
+                                &keys[index],
+                                count,
+                                bearer,
+                                direction,
+                                data,
+                                ciphering(index),
+                            )
+                        } else if index % 5 == 0 {
+                            let bits = 8 * data.len() as u64 - 3;
+                            contexts[index]
+                                .job_bits(count, bearer, direction, data, bits)
+                                .unwrap()
+                        } else {
+                            contexts[index].job(count, bearer, direction, data)
+                        }
+                    })
+                    .collect();
+                batch::cipher(&mut jobs);
+                for (index, data) in data.iter().enumerate() {
+                    let mut expected = messages[index].clone();
+                    let bits = match index {
+                        index if index % 3 != 0 && index % 5 == 0 => 8 * expected.len() as u64 - 3,
+                        _ => 8 * expected.len() as u64,
+                    };
+                    let algorithm = ciphering(index);
+                    nea_cipher_bits(
+                        &keys[index],
+                        index as u32,
+                        bearer,
+                        direction,
+                        &mut expected,
+                        bits,
+                        algorithm,
+                    )
+                    .unwrap();
+                    assert_eq!(data, &expected, "message {index}, {algorithm:?}");
+                }
+                let mut short = [0u8; 2];
+                assert!(
+                    contexts[1]
+                        .job_bits(0u32, bearer, direction, &mut short, 17)
+                        .is_err()
                 );
-                assert_eq!(job.mac(), expected.ok(), "message {index}, {algorithm:?}");
-            }
-
-            let contexts: Vec<CipheringContext> = (0..24)
-                .map(|index| CipheringContext::new(&keys[index], ciphering(index)))
-                .collect();
-            let mut data = messages.clone();
-            let mut jobs: Vec<CipherJob<'_>> = data
-                .iter_mut()
-                .enumerate()
-                .map(|(index, data)| {
-                    let count = index as u32;
-                    if index % 3 == 0 {
-                        CipherJob::new(
-                            &keys[index],
-                            count,
-                            bearer,
-                            direction,
-                            data,
-                            ciphering(index),
-                        )
-                    } else if index % 5 == 0 {
-                        let bits = 8 * data.len() as u64 - 3;
-                        contexts[index]
-                            .job_bits(count, bearer, direction, data, bits)
-                            .unwrap()
-                    } else {
-                        contexts[index].job(count, bearer, direction, data)
-                    }
-                })
-                .collect();
-            batch::cipher(&mut jobs);
-            for (index, data) in data.iter().enumerate() {
-                let mut expected = messages[index].clone();
-                let bits = match index {
-                    index if index % 3 != 0 && index % 5 == 0 => 8 * expected.len() as u64 - 3,
-                    _ => 8 * expected.len() as u64,
-                };
-                let algorithm = ciphering(index);
-                nea_cipher_bits(
-                    &keys[index],
-                    index as u32,
-                    bearer,
-                    direction,
-                    &mut expected,
-                    bits,
-                    algorithm,
-                )
-                .unwrap();
-                assert_eq!(data, &expected, "message {index}, {algorithm:?}");
-            }
-            let mut short = [0u8; 2];
-            assert!(
-                contexts[1]
-                    .job_bits(0u32, bearer, direction, &mut short, 17)
-                    .is_err()
-            );
+            });
         });
     }
 

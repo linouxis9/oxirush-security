@@ -196,28 +196,30 @@ mod tests {
 
     #[test]
     fn eps_nas_uses_the_algorithms_with_bearer_zero() {
-        let (int, enc) = (KNasInt::new(&[0x23; 16]), KNasEnc::new(&[0x23; 16]));
-        let mut payload = b"EPS NAS security".to_vec();
-        let (count, uplink) = (NasCount::from_parts(0, 10), Direction::Uplink);
-        for (integrity, ciphering) in [
-            (Algorithm::Null, Algorithm::Null),
-            (Algorithm::Snow3g, Algorithm::Snow3g),
-            (Algorithm::Aes, Algorithm::Aes),
-            (Algorithm::Zuc, Algorithm::Zuc),
-        ] {
-            let mac = nas_mac(&int, count, uplink, &payload, integrity);
-            assert_eq!(
-                mac,
-                nia_mac(&int, 10, Bearer::ZERO, uplink, &payload, integrity)
-            );
-            let original = payload.clone();
-            nas_cipher(&enc, count, uplink, &mut payload, ciphering);
-            let mut expected = original.clone();
-            nea_cipher(&enc, 10, Bearer::ZERO, uplink, &mut expected, ciphering);
-            assert_eq!(payload, expected);
-            nas_cipher(&enc, count, uplink, &mut payload, ciphering);
-            assert_eq!(payload, original);
-        }
+        crate::bounded(|| {
+            let (int, enc) = (KNasInt::new(&[0x23; 16]), KNasEnc::new(&[0x23; 16]));
+            let mut payload = b"EPS NAS security".to_vec();
+            let (count, uplink) = (NasCount::from_parts(0, 10), Direction::Uplink);
+            for (integrity, ciphering) in [
+                (Algorithm::Null, Algorithm::Null),
+                (Algorithm::Snow3g, Algorithm::Snow3g),
+                (Algorithm::Aes, Algorithm::Aes),
+                (Algorithm::Zuc, Algorithm::Zuc),
+            ] {
+                let mac = nas_mac(&int, count, uplink, &payload, integrity);
+                assert_eq!(
+                    mac,
+                    nia_mac(&int, 10, Bearer::ZERO, uplink, &payload, integrity)
+                );
+                let original = payload.clone();
+                nas_cipher(&enc, count, uplink, &mut payload, ciphering);
+                let mut expected = original.clone();
+                nea_cipher(&enc, 10, Bearer::ZERO, uplink, &mut expected, ciphering);
+                assert_eq!(payload, expected);
+                nas_cipher(&enc, count, uplink, &mut payload, ciphering);
+                assert_eq!(payload, original);
+            }
+        });
     }
 
     /// TS 24.301 §9.9.3.28: the short MAC is the 2 least significant octets
