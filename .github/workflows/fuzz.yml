@@ -132,9 +132,10 @@ jobs:
           - { target: suci_round_trip, max_len: 512, seeds: fuzz/seeds/suci_round_trip }
           - { target: identity, max_len: 512, seeds: fuzz/seeds/identity }
           - { target: algorithms, max_len: 512, seeds: fuzz/seeds/algorithms }
+          - { target: milenage, max_len: 512, seeds: fuzz/seeds/milenage }
     env:
-      # The target `algorithms` compares the vector paths with the scalar
-      # code through the crate's hooks
+      # The targets `algorithms` and `milenage` compare the vector paths with
+      # the scalar code through the crate's hooks
       RUSTFLAGS: --cfg oxirush_security_hooks
     steps:
       - uses: actions/checkout@v4

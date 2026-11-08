@@ -42,3 +42,11 @@ path = "fuzz_targets/algorithms.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "milenage"
+path = "fuzz_targets/milenage.rs"
+test = false
+doc = false
+bench = false
+
