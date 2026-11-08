@@ -10,6 +10,9 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 oxirush-security = { path = "..", features = ["suci", "batch"] }
+# The KDF of the kdf target, against HMAC-SHA-256 of another implementation
+hmac = "0.13"
+sha2 = "0.11"
 
 # Not part of any parent workspace.
 [workspace]
@@ -50,3 +53,9 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "kdf"
+path = "fuzz_targets/kdf.rs"
+test = false
+doc = false
+bench = false

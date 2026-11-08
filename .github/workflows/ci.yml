@@ -360,7 +360,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [suci, suci_round_trip, identity, algorithms, milenage]
+        target: [suci, suci_round_trip, identity, algorithms, milenage, kdf]
     env:
       # The targets `algorithms` and `milenage` compare the vector paths with
       # the scalar code through the crate's hooks
