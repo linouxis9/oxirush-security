@@ -323,16 +323,16 @@
 //! that are accepted and refused; every test of MILENAGE runs on the AES
 //! instructions and on the `aes` crate.
 //!
-//! CI also fuzzes what takes octets from a peer, with the six
-//! `cargo fuzz` targets under `fuzz/`, for a minute each at a push, an hour
-//! each night and four hours on Sunday: a SUCI, a scheme output and a NAI
-//! are read without a panic, what is concealed is deconcealed, an identity
-//! or a digit string that decodes encodes back to its octets, every
-//! algorithm takes any message at any length in bits and gives the same on
-//! vector instructions and in scalar code, alone and in a batch, the USIM
-//! takes the vector of its home network and refuses an AUTN or an AUTS with
-//! a bit changed, and the KDF and the derivations of KAUSF, KSEAF and KAMF
-//! are HMAC-SHA-256 of the parameters of their clauses.
+//! CI also fuzzes what takes octets from a peer, with the six `cargo fuzz`
+//! targets under `fuzz/`, for a minute each at a push, an hour each day but
+//! Sunday and four hours on Saturday: a SUCI, a scheme output and a NAI are
+//! read without a panic, what is concealed is deconcealed, an identity or a
+//! digit string that decodes encodes back to its octets, every algorithm
+//! takes any message at any length in bits and gives the same on vector
+//! instructions and in scalar code, alone and in a batch, the USIM takes
+//! the vector of its home network and refuses an AUTN or an AUTS with a bit
+//! changed, and the KDF and the derivations of KAUSF, KSEAF and KAMF are
+//! HMAC-SHA-256 of the parameters of their clauses.
 //!
 //! `readme/` runs each Rust block of the README and of this page and
 //! compares what it prints with the text under it.
