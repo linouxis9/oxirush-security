@@ -721,7 +721,8 @@ MILENAGE on every set of TS 35.207 and TS 35.208. TS 33.501 has no test data
 for its key derivations: a second implementation,
 [`tests/five_g_aka_chain.py`](tests/five_g_aka_chain.py), derives the 5G AKA
 chain, and [`tests/interworking_keys.py`](tests/interworking_keys.py) the
-keys of a change between 5GS and EPS.
+keys of a change between 5GS and EPS, and of four handovers back and forth
+that each map the context of the one before.
 [`differential/`](https://github.com/linouxis9/oxirush-security/tree/master/differential)
 compares MILENAGE with the `milenage` crate, Open5GS and free5GC on a
 million random subscribers.

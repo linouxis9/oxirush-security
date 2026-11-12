@@ -850,6 +850,58 @@ mod tests {
     }
 
     #[test]
+    fn four_handovers_chain_the_mapped_keys() {
+        // Handovers to EPS, to 5GS, to EPS and to 5GS again with no
+        // authentication, each mapping the context that the one before
+        // mapped (§8.3.1, §8.4.1), so that a key of each hop is a function of
+        // the whole chain. The expected values are those that
+        // `tests/interworking_keys.py` derives apart from the crate.
+        use crate::nas_eps::{derive_kenb, derive_nh as derive_eps_nh};
+        let kamf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
+        let kamf = KAmf::new(&octets(kamf));
+        // Hop 1, to EPS: KASME' of the downlink 5G NAS COUNT, and the NH of
+        // its NCC 2.
+        let kasme = derive_mapped_kasme_handover(&kamf, count(0x0003_0201));
+        let kenb = derive_kenb(&kasme, AccessKeyCount::Handover);
+        let nh_2 = derive_eps_nh(&kasme, &derive_eps_nh(&kasme, &kenb));
+        // Hop 2, to 5GS: KAMF' of the next NH of the MME (NCC 3).
+        let kamf_2 = derive_mapped_kamf_handover(&kasme, &derive_eps_nh(&kasme, &nh_2));
+        // Hop 3, to EPS: KASME'' of KAMF' and the downlink NAS COUNT of its
+        // NAS container, KeNB at 2^32 - 1, then NH for NCC 2 and 3.
+        let kasme_3 = derive_mapped_kasme_handover(&kamf_2, count(1));
+        assert_eq!(
+            hex::encode(kasme_3.as_octets()),
+            "b258829e7dfdc27e3e7a59c536679d8d0912a1e9862a7d8bc63f75fb6a25f2c6"
+        );
+        let kenb_3 = derive_kenb(&kasme_3, AccessKeyCount::Handover);
+        assert_eq!(
+            hex::encode(kenb_3.as_octets()),
+            "632b8dba3c48ea24ec1adb2ba52e7c13600057b9ab4de210d2991b537c180aa3"
+        );
+        let nh_3_2 = derive_eps_nh(&kasme_3, &derive_eps_nh(&kasme_3, &kenb_3));
+        assert_eq!(
+            hex::encode(nh_3_2.as_octets()),
+            "eb11c04439da416fa52f03c5c22dd9a86fe56d428aab7ac57e36708a5f574bb5"
+        );
+        let nh_3_3 = derive_eps_nh(&kasme_3, &nh_3_2);
+        assert_eq!(
+            hex::encode(nh_3_3.as_octets()),
+            "eeeb2558422a477fbdd8a5750db2c91ded7fe774d7b1dcc764eed5552d0e7149"
+        );
+        // Hop 4, to 5GS: the KAMF of that NH, and its temporary KgNB at the
+        // uplink NAS COUNT 2^32 - 1.
+        let kamf_4 = derive_mapped_kamf_handover(&kasme_3, &nh_3_3);
+        assert_eq!(
+            hex::encode(kamf_4.as_octets()),
+            "2c0a600bbd57d8e01edd0b49c560c27729cea202ceb78a1ef88e90e44616d757"
+        );
+        assert_eq!(
+            hex::encode(derive_kgnb(&kamf_4, AccessKeyCount::Handover).as_octets()),
+            "666955f12d7b4c8d10f15183a1e3a39e45e2c0f5d9e40a9925a31b001ed248f3"
+        );
+    }
+
+    #[test]
     fn release_19_annex_a_missing_entry_vectors() {
         let key = counting();
         let (kamf, kgnb, kausf) = (KAmf::new(&key), KGnb::new(&key), KAusf::new(&key));

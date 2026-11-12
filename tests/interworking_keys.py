@@ -4,8 +4,8 @@
 TS 33.501 has no test data for the keys that map a security context of 5GS
 to one of EPS and back (Annex A.14 and A.15), nor for the access stratum
 keys of a handover between the two systems. This script derives the keys
-that `interworking_keys_match_another_implementation` of
-`src/nas_5gs/kdf.rs` checks, with the HMAC-SHA-256 of Python's standard
+that `interworking_keys_match_another_implementation` and
+`four_handovers_chain_the_mapped_keys` of `src/nas_5gs/kdf.rs` check, with the HMAC-SHA-256 of Python's standard
 library, over strings S written here octet by octet from the clauses: FC,
 then each parameter and its length in two octets (TS 33.220 Annex B.2). It
 shares no code with the crate.
@@ -66,6 +66,30 @@ k_gnb = kdf(k_amf_ho, "6e ffffffff 0004 01 0001")
 # The NH that the AMF keeps for NCC 1. Annex A.10: FC 0x6F, P0 KgNB, L0 00 20
 nh_5g = kdf(k_amf_ho, "6f " + k_gnb.hex() + " 0020")
 
+# Four handovers back and forth with no authentication, each hop mapping the
+# context that the hop before mapped (clauses 8.3.1, 8.4.1). Hop 1 is the
+# handover to EPS above, and hop 2 the handover to 5GS above: KAMF' of NH 3.
+# Hop 3, to EPS again: KASME'' of KAMF' and the downlink 5G NAS COUNT
+# 00 00 00 01 of its NAS container, then KeNB at the uplink NAS COUNT
+# 2^32 - 1 and NH three times. Hop 4, to 5GS again: KAMF''' of the third NH
+# of KASME'' (NCC 3), and its temporary KgNB.
+k_asme_3 = kdf(k_amf_ho, "74 00000001 0004")
+k_enb_3 = kdf(k_asme_3, "11 ffffffff 0004")
+nh_3_1 = kdf(k_asme_3, "12 " + k_enb_3.hex() + " 0020")
+nh_3_2 = kdf(k_asme_3, "12 " + nh_3_1.hex() + " 0020")
+nh_3_3 = kdf(k_asme_3, "12 " + nh_3_2.hex() + " 0020")
+k_amf_4 = kdf(k_asme_3, "76 " + nh_3_3.hex() + " 0020")
+k_gnb_4 = kdf(k_amf_4, "6e ffffffff 0004 01 0001")
+
+CHAIN = {
+    "KASME'' (hop 3)": k_asme_3,
+    "KeNB (hop 3)": k_enb_3,
+    "NH 2 (hop 3)": nh_3_2,
+    "NH 3 (hop 3)": nh_3_3,
+    "KAMF''' (hop 4)": k_amf_4,
+    "KgNB (hop 4)": k_gnb_4,
+}
+
 DERIVED = {
     "KASME' (idle)": k_asme_idle,
     "KASME' (HO)": k_asme_ho,
@@ -79,15 +103,23 @@ DERIVED = {
     "NH (5G)": nh_5g,
 }
 
-# What the crate's test expects: the hexadecimal strings that its source
+# What the crate's tests expect: the hexadecimal strings that their source
 # compares the keys with
 test = (pathlib.Path(__file__).parent.parent / "src" / "nas_5gs" / "kdf.rs").read_text()
-start = test.index("fn interworking_keys_match_another_implementation")
-expected = set(re.findall(r'"([0-9a-f]{64})"', test[start : test.index("#[test]", start)]))
+
+
+def expected(name):
+    """The hexadecimal strings of the test `name`."""
+    start = test.index("fn " + name)
+    return set(re.findall(r'"([0-9a-f]{64})"', test[start : test.index("#[test]", start)]))
+
 
 failed = False
-for name, value in DERIVED.items():
-    same = value.hex() in expected
-    failed |= not same
-    print(f"{name:13} {value.hex()} {'' if same else 'is not in the test of the crate'}")
+for of_test, derived in [("interworking_keys_match_another_implementation", DERIVED),
+                         ("four_handovers_chain_the_mapped_keys", CHAIN)]:
+    known = expected(of_test)
+    for name, value in derived.items():
+        same = value.hex() in known
+        failed |= not same
+        print(f"{name:15} {value.hex()} {'' if same else 'is not in the test of the crate'}")
 sys.exit(1 if failed else 0)
