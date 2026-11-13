@@ -351,7 +351,6 @@ jobs:
       - run: cargo fmt --check --manifest-path emulated-aarch64/guest/Cargo.toml
       - run: cargo fmt --check --manifest-path emulated-aarch64/host/Cargo.toml
       - run: cargo fmt --check --manifest-path leftovers/Cargo.toml
-      - run: cargo fmt --check --manifest-path readme/Cargo.toml
 
   # A minute for each target; .github/workflows/fuzz.yml runs them longer each night
   # after a day with a commit, and each Sunday
@@ -397,23 +396,6 @@ jobs:
       # say nothing
       - run: cargo test --manifest-path benches/Cargo.toml --benches
       - run: cargo clippy --manifest-path benches/Cargo.toml --all-targets -- -D warnings
-
-  # The README and the front page of the documentation print what they show: readme/
-  # is a package of its own, whose build script writes their blocks.
-  readme:
-    name: The README blocks print what they show
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: readme
-      - run: cargo test --manifest-path readme/Cargo.toml
-      - run: cargo clippy --manifest-path readme/Cargo.toml --all-targets -- -D warnings
-      - run: cargo fmt --check --manifest-path readme/Cargo.toml
 
   package:
     name: Package

@@ -11,6 +11,12 @@ All notable changes to `oxirush-security` are recorded here.
   KAUSF of the EMSK (TS 33.501 Annex F), tested with the vectors of RFC 9048
   Appendix D.
 
+### Removed
+
+- `readme/`, the package that compared what each block of the README and of the
+  front page of the documentation printed with the text under it: the blocks check
+  what they give with `assert_eq!`, and run as documentation tests.
+
 ## 0.4.0 - 2026-11-07
 
 ### Changed

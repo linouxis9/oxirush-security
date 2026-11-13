@@ -24,8 +24,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (nea2, nia2) = (Algorithm::Aes, Algorithm::Aes);
     let k_nas_enc = derive_knas_enc(&k_amf, nea2);
     let k_nas_int = derive_knas_int(&k_amf, nia2);
-    println!("KNASenc {}", hex::encode(k_nas_enc.as_octets()));
-    println!("KNASint {}", hex::encode(k_nas_int.as_octets()));
+    assert_eq!(hex::encode(k_nas_enc.as_octets()), "f47ae570afde775373d1b313d2176f54");
+    assert_eq!(hex::encode(k_nas_int.as_octets()), "28ddb5356880149b9fee22f2367522a4");
 
     // An uplink REGISTRATION COMPLETE on 3GPP access with NAS COUNT 0: cipher
     // it, then compute the MAC over the sequence number and the ciphertext
@@ -34,18 +34,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     nas_cipher(&k_nas_enc, count, access, uplink, &mut message, nea2);
     let protected = [&[count.sequence_number()][..], &message].concat();
     let mac = nas_mac(&k_nas_int, count, access, uplink, &protected, nia2);
-    println!("ciphered {}, MAC {mac:08x}", hex::encode(message));
+    assert_eq!((hex::encode(message), mac), ("b57dd5".to_string(), 0x83e4_d009));
     Ok(())
 }
 ```
 
-```text
-KNASenc f47ae570afde775373d1b313d2176f54
-KNASint 28ddb5356880149b9fee22f2367522a4
-ciphered b57dd5, MAC 83e4d009
-```
-
-Each example is followed by its output.
+Each example shows what it gives with `assert_eq!`, and runs as a test of the crate.
 
 The keys that the examples print are values of 3GPP test sets, or derived
 from them, to compare with the specifications. `{:?}` of a key prints only
@@ -114,42 +108,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vector = subscriber.authentication_vector(&rand, &sqn, &amf);
     let k_ausf = derive_kausf(vector.ck(), vector.ik(), sn_name, vector.autn())?;
     let xres_star = vector.xres_star(sn_name)?;
-    println!("AUTN   {}", hex::encode(vector.autn().as_octets()));
-    println!("KAUSF  {}", hex::encode(k_ausf.as_octets()));
-    println!("XRES*  {}", hex::encode(xres_star.as_octets()));
+    assert_eq!(hex::encode(vector.autn().as_octets()), "55f328b43577b9b94a9ffac354dfafb3");
+    assert_eq!(
+        hex::encode(k_ausf.as_octets()),
+        "f2e35260f85194d4f891504d02111e56689ac23dd393bee3abbcc5bfbc013ef9",
+    );
+    assert_eq!(hex::encode(xres_star.as_octets()), "5cc9527f4d21c43bee83a15443acf1c4");
 
     // AUSF: HXRES* and KSEAF
     let hxres_star = compute_hxres_star(vector.rand(), &xres_star);
     let k_seaf = derive_kseaf(&k_ausf, sn_name)?;
-    println!("HXRES* {}", hex::encode(hxres_star.as_octets()));
-    println!("KSEAF  {}", hex::encode(k_seaf.as_octets()));
+    assert_eq!(hex::encode(hxres_star.as_octets()), "6970075e3c8245fdc2073003cf166279");
+    assert_eq!(
+        hex::encode(k_seaf.as_octets()),
+        "cfddde483bd1318a412e98870f556410905be4fb7500abed93ee16af71bbb3fa",
+    );
 
     // SEAF: KAMF, from the SUPI and the ABBA. The SUPI is the one that a SUCI
     // de-conceals to, or the text of a service based interface
     let supi = Supi::parse("imsi-208930000000001")?;
     let k_amf = derive_kamf(&k_seaf, supi.identity(), &[0x00, 0x00])?;
-    println!("KAMF   {}", hex::encode(k_amf.as_octets()));
+    assert_eq!(
+        hex::encode(k_amf.as_octets()),
+        "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4",
+    );
 
     // UE: the USIM checks the MAC of AUTN. The ME judges the SQN and the
     // separation bit of the AMF, then sends RES*, which the AUSF compares with
     // XRES* in constant time
     let response = subscriber.check_autn(&rand, vector.autn())?;
-    println!("SQN {:x}, separation bit {}", response.sqn().get(), response.amf().separation_bit());
+    assert_eq!(response.sqn().get(), 0xff9b_b4d0_b607);
+    assert!(response.amf().separation_bit());
     let res_star = response.res_star(sn_name)?;
-    println!("RES* accepted: {}", xres_star.accepts(&res_star));
+    assert!(xres_star.accepts(&res_star));
     Ok(())
 }
-```
-
-```text
-AUTN   55f328b43577b9b94a9ffac354dfafb3
-KAUSF  f2e35260f85194d4f891504d02111e56689ac23dd393bee3abbcc5bfbc013ef9
-XRES*  5cc9527f4d21c43bee83a15443acf1c4
-HXRES* 6970075e3c8245fdc2073003cf166279
-KSEAF  cfddde483bd1318a412e98870f556410905be4fb7500abed93ee16af71bbb3fa
-KAMF   9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4
-SQN ff9bb4d0b607, separation bit true
-RES* accepted: true
 ```
 
 `Opc::from_op` derives OPc from OP. `nas_eps::derive_kasme` takes the CK,
@@ -172,15 +165,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let autn = Autn::from_slice(&hex::decode("bb52e91c747ac3ab2a5c23d15ee351d5")?)?;
     let (ck_prime, ik_prime) = derive_ck_ik_prime(&ck, &ik, b"WLAN", &autn)?;
     let keys = Keys::derive(&ck_prime, &ik_prime, b"0555444333222111");
-    println!("K_aut  {}", hex::encode(keys.k_aut().as_octets()));
-    println!("KAUSF  {}", hex::encode(keys.kausf().as_octets()));
+    assert_eq!(
+        hex::encode(keys.k_aut().as_octets()),
+        "0842ea722ff6835bfa2032499fc3ec23c2f0e388b4f07543ffc677f1696d71ea",
+    );
+    assert_eq!(
+        hex::encode(keys.kausf().as_octets()),
+        "f861703cd775590e16c7679ea3874ada866311de290764d760cf76df647ea01c",
+    );
     Ok(())
 }
-```
-
-```text
-K_aut  0842ea722ff6835bfa2032499fc3ec23c2f0e388b4f07543ffc677f1696d71ea
-KAUSF  f861703cd775590e16c7679ea3874ada866311de290764d760cf76df647ea01c
 ```
 
 ## Re-synchronise a USIM
@@ -201,28 +195,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // fresh. Whether a SQN is fresh is the UE's policy (TS 33.102 Annex C)
     let response = subscriber.check_autn(&rand, vector.autn())?;
     let sqn_ms = Sqn::try_from(64)?;
-    println!("SQN {} after SQNMS {}", response.sqn().get(), sqn_ms.get());
+    assert!(response.sqn().get() < sqn_ms.get());
     let auts = subscriber.auts(&rand, &sqn_ms);
-    println!("{auts:?}");
+    assert_eq!(hex::encode(auts.as_octets()), "5ef40417ef4cb9ac9e76640b820d");
 
     // Home network: the AUTS answers the RAND of the challenge, which the
     // serving network gives with it. Its MAC-S is checked, and SQNMS read
     let read = subscriber.verify_auts(&rand, &auts)?;
-    println!("SQNMS {}", read.get());
+    assert_eq!(read.get(), 64);
 
     // An AUTS with one bit changed, or for another RAND, is refused
     let mut changed = *auts.as_octets();
     changed[13] ^= 1;
-    println!("{:?}", subscriber.verify_auts(&rand, &Auts::new(&changed)));
+    let refused = subscriber.verify_auts(&rand, &Auts::new(&changed));
+    assert_eq!(format!("{refused:?}"), "Err(MacFailure)");
     Ok(())
 }
-```
-
-```text
-SQN 32 after SQNMS 64
-Auts(5ef40417ef4cb9ac9e76640b820d)
-SQNMS 64
-Err(MacFailure)
 ```
 
 ## Make the vectors of many subscribers in one call
@@ -255,7 +243,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     batch::authentication_vectors(&mut jobs);
     let vectors: Vec<_> = jobs.into_iter().filter_map(VectorJob::into_vector).collect();
-    println!("AUTN of the last {}", hex::encode(vectors[999].autn().as_octets()));
+    assert_eq!(hex::encode(vectors[999].autn().as_octets()), "a8ea63cde1078000cad3a5b1943c2ec3");
 
     // The UEs: the check of each AUTN
     let mut jobs: Vec<_> = (0..1000)
@@ -263,14 +251,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     batch::check_autn(&mut jobs);
     let accepted = jobs.iter().filter(|job| matches!(job.response(), Some(Ok(_)))).count();
-    println!("{accepted} AUTNs accepted");
+    assert_eq!(accepted, 1000);
     Ok(())
 }
-```
-
-```text
-AUTN of the last a8ea63cde1078000cad3a5b1943c2ec3
-1000 AUTNs accepted
 ```
 
 ## Protect and check a NAS message
@@ -304,20 +287,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mac = nas_mac(&k_nas_int, count, access, uplink, &protected, nia2);
     // In a time that does not tell how much of a forged MAC is right
     let right = constant_time_eq(&mac.to_be_bytes(), &received_mac.to_be_bytes());
-    println!("MAC {mac:08x}, as received: {right}");
+    assert!(right);
 
     // The MAC is right: the message is deciphered, and its NAS COUNT is not
     // accepted again
     nas_cipher(&k_nas_enc, count, access, uplink, &mut message, nea2);
     let lowest = count.next()?;
-    println!("deciphered {}, then from NAS COUNT {}", hex::encode(message), lowest.get());
+    assert_eq!((message, lowest.get()), ([0x7e, 0x00, 0x43], 1));
     Ok(())
 }
-```
-
-```text
-MAC 83e4d009, as received: true
-deciphered 7e0043, then from NAS COUNT 1
 ```
 
 In EPS the functions are in `nas_eps`, and take no NAS connection: the
@@ -345,20 +323,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     nas_cipher(&knas_enc, count, uplink, &mut message, eea2);
     let protected = [&[count.sequence_number()][..], &message].concat();
     let mac = nas_mac(&knas_int, count, uplink, &protected, eia2);
-    println!("ciphered {}, MAC {mac:08x}", hex::encode(message));
+    assert_eq!((hex::encode(message), mac), ("b02c47".to_string(), 0x190a_f1e7));
 
     // The short MAC of a SERVICE REQUEST with NAS COUNT 1: its first octet,
     // then KSI 0 and sequence number 1 in its second
     let next = count.next()?;
     let short_mac = service_request_short_mac(&knas_int, next, uplink, 0xc7, 0x01, eia2)?;
-    println!("short MAC {short_mac:04x}");
+    assert_eq!(short_mac, 0x7e95);
     Ok(())
 }
-```
-
-```text
-ciphered b02c47, MAC 190af1e7
-short MAC 7e95
 ```
 
 ## Protect a message that oxirush-nas encodes
@@ -415,19 +388,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
     batch::mac(&mut jobs);
-    for (job, message) in jobs.iter().zip(&messages) {
-        if let Some(mac) = job.mac() {
-            println!("MAC {mac:08x} of {}", hex::encode(message));
-        }
-    }
+    let macs: Vec<_> = jobs.iter().map(|job| job.mac()).collect();
+    assert_eq!(macs, [Some(0xafc5_3a82), Some(0x6a11_a04f), Some(0xc48d_481a)]);
+    assert_eq!(hex::encode(&messages[0]), "076b4a2c14c2");
+    assert_eq!(hex::encode(&messages[1]), "00e17ff3e0");
+    assert_eq!(hex::encode(&messages[2]), "295c7b75e6ac69");
     Ok(())
 }
-```
-
-```text
-MAC afc53a82 of 076b4a2c14c2
-MAC 6a11a04f of 00e17ff3e0
-MAC c48d481a of 295c7b75e6ac69
 ```
 
 A job takes the 32 bits of a NAS COUNT and the BEARER of a NAS connection,
@@ -452,20 +419,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Each downlink message takes the next NAS COUNT
     let mut count = NasCount::new(7)?;
+    let mut sent = Vec::new();
     for plain in [&[0x7e, 0x00, 0x54, 0x43, 0x90][..], &[0x7e, 0x00, 0x5d, 0x02]] {
         let mut message = [&[count.sequence_number()][..], plain].concat();
         ciphering.cipher(count, access, downlink, &mut message[1..]);
         let mac = integrity.mac(count, access, downlink, &message);
-        println!("NAS COUNT {}: MAC {mac:08x} of {}", count.get(), hex::encode(&message));
+        sent.push((count.get(), mac, hex::encode(&message)));
         count = count.next()?;
     }
+    assert_eq!(
+        sent,
+        [(7, 0xafc5_3a82, "076b4a2c14c2".to_string()), (8, 0x5a27_e0ff, "08cc23803c".to_string())],
+    );
     Ok(())
 }
-```
-
-```text
-NAS COUNT 7: MAC afc53a82 of 076b4a2c14c2
-NAS COUNT 8: MAC 5a27e0ff of 08cc23803c
 ```
 
 ## Derive the keys of a handover
@@ -485,32 +452,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let k_gnb = derive_kgnb(&k_amf, NasCount::ZERO);
     let nh_1 = derive_nh(&k_amf, &k_gnb);
     let nh_2 = derive_nh(&k_amf, &nh_1);
-    println!("KgNB     {}", hex::encode(k_gnb.as_octets()));
-    println!("NH 1     {}", hex::encode(nh_1.as_octets()));
-    println!("NH 2     {}", hex::encode(nh_2.as_octets()));
+    assert_eq!(
+        hex::encode(k_gnb.as_octets()),
+        "c18166e13cfde1dea842c708f6e0b3372b6896664df4e865c0c78bd270852005",
+    );
+    assert_eq!(
+        hex::encode(nh_1.as_octets()),
+        "383c6b76bf2a99aa2ca4c5136d4122a2b942301f0b9e07439786939cd30c4a4b",
+    );
+    assert_eq!(
+        hex::encode(nh_2.as_octets()),
+        "ab2e99ac759e44b2f31665b1593ac74dcf175b095956668d00a838a3f6505fb8",
+    );
 
     // KNG-RAN* of a target cell, from its PCI and its downlink ARFCN: from the
     // current KgNB, or from an NH that the target has not used
     let (pci, arfcn_dl) = (501, 632_628);
     let horizontal = derive_kng_ran_star(&k_gnb, pci, arfcn_dl)?;
     let vertical = derive_kng_ran_star(&nh_2, pci, arfcn_dl)?;
-    println!("KNG-RAN* {}", hex::encode(horizontal.as_octets()));
-    println!("KNG-RAN* {}", hex::encode(vertical.as_octets()));
+    assert_eq!(
+        hex::encode(horizontal.as_octets()),
+        "58c111d9277e1e1aeeba2f9893fde7b5e855f42759ca5e46647004852d59b744",
+    );
+    assert_eq!(
+        hex::encode(vertical.as_octets()),
+        "563d8aba7015f1ad77af632104b023d51c1cd410ef2ff46886aa2e02887e71d1",
+    );
 
     // KAMF' for a target AMF, from the downlink NAS COUNT
     let k_amf_prime = derive_kamf_prime_handover(&k_amf, NasCount::new(5)?);
-    println!("KAMF'    {}", hex::encode(k_amf_prime.as_octets()));
+    assert_eq!(
+        hex::encode(k_amf_prime.as_octets()),
+        "ae5e2cb9cda5b1687556e9c3d889d0edb0aa4e7317d409e0315dac5597ad438a",
+    );
     Ok(())
 }
-```
-
-```text
-KgNB     c18166e13cfde1dea842c708f6e0b3372b6896664df4e865c0c78bd270852005
-NH 1     383c6b76bf2a99aa2ca4c5136d4122a2b942301f0b9e07439786939cd30c4a4b
-NH 2     ab2e99ac759e44b2f31665b1593ac74dcf175b095956668d00a838a3f6505fb8
-KNG-RAN* 58c111d9277e1e1aeeba2f9893fde7b5e855f42759ca5e46647004852d59b744
-KNG-RAN* 563d8aba7015f1ad77af632104b023d51c1cd410ef2ff46886aa2e02887e71d1
-KAMF'    ae5e2cb9cda5b1687556e9c3d889d0edb0aa4e7317d409e0315dac5597ad438a
 ```
 
 `nas_eps` has `derive_kenb`, `derive_nh` and `derive_kenb_star` for EPS.
@@ -540,7 +516,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     hex::decode_to_slice(text, &mut private)?;
     let private = HomeNetworkPrivateKey::profile_a(&private);
     let public = private.public_key();
-    println!("public key {}", hex::encode(public.to_octets()));
+    assert_eq!(
+        hex::encode(public.to_octets()),
+        "5a8d38864820197c3394b92613b20b91633cbd897119273bf8e4a6f4eec0a650",
+    );
 
     // UE: conceal the IMSI 274 012 001002086. The scheme output is an
     // ephemeral public key, drawn at each call, the ciphered MSIN and a MAC tag
@@ -549,15 +528,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let routing = RoutingIndicator::default();
     let suci = conceal_imsi(plmn, "001002086", routing, protection)?;
     let identity = suci.to_nas_octets()?;
-    println!("mobile identity of {} octets", identity.len());
+    assert_eq!(identity.len(), 53);
 
     // SIDF: read the SUCI, take the private key that its scheme and its key
     // identifier name, and de-conceal
     let (received, _) = Suci::from_nas_octets_tolerant(&identity)?;
     let key_id = received.home_network_public_key_identifier();
-    println!("{:?}, key {key_id}", received.protection_scheme());
+    assert_eq!(format!("{:?}", received.protection_scheme()), "ProtectionScheme(1: profile A)");
+    assert_eq!(key_id, 27);
     let supi = deconceal(&received, Some(&private))?;
-    println!("{supi}, of which KAMF takes {}", supi.identity());
+    assert_eq!((supi.to_string(), supi.identity()), ("imsi-274012001002086".to_string(), "274012001002086"));
 
     // The SUCI of Annex C.4.3.1, and what a SIDF without the key is told
     let mut identity = vec![0x01, 0x72, 0x24, 0x10, 0xf0, 0xff, 0x01, 27];
@@ -565,31 +545,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "b2e92f836055a255837debf850b528997ce0201cb82adfe4be1f587d07d8457dcb02352410cddd9e730ef3fa87",
     )?);
     let annex = Suci::from_nas_octets(&identity)?;
-    println!("{annex}");
-    println!("{:?}", deconceal(&annex, Some(&private)));
-    println!("{:?}", deconceal(&annex, None));
+    assert_eq!(
+        annex.to_string(),
+        "suci-0-274-012-0-1-27-b2e92f836055a255837debf850b528997ce0201cb82adfe4be1f587d07d8457dcb02352410cddd9e730ef3fa87",
+    );
+    assert_eq!(deconceal(&annex, Some(&private))?.to_string(), "imsi-274012001002086");
+    assert_eq!(format!("{:?}", deconceal(&annex, None)), "Err(MissingKey)");
 
     // A SUPI that is a NAI: the username is concealed, the realm is not
     let supi = Supi::network_specific("sensor-17@example.net")?;
     let protection = Protection::Ecies { key_id: 1, key: &public };
     let text = conceal_nai(&supi, RoutingIndicator::default(), protection)?.to_nai()?.to_string();
-    println!("{}...", &text[..31]);
+    assert!(text.starts_with("type1.rid0.schid1.hnkey1.ecckey"));
     let read = Suci::Nai(NaiSuci::parse(&text)?);
-    println!("{}", deconceal(&read, Some(&private))?);
+    assert_eq!(deconceal(&read, Some(&private))?.to_string(), "nai-sensor-17@example.net");
     Ok(())
 }
-```
-
-```text
-public key 5a8d38864820197c3394b92613b20b91633cbd897119273bf8e4a6f4eec0a650
-mobile identity of 53 octets
-ProtectionScheme(1: profile A), key 27
-imsi-274012001002086, of which KAMF takes 274012001002086
-suci-0-274-012-0-1-27-b2e92f836055a255837debf850b528997ce0201cb82adfe4be1f587d07d8457dcb02352410cddd9e730ef3fa87
-Ok(Supi(imsi-274012001002086))
-Err(MissingKey)
-type1.rid0.schid1.hnkey1.ecckey...
-nai-sensor-17@example.net
 ```
 
 ## Run an algorithm on a 3GPP test set
@@ -610,7 +581,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (count, bearer, downlink) = (0x398a_59b4_u32, Bearer::new(0x15)?, Direction::Downlink);
     let context = CipheringContext::new(&k, Algorithm::Aes);
     context.cipher_bits(count, bearer, downlink, &mut data, 253)?;
-    println!("{}", hex::encode(&data));
+    assert_eq!(hex::encode(&data), "e9fed8a63d155304d71df20bf3e82214b20ed7dad2f233dc3c22d7bdeeed8e78");
 
     // 128-EIA2 test set 1 of Annex C.2.1: 58 bits
     let k = KNasInt::from_slice(&hex::decode("2bd6459f82c5b300952c49104881ff48")?)?;
@@ -618,14 +589,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (count, bearer, uplink) = (0x38a6_f056_u32, Bearer::new(0x18)?, Direction::Uplink);
     let context = IntegrityContext::new(&k, Algorithm::Aes);
     let mac = context.mac_bits(count, bearer, uplink, &message, 58)?;
-    println!("{mac:08x}");
+    assert_eq!(mac, 0x118c_6eb8);
     Ok(())
 }
-```
-
-```text
-e9fed8a63d155304d71df20bf3e82214b20ed7dad2f233dc3c22d7bdeeed8e78
-118c6eb8
 ```
 
 ## Select the algorithms
@@ -640,27 +606,21 @@ use oxirush_security::{
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The EA and IA octets of a UE security capability: EA0, EA1 and EA2, and
     // IA1 and IA2. 128-NEA2 and 128-NIA2 are AES, 128-NEA1 and 128-NIA1 SNOW 3G
-    println!("{:?}", select_ciphering_algorithm(0xe0, DEFAULT_CIPHERING_PREFERENCE));
-    println!("{:?}", select_integrity_algorithm(0x60, DEFAULT_INTEGRITY_PREFERENCE));
+    let ciphering = select_ciphering_algorithm(0xe0, DEFAULT_CIPHERING_PREFERENCE);
+    assert_eq!(ciphering, Some(Algorithm::Aes));
+    let integrity = select_integrity_algorithm(0x60, DEFAULT_INTEGRITY_PREFERENCE);
+    assert_eq!(integrity, Some(Algorithm::Aes));
 
     // An operator's order in the place of NIA2, NIA1, NIA3
     let order = [Algorithm::Snow3g, Algorithm::Aes];
-    println!("{:?}", select_integrity_algorithm(0x60, &order));
+    assert_eq!(select_integrity_algorithm(0x60, &order), Some(Algorithm::Snow3g));
 
     // An identity from a message, which ciphering and integrity share: 4 to 7
     // are reserved, and given back
-    println!("{:?}", Algorithm::try_from(2));
-    println!("{:?}", Algorithm::try_from(5));
+    assert_eq!(Algorithm::try_from(2), Ok(Algorithm::Aes));
+    assert_eq!(Algorithm::try_from(5), Err(5));
     Ok(())
 }
-```
-
-```text
-Some(Aes)
-Some(Aes)
-Some(Snow3g)
-Ok(Aes)
-Err(5)
 ```
 
 ## What an operation leaves
@@ -766,8 +726,8 @@ registers. `examples/` has five programs: `key_derivation_nas_5gs`,
 `key_derivation_nas_eps`, `integrity_nas_5gs`, `integrity_nas_eps` and
 `suci_conceal`. Run one with `cargo run --example suci_conceal --features suci`.
 
-Each Rust block of this page is checked with what it prints
-([`readme/`](readme/build.rs) says how).
+Each Rust block of this page checks what it gives with `assert_eq!`, and runs
+as a documentation test of the crate.
 [The documentation](https://docs.rs/oxirush-security) has the terms, each
 function with its clause and the values it is tested against, what an
 operation leaves, and how the code was checked for a time that does not

@@ -36,8 +36,8 @@
 //!     let (nea2, nia2) = (Algorithm::Aes, Algorithm::Aes);
 //!     let k_nas_enc = derive_knas_enc(&k_amf, nea2);
 //!     let k_nas_int = derive_knas_int(&k_amf, nia2);
-//!     println!("KNASenc {}", hex::encode(k_nas_enc.as_octets()));
-//!     println!("KNASint {}", hex::encode(k_nas_int.as_octets()));
+//!     assert_eq!(hex::encode(k_nas_enc.as_octets()), "f47ae570afde775373d1b313d2176f54");
+//!     assert_eq!(hex::encode(k_nas_int.as_octets()), "28ddb5356880149b9fee22f2367522a4");
 //!
 //!     // An uplink REGISTRATION COMPLETE on 3GPP access with NAS COUNT 0: cipher
 //!     // it, then compute the MAC over the sequence number and the ciphertext
@@ -46,18 +46,13 @@
 //!     nas_cipher(&k_nas_enc, count, access, uplink, &mut message, nea2);
 //!     let protected = [&[count.sequence_number()][..], &message].concat();
 //!     let mac = nas_mac(&k_nas_int, count, access, uplink, &protected, nia2);
-//!     println!("ciphered {}, MAC {mac:08x}", hex::encode(message));
+//!     assert_eq!((hex::encode(message), mac), ("b57dd5".to_string(), 0x83e4_d009));
 //!     Ok(())
 //! }
 //! ```
 //!
-//! ```text
-//! KNASenc f47ae570afde775373d1b313d2176f54
-//! KNASint 28ddb5356880149b9fee22f2367522a4
-//! ciphered b57dd5, MAC 83e4d009
-//! ```
-//!
-//! Each example is followed by its output.
+//! Each example shows what it gives with `assert_eq!`, and runs as a test
+//! of the crate.
 //!
 //! A key has a type of its own, which is wiped when it is dropped: KNASenc
 //! does not compile where KNASint is expected. The crate stores no key and
@@ -69,7 +64,7 @@
 //! # Tasks
 //!
 //! The [README](https://github.com/linouxis9/oxirush-security#readme) has
-//! an example of each, with what it prints.
+//! an example of each, with what it gives.
 //!
 //! | Task | Items |
 //! |------|-------|
@@ -334,8 +329,8 @@
 //! changed, and the KDF and the derivations of KAUSF, KSEAF and KAMF are
 //! HMAC-SHA-256 of the parameters of their clauses.
 //!
-//! `readme/` runs each Rust block of the README and of this page and
-//! compares what it prints with the text under it.
+//! Each Rust block of the README and of this page checks what it gives
+//! with `assert_eq!`, and runs as a documentation test.
 //!
 //! # Limits
 //!
