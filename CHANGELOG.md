@@ -2,6 +2,15 @@
 
 All notable changes to `oxirush-security` are recorded here.
 
+## Unreleased
+
+### Added
+
+- `eap_aka_prime`: the keys of EAP-AKA' (RFC 9048), CK' and IK' of the
+  network name, then K_encr, K_aut, K_re, the MSK and the EMSK of PRF', and
+  KAUSF of the EMSK (TS 33.501 Annex F), tested with the vectors of RFC 9048
+  Appendix D.
+
 ## 0.4.0 - 2026-11-07
 
 ### Changed

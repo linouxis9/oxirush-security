@@ -23,6 +23,7 @@ use crate::values::{
     reversed, s, secret, without, zuc_stages,
 };
 use oxirush_security::batch::{self, CipherJob, MacJob};
+use oxirush_security::eap_aka_prime;
 use oxirush_security::identity::Algorithm;
 use oxirush_security::identity::{Plmn, Supi};
 use oxirush_security::kdf::{extract_128, kdf};
@@ -744,6 +745,47 @@ fn derivations(cases: &mut Cases) {
                 black_box(ik),
                 sn,
                 autn,
+            ));
+            crate::owned(&value);
+        },
+    );
+    // The keys of EAP-AKA': CK' and IK' of the network name, then those of
+    // PRF', whose key is IK' || CK'
+    let s_ck_ik_prime = s(0x20, &[sn, &autn.as_octets()[..6]]);
+    derivation(
+        cases,
+        "eap_aka_prime::derive_ck_ik_prime",
+        &ck_ik,
+        Some(s_ck_ik_prime),
+        move || {
+            crate::here();
+            let value = spare(eap_aka_prime::derive_ck_ik_prime(
+                black_box(ck),
+                black_box(ik),
+                sn,
+                autn,
+            ));
+            crate::owned(&value);
+        },
+    );
+    let ck_prime = kept(eap_aka_prime::CkPrime::new(&octets(
+        "0093962d0dd84aa5684b045c9edffa04",
+    )));
+    let ik_prime = kept(eap_aka_prime::IkPrime::new(&octets(
+        "ccfc230ca74fcc96c0a5d61164f5a76c",
+    )));
+    let ik_ck_prime: Vec<u8> = [&ik_prime.as_octets()[..], ck_prime.as_octets()].concat();
+    derivation(
+        cases,
+        "eap_aka_prime::Keys::derive",
+        &ik_ck_prime,
+        None,
+        move || {
+            crate::here();
+            let value = spare(eap_aka_prime::Keys::derive(
+                black_box(ck_prime),
+                black_box(ik_prime),
+                b"0208930000000001",
             ));
             crate::owned(&value);
         },

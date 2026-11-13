@@ -446,6 +446,7 @@ extern crate std;
 #[cfg_attr(docsrs, doc(cfg(feature = "batch")))]
 pub mod batch;
 mod common;
+pub mod eap_aka_prime;
 pub mod milenage;
 pub mod nas_5gs;
 pub mod nas_eps;

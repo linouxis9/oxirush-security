@@ -155,6 +155,34 @@ RES* accepted: true
 `Opc::from_op` derives OPc from OP. `nas_eps::derive_kasme` takes the CK,
 the IK and the AUTN of a vector for EPS AKA.
 
+## Derive the keys of EAP-AKA'
+
+The other method of the primary authentication of 5GS (TS 33.501 §6.1.3.1):
+CK' and IK' bind the vector to the network name of the challenge's
+AT_KDF_INPUT, and PRF' of them and of the SUPI gives K_aut, the key of AT_MAC,
+and the EMSK, whose first 256 bits are KAUSF (RFC 9048, its Appendix D here).
+
+```rust
+use oxirush_security::eap_aka_prime::{Keys, derive_ck_ik_prime};
+use oxirush_security::{Autn, Ck, Ik};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let ck = Ck::from_slice(&hex::decode("5349fbe098649f948f5d2e973a81c00f")?)?;
+    let ik = Ik::from_slice(&hex::decode("9744871ad32bf9bbd1dd5ce54e3e2e5a")?)?;
+    let autn = Autn::from_slice(&hex::decode("bb52e91c747ac3ab2a5c23d15ee351d5")?)?;
+    let (ck_prime, ik_prime) = derive_ck_ik_prime(&ck, &ik, b"WLAN", &autn)?;
+    let keys = Keys::derive(&ck_prime, &ik_prime, b"0555444333222111");
+    println!("K_aut  {}", hex::encode(keys.k_aut().as_octets()));
+    println!("KAUSF  {}", hex::encode(keys.kausf().as_octets()));
+    Ok(())
+}
+```
+
+```text
+K_aut  0842ea722ff6835bfa2032499fc3ec23c2f0e388b4f07543ffc677f1696d71ea
+KAUSF  f861703cd775590e16c7679ea3874ada866311de290764d760cf76df647ea01c
+```
+
 ## Re-synchronise a USIM
 
 A USIM that finds the SQN of a challenge out of range answers with an
