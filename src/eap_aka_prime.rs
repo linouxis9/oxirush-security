@@ -201,7 +201,7 @@ impl core::fmt::Debug for Keys {
 mod tests {
     use super::*;
 
-    fn octets(text: &str) -> alloc::vec::Vec<u8> {
+    fn octets(text: &str) -> Vec<u8> {
         hex::decode(text.replace(' ', "")).unwrap()
     }
 
