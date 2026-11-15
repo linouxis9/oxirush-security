@@ -21,3 +21,7 @@ cmac = "=0.7.2"
 
 # Not a member of a workspace that the crate may be in.
 [workspace]
+
+# oxirush-utils 0.3.0, until its release.
+[patch.crates-io]
+oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "5d22965aee97b66f962dcc72d7fbbd2d682c0a7f" }
