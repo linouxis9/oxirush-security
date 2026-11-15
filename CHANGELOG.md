@@ -14,6 +14,9 @@ All notable changes to `oxirush-security` are recorded here.
   A.8 and TS 33.401 Annex A.7 from the FC, the algorithm type distinguisher
   and the algorithm identity as numbers, for an identity that names no
   algorithm.
+- `milenage::Sqn::from_seq_ind`, `Sqn::seq` and `Sqn::ind`: SQN = SEQ || IND
+  of TS 33.102 Annex C.1.1.1, with the number of bits of IND that the home
+  network chose.
 
 ### Removed
 

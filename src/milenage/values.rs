@@ -144,6 +144,58 @@ impl Sqn {
         octets[2..].copy_from_slice(&self.0);
         u64::from_be_bytes(octets)
     }
+
+    /// SQN = SEQ || IND, IND of the `ind_bits` least significant bits
+    /// (TS 33.102 Annex C.1.1.1): what a home network that keeps SEQ and
+    /// allocates IND sends. The profiles of Annex C.3 take 5 bits of IND;
+    /// more than 48 are 48.
+    ///
+    /// A SEQ or an IND that its bits cannot hold is
+    /// [`SecurityError::OutOfRange`].
+    ///
+    /// ```
+    /// use oxirush_security::milenage::Sqn;
+    ///
+    /// // The SQN after 0x420 of a home network with 5 bits of IND, IND 0
+    /// let sqn = Sqn::try_from(0x420).unwrap();
+    /// assert_eq!((sqn.seq(5), sqn.ind(5)), (0x21, 0));
+    /// let next = Sqn::from_seq_ind(sqn.seq(5) + 1, 0, 5).unwrap();
+    /// assert_eq!(next.get(), 0x440);
+    /// ```
+    pub fn from_seq_ind(seq: u64, ind: u64, ind_bits: u32) -> Result<Self, SecurityError> {
+        let ind_bits = ind_bits.min(48);
+        let ind_max = (1 << ind_bits) - 1;
+        if ind > ind_max {
+            return Err(SecurityError::OutOfRange {
+                field: "IND",
+                maximum: ind_max,
+                got: ind,
+            });
+        }
+        let seq_max = Self::MAX >> ind_bits;
+        if seq > seq_max {
+            return Err(SecurityError::OutOfRange {
+                field: "SEQ",
+                maximum: seq_max,
+                got: seq,
+            });
+        }
+        Self::try_from(seq << ind_bits | ind)
+    }
+
+    /// SEQ, the bits of SQN = SEQ || IND above its `ind_bits` bits of IND
+    /// (TS 33.102 Annex C.1.1.1): the counter of the home network, and
+    /// what a USIM compares (Annex C.2.2).
+    pub fn seq(&self, ind_bits: u32) -> u64 {
+        self.get().checked_shr(ind_bits).unwrap_or(0)
+    }
+
+    /// IND, the `ind_bits` least significant bits of SQN = SEQ || IND
+    /// (TS 33.102 Annex C.1.2): the element of the array of a USIM that
+    /// SEQ is compared with.
+    pub fn ind(&self, ind_bits: u32) -> u64 {
+        self.get() & 1u64.checked_shl(ind_bits).map_or(u64::MAX, |bit| bit - 1)
+    }
 }
 
 impl TryFrom<u64> for Sqn {
@@ -214,6 +266,39 @@ mod tests {
                 got: 1 << 48,
             })
         );
+    }
+
+    /// TS 33.102 Annex C.1.1.1 (1): SQN = SEQ || IND, IND the least
+    /// significant bits.
+    #[test]
+    fn a_sqn_is_seq_then_ind() {
+        let sqn = Sqn::from_seq_ind(0x8000, 3, 5).unwrap();
+        assert_eq!(sqn.get(), 0x8000 << 5 | 3);
+        assert_eq!((sqn.seq(5), sqn.ind(5)), (0x8000, 3));
+        // Without IND, SEQ is the whole SQN; with 48 bits of it, IND is.
+        assert_eq!(Sqn::from_seq_ind(7, 0, 0).unwrap().get(), 7);
+        assert_eq!((sqn.seq(0), sqn.ind(0)), (sqn.get(), 0));
+        assert_eq!((sqn.seq(48), sqn.ind(48)), (0, sqn.get()));
+        assert_eq!((sqn.seq(64), sqn.ind(64)), (0, sqn.get()));
+        let max = Sqn::from_seq_ind(Sqn::MAX >> 5, 31, 5).unwrap();
+        assert_eq!(max.get(), Sqn::MAX);
+        assert_eq!(
+            Sqn::from_seq_ind(0, 32, 5),
+            Err(SecurityError::OutOfRange {
+                field: "IND",
+                maximum: 31,
+                got: 32,
+            })
+        );
+        assert_eq!(
+            Sqn::from_seq_ind(1 << 43, 0, 5),
+            Err(SecurityError::OutOfRange {
+                field: "SEQ",
+                maximum: (1 << 43) - 1,
+                got: 1 << 43,
+            })
+        );
+        assert_eq!(Sqn::from_seq_ind(0, Sqn::MAX, 64).unwrap().get(), Sqn::MAX);
     }
 
     #[test]
