@@ -102,4 +102,4 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 # oxirush-utils 0.3.0, until its release.
 [patch.crates-io]
-oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "922f5b4c2a33f05d1992632faa5efe605315d61e" }
+oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "5d22965aee97b66f962dcc72d7fbbd2d682c0a7f" }
