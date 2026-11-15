@@ -670,44 +670,48 @@ octets where it was, so make a key where it stays and pass references.
 
 ## Performance
 
-On one core of an AMD Ryzen 7 5700G (Linux 7.0, Rust 1.98.1), at 9dc28da
-on 2026-10-18, for a message of 1,500 octets, alone and as one of sixteen in
-a call of `batch::cipher` or `batch::mac`:
+On one core of an Intel Xeon E5-2680 v4 (Broadwell, 2.4 GHz, a KVM guest,
+Linux 7.0, Rust 1.100.0), at 39b3491 on 2026-11-15, for a message of 1,500
+octets, alone and as one of sixteen in a call of `batch::cipher` or
+`batch::mac`, the median of ten runs:
 
 | | Cipher | MAC | Cipher, one of sixteen | MAC, one of sixteen |
 |---|---|---|---|---|
-| 128-NEA2, 128-NIA2 (AES) | 0.18 µs | 0.94 µs | 0.17 µs | 0.25 µs |
-| 128-NEA1, 128-NIA1 (SNOW 3G) | 2.2 µs | 0.39 µs | 0.62 µs | 0.23 µs |
-| 128-NEA3, 128-NIA3 (ZUC) | 3.1 µs | 3.4 µs | 0.82 µs | 1.1 µs |
+| 128-NEA2, 128-NIA2 (AES) | 0.66 µs | 2.6 µs | 0.58 µs | 0.58 µs |
+| 128-NEA1, 128-NIA1 (SNOW 3G) | 5.3 µs | 0.88 µs | 1.8 µs | 0.51 µs |
+| 128-NEA3, 128-NIA3 (ZUC) | 6.1 µs | 6.6 µs | 1.9 µs | 2.5 µs |
 
-MILENAGE makes an authentication vector in 0.12 µs, and in 0.06 µs as one
+MILENAGE makes an authentication vector in 0.29 µs, and in 0.14 µs as one
 of a thousand in a call of `batch::authentication_vectors`. A key
-derivation takes 0.22 µs, and SUCI concealment 55 µs with Profile A and
-268 µs with Profile B.
+derivation takes 1.7 µs (this processor has no SHA instructions), and SUCI
+concealment 100 µs with Profile A and 682 µs with Profile B.
 [`benches/`](benches/README.md) has the benchmarks, the other figures and
 how to profile.
 
 ### Against other implementations
 
-The same inputs, one call for each operation, at 9dc28da on core 2 of the
+The same inputs, one call for each operation, at 39b3491 on core 3 of the
 same machine, against milenage 0.3.1 and 0.1.6, aes 0.8.4 (with ctr 0.9.2
 and cmac 0.7.2), zuc 0.4.1, cryptography-rs 0.8.0, Open5GS v2.8.0 and
-free5GC (util v1.3.2, nas v1.2.3). A ratio is the time of the other
-implementation over this crate's, and "about the same" is within 10 %:
+free5GC (util v1.3.2, nas v1.2.3, on Go 1.27.4). A ratio is the median
+time of the other implementation over this crate's, of ten rounds in
+turns, given where the ten times of the two do not overlap, and "about the
+same" where they do. Two builds of the same code can differ by 7 to 15 %,
+so a ratio between 0.9 and 1.1 says little:
 
 | Operation | This crate | Other / this crate |
 |---|---|---|
-| MILENAGE, an authentication vector | 120.9 ns | milenage 0.3.1 5.9x, milenage 0.1.6 2.0x, Open5GS 3.4x, free5GC 4.4x |
-| 128-NEA1 (SNOW 3G), 1,500 octets | 2,193 ns | cryptography-rs 1.4x, Open5GS 1.3x, free5GC 200x |
-| 128-NEA2 (AES-CTR), 1,500 octets | 178.3 ns | aes and ctr about the same, Open5GS 24x, free5GC 2.5x |
-| 128-NEA3 (ZUC), 1,500 octets | 3,102 ns | zuc and cryptography-rs about the same, Open5GS 2.4x, free5GC 3.5x |
-| 128-NIA1 (SNOW 3G), 1,500 octets | 389.1 ns | Open5GS 1,400x, free5GC 1,100x |
-| 128-NIA2 (AES-CMAC), 1,500 octets | 938.3 ns | aes and cmac about the same, Open5GS 4.4x, free5GC 1.9x |
-| 128-NIA3 (ZUC), 1,500 octets | 3,417 ns | zuc 1.6x, Open5GS 10x |
+| MILENAGE, an authentication vector | 294 ns | milenage 0.3.1 4.4x, milenage 0.1.6 2.0x, Open5GS 2.5x, free5GC 4.5x |
+| 128-NEA1 (SNOW 3G), 1,500 octets | 5,390 ns | cryptography-rs 1.2x, Open5GS 0.90x, free5GC 200x |
+| 128-NEA2 (AES-CTR), 1,500 octets | 660 ns | aes and ctr about the same, Open5GS 11x, free5GC 1.9x |
+| 128-NEA3 (ZUC), 1,500 octets | 6,072 ns | zuc 0.93x, cryptography-rs 0.92x, Open5GS 2.2x, free5GC 3.6x |
+| 128-NIA1 (SNOW 3G), 1,500 octets | 876 ns | Open5GS 1,200x, free5GC 1,100x |
+| 128-NIA2 (AES-CMAC), 1,500 octets | 2,618 ns | aes and cmac 0.97x, Open5GS 2.6x, free5GC 1.6x |
+| 128-NIA3 (ZUC), 1,500 octets | 6,470 ns | zuc 1.7x, Open5GS 9.6x, free5GC 9.2x |
 
 cryptography-rs also has `Ct` generators, which read no table at an index
-taken from the state, as this crate does: they take 20x for SNOW 3G and
-13x for ZUC. [`benches/`](benches/README.md#against-other-implementations)
+taken from the state, as this crate does: they take 19x for SNOW 3G and
+16x for ZUC. [`benches/`](benches/README.md#against-other-implementations)
 has every figure, with cycles, instructions, allocations and peak memory,
 and the method. `benches/compare/compare.sh 3` runs every row on core 3:
 
