@@ -69,7 +69,8 @@ A SNOW 3G that reads its S-boxes at indices taken from its state can be
 faster on a short message. The S-box SQ is the difference: this crate reads
 it through sixteen shuffles and four choices for each three clocks, so that
 no address depends on the state, and a message of 64 octets is 49 clocks,
-33 of them its initialization. The README compares 1,500 octets with
+33 of them its initialization. [Against other
+implementations](#against-other-implementations) compares 1,500 octets with
 Open5GS's.
 
 AES is the crate's own key expansion and rounds on the AES instruction:
@@ -83,8 +84,8 @@ together.
 
 A key derivation, one HMAC-SHA-256, takes 1.7 µs on this processor, which
 has no SHA instructions, and 1.6 µs in 0.2.0, whose HMAC did not wipe its
-state. SUCI deconcealment takes 76 µs with Profile A and 356 µs with
-Profile B; the README has the time of concealment.
+state. SUCI concealment takes 100 µs with Profile A and 682 µs with
+Profile B, and deconcealment 76 µs and 356 µs.
 
 ## A key kept between messages
 

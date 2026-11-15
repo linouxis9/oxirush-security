@@ -224,14 +224,9 @@
 //!   `aes`, `sha2`, `x25519-dalek` or `p256` may go deeper than what was
 //!   seen.
 //!
-//! On an AMD Ryzen 7 5700G the clearing adds about 16 ns to a message of
-//! AES with a keyed context, 18 ns to one from a key, 26 to 34 ns to a
-//! message of SNOW 3G or ZUC or to a derivation, and 129 to 157 ns to a
-//! batch of sixteen of SNOW 3G, ZUC or 128-EIA2. For 64 octets that is 6 to
-//! 12 % of SNOW 3G and of ZUC, and it more than doubles 128-EEA2 with a
-//! keyed context, from 12 ns to 28. A batch pays once for all its messages:
-//! sixteen of 128-EEA2 with their contexts take 262 ns in one call, and 462
-//! one by one. `benches/README.md` in the repository has the figures.
+//! The clearing costs about the same for any message, so it weighs most on
+//! a short one, and a batch pays it once for all its messages.
+//! `benches/README.md` in the repository has what it costs.
 //!
 //! A program that cannot afford it is built with
 //! `RUSTFLAGS="--cfg oxirush_security_unwiped"`. The named values are

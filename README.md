@@ -353,14 +353,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Protect a message that oxirush-nas encodes
-
-[oxirush-nas](https://github.com/linouxis9/oxirush-nas) encodes the
-message, and its security context calls these functions: its README shows
-a message protected and checked. A protected message starts with its
-security header (TS 24.501, 9.1.1): the extended protocol discriminator,
-the security header type, the MAC and the sequence number. The ciphered
-message follows.
+[oxirush-nas](https://github.com/linouxis9/oxirush-nas) writes the security
+header of a protected message, and its security context calls these
+functions.
 
 ## Protect the messages of many UEs in one call
 
@@ -650,11 +645,11 @@ the challenge. Identities, and RAND, AUTN, SQN and AUTS, which travel in
 clear, are printed whole.
 
 When an operation that uses a key returns, the crate also zeroes the stack
-that it used and, on x86-64 and AArch64, the registers. That costs 13 to
-34 ns a message, and a batch pays it once;
-`RUSTFLAGS="--cfg oxirush_security_unwiped"` builds the crate without it. A
-copy that the program makes is its own: a key that is moved leaves its
-octets where it was, so make a key where it stays and pass references.
+that it used and, on x86-64 and AArch64, the registers. A batch pays for it
+once, and `RUSTFLAGS="--cfg oxirush_security_unwiped"` builds the crate
+without it ([`benches/`](benches/README.md#what-the-clearing-costs) has what
+it costs). A key that is moved leaves its octets where it was, so make a key
+where it stays and pass references.
 
 ## Limits
 
@@ -670,54 +665,20 @@ octets where it was, so make a key where it stays and pass references.
 
 ## Performance
 
-On one core of an Intel Xeon E5-2680 v4 (Broadwell, 2.4 GHz, a KVM guest,
-Linux 7.0, Rust 1.100.0), at 39b3491 on 2026-11-15, for a message of 1,500
-octets, alone and as one of sixteen in a call of `batch::cipher` or
-`batch::mac`, the median of ten runs:
-
-| | Cipher | MAC | Cipher, one of sixteen | MAC, one of sixteen |
-|---|---|---|---|---|
-| 128-NEA2, 128-NIA2 (AES) | 0.66 µs | 2.6 µs | 0.58 µs | 0.58 µs |
-| 128-NEA1, 128-NIA1 (SNOW 3G) | 5.3 µs | 0.88 µs | 1.8 µs | 0.51 µs |
-| 128-NEA3, 128-NIA3 (ZUC) | 6.1 µs | 6.6 µs | 1.9 µs | 2.5 µs |
-
-MILENAGE makes an authentication vector in 0.29 µs, and in 0.14 µs as one
-of a thousand in a call of `batch::authentication_vectors`. A key
-derivation takes 1.7 µs (this processor has no SHA instructions), and SUCI
-concealment 100 µs with Profile A and 682 µs with Profile B.
-[`benches/`](benches/README.md) has the benchmarks, the other figures and
-how to profile.
-
-### Against other implementations
-
-The same inputs, one call for each operation, at 39b3491 on core 3 of the
-same machine, against milenage 0.3.1 and 0.1.6, aes 0.8.4 (with ctr 0.9.2
-and cmac 0.7.2), zuc 0.4.1, cryptography-rs 0.8.0, Open5GS v2.8.0 and
-free5GC (util v1.3.2, nas v1.2.3, on Go 1.27.4). A ratio is the median
-time of the other implementation over this crate's, of ten rounds in
-turns, given where the ten times of the two do not overlap, and "about the
-same" where they do. Two builds of the same code can differ by 7 to 15 %,
-so a ratio between 0.9 and 1.1 says little:
-
-| Operation | This crate | Other / this crate |
+| Operation | Time | Other implementations, time over this crate's |
 |---|---|---|
-| MILENAGE, an authentication vector | 294 ns | milenage 0.3.1 4.4x, milenage 0.1.6 2.0x, Open5GS 2.5x, free5GC 4.5x |
-| 128-NEA1 (SNOW 3G), 1,500 octets | 5,390 ns | cryptography-rs 1.2x, Open5GS 0.90x, free5GC 200x |
-| 128-NEA2 (AES-CTR), 1,500 octets | 660 ns | aes and ctr about the same, Open5GS 11x, free5GC 1.9x |
-| 128-NEA3 (ZUC), 1,500 octets | 6,072 ns | zuc 0.93x, cryptography-rs 0.92x, Open5GS 2.2x, free5GC 3.6x |
+| MILENAGE, an authentication vector | 294 ns | milenage 0.3.1 4.4x, Open5GS 2.5x, free5GC 4.5x |
+| 128-NEA2 (AES-CTR), 1,500 octets | 660 ns | Open5GS 11x, free5GC 1.9x |
+| 128-NIA2 (AES-CMAC), 1,500 octets | 2.6 µs | Open5GS 2.6x, free5GC 1.6x |
 | 128-NIA1 (SNOW 3G), 1,500 octets | 876 ns | Open5GS 1,200x, free5GC 1,100x |
-| 128-NIA2 (AES-CMAC), 1,500 octets | 2,618 ns | aes and cmac 0.97x, Open5GS 2.6x, free5GC 1.6x |
-| 128-NIA3 (ZUC), 1,500 octets | 6,470 ns | zuc 1.7x, Open5GS 9.6x, free5GC 9.2x |
+| 128-NEA1 (SNOW 3G), 1,500 octets, alone and one of sixteen in a batch | 5.3 µs, 1.8 µs | |
+| SUCI concealment, Profile A | 100 µs | |
 
-cryptography-rs also has `Ct` generators, which read no table at an index
-taken from the state, as this crate does: they take 19x for SNOW 3G and
-16x for ZUC. [`benches/`](benches/README.md#against-other-implementations)
-has every figure, with cycles, instructions, allocations and peak memory,
-and the method. `benches/compare/compare.sh 3` runs every row on core 3:
-
-```sh
-benches/compare/compare.sh 3
-```
+Medians of ten rounds on one core of an Intel Xeon E5-2680 v4 (a KVM guest,
+Linux 7.0, Rust 1.100.0), at 39b3491 on 2026-11-15; a ratio is given only
+where the ten times of the two implementations do not overlap.
+[`benches/README.md`](benches/README.md) has every figure, the other
+implementations, the method and the commands.
 
 ## Tests and fuzzing
 
@@ -728,34 +689,22 @@ python3 -I tests/interworking_keys.py
 cargo +nightly fuzz run algorithms -- -max_total_time=60
 ```
 
-The algorithms, MILENAGE and SUCI are tested on the 3GPP test data, and
-MILENAGE on every set of TS 35.207 and TS 35.208. TS 33.501 has no test data
-for its key derivations: a second implementation,
-[`tests/five_g_aka_chain.py`](tests/five_g_aka_chain.py), derives the 5G AKA
-chain, and [`tests/interworking_keys.py`](tests/interworking_keys.py) the
-keys of a change between 5GS and EPS, and of four handovers back and forth
-that each map the context of the one before.
+The algorithms, MILENAGE and SUCI are tested on the 3GPP test data. TS 33.501
+has none for its key derivations, so two Python programs derive them a
+second time: the 5G AKA chain, and the keys of a change between 5GS and EPS
+over four handovers back and forth. In the repository,
 [`differential/`](https://github.com/linouxis9/oxirush-security/tree/master/differential)
-compares MILENAGE with the `milenage` crate, Open5GS and free5GC on a
-million random subscribers.
+compares MILENAGE with the `milenage` crate, Open5GS and free5GC on a million
+random subscribers, and
 [`leftovers/`](https://github.com/linouxis9/oxirush-security/tree/master/leftovers)
-searches the memory for keys, round keys and keystream after each
-operation, and finds none. CI compares the vector code with the scalar code
-on x86-64, AArch64 and an emulated AArch64 processor
-([`emulated-aarch64/`](https://github.com/linouxis9/oxirush-security/tree/master/emulated-aarch64)),
-and fuzzes the six targets of
-[`fuzz/`](https://github.com/linouxis9/oxirush-security/tree/master/fuzz).
-The only `unsafe` code calls the vector code and clears the stack and the
-registers. `examples/` has five programs: `key_derivation_nas_5gs`,
-`key_derivation_nas_eps`, `integrity_nas_5gs`, `integrity_nas_eps` and
-`suci_conceal`. Run one with `cargo run --example suci_conceal --features suci`.
+searches the memory for keys after each operation. CI compares the vector
+code with the scalar code on x86-64, AArch64 and an emulated AArch64, and
+fuzzes the six targets of `fuzz/`. `examples/` has five programs, such as
+`cargo run --example suci_conceal --features suci`.
 
-Each Rust block of this page checks what it gives with `assert_eq!`, and runs
-as a documentation test of the crate.
 [The documentation](https://docs.rs/oxirush-security) has the terms, each
-function with its clause and the values it is tested against, what an
-operation leaves, and how the code was checked for a time that does not
-depend on a secret.
+function with its clause and its test values, and how the code was checked
+for a time that does not depend on a secret.
 
 A pull request comes with a test for what it changes. Sign off your commits
 (`git commit -s`): by contributing you agree to the [Developer Certificate
