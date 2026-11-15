@@ -12,16 +12,20 @@
 # v2.8.0 and meson builds its libraries of NAS security. They are kept in
 # target/compare beside this script, or under CARGO_TARGET_DIR.
 #
-# Each case runs on one core (3 by default) three times, for about 0.3 s,
-# and the table has the lowest time. Cycles and instructions per operation
-# are those of perf stat, between the least of three runs of N operations
-# and of three of 2N: PERF="sudo -n perf" where the kernel keeps perf from
-# users (kernel.perf_event_paranoid above 2). Needs cargo, go, git, meson,
-# ninja, a C compiler and the libraries that the meson setup of Open5GS asks
-# for.
+# Each implementation of a case runs once a round, in turns, ROUNDS rounds
+# (10 by default) of about 0.3 s each, on one core (3 by default), so that a
+# busy moment of the machine falls on all of them. The table has the median
+# time of the rounds and their spread, the lowest and the highest; the time
+# against oxirush-security is the ratio of the medians, given only where the
+# two spreads do not overlap. Cycles and instructions per operation are the
+# median of those of perf stat, between a run of N operations and one of 2N
+# in each round: PERF="sudo -n perf" where the kernel keeps perf from users
+# (kernel.perf_event_paranoid above 2). Needs cargo, go, git, meson, ninja,
+# a C compiler and the libraries that the meson setup of Open5GS asks for.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 core=${1:-3}
+rounds=${ROUNDS:-10}
 perf=${PERF:-perf}
 target=${CARGO_TARGET_DIR:-$here/target}
 out=$target/compare
@@ -91,42 +95,72 @@ operation() {
 	esac
 }
 
-# The lowest of three runs: ns, allocations, octets allocated, peak KiB.
-measure() { # command iterations
-	for _ in 1 2 3; do taskset -c "$core" $1 "$2" 2> /dev/null; done | sort -n | head -1
-}
-
-# Cycles and instructions per operation: the least of three runs of N
-# operations and of three of 2N, since a busy neighbour of the core adds
-# cycles.
+# Cycles and instructions per operation, between a run of N operations and
+# one of 2N.
 counted() { # command iterations
 	for iterations in "$2" $(($2 * 2)); do
-		for _ in 1 2 3; do
-			$perf stat -x, -e cycles:u,instructions:u -o "$out/perf" taskset -c "$core" $1 "$iterations" > /dev/null 2>&1
-			awk -F, '$3 ~ /^(cycles|instructions)/ { printf "%s ", $1 }' "$out/perf"
-			echo
-		done | sort -n | head -1
+		$perf stat -x, -e cycles:u,instructions:u -o "$out/perf" taskset -c "$core" $1 "$iterations" > /dev/null 2>&1
+		awk -F, '$3 ~ /^(cycles|instructions)/ { printf "%s ", $1 }' "$out/perf"
+		echo
 	done | awk -v n="$2" 'NR == 1 { c = $1; i = $2 } NR == 2 { printf "%.0f %.0f", ($1 - c) / n, ($2 - i) / n }'
 }
 
-echo "$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ //'), core $core; load before: $(cut -d' ' -f1-3 /proc/loadavg)"
-echo
-echo "| Operation | | ns | Cycles | Instructions | Allocations | Octets allocated | Peak memory | Time against oxirush-security |"
-echo "|---|---|---|---|---|---|---|---|---|"
-for case in av nea1 nea2 nea3 nia1 nia2 nia3; do
-	mine=""
+cases="av nea1 nea2 nea3 nia1 nia2 nia3"
+rows=$out/rows
+: > "$rows"
+echo "$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ //'), core $core, $rounds rounds; load before: $(cut -d' ' -f1-3 /proc/loadavg)"
+# The iterations of each run: about 0.3 s, from the time of 200 operations
+for case in $cases; do
 	for implementation in $(implementations $case); do
+		one=$(taskset -c "$core" $(program $implementation) $case 200 2> /dev/null | cut -d' ' -f1)
+		echo "$case $implementation $(awk -v ns="$one" 'BEGIN { n = int(3e8 / ns); print (n < 200 ? 200 : (n > 2000000 ? 2000000 : n)) }')"
+	done
+done > "$out/iterations"
+round=0
+while [ "$round" -lt "$rounds" ]; do
+	while read -r case implementation iterations; do
 		command="$(program $implementation) $case"
-		# About 0.3 s a run, from the time of 200 operations
-		one=$(taskset -c "$core" $command 200 2> /dev/null | cut -d' ' -f1)
-		iterations=$(awk -v ns="$one" 'BEGIN { n = int(3e8 / ns); print (n < 200 ? 200 : (n > 2000000 ? 2000000 : n)) }')
-		set -- $(measure "$command" $iterations) $(counted "$command" $iterations 2> /dev/null || echo - -)
-		[ -z "$mine" ] && mine=$1
-		ratio=$(awk -v a="$1" -v b="$mine" 'BEGIN { printf "%.2f", a / b }')
-		memory=$(awk -v k="$4" 'BEGIN { printf "%.1f MiB", k / 1024 }')
+		# ns, allocations, octets allocated, peak KiB, cycles, instructions
+		set -- $(taskset -c "$core" $command "$iterations" 2> /dev/null) $(counted "$command" "$iterations" 2> /dev/null || echo - -)
+		echo "$case|$implementation|$1|$2|$3|$4|$5|$6" >> "$rows"
+	done < "$out/iterations"
+	round=$((round + 1))
+done
+
+echo
+echo "| Operation | | ns | Lowest and highest | Cycles | Instructions | Allocations | Octets allocated | Peak memory | Time against oxirush-security |"
+echo "|---|---|---|---|---|---|---|---|---|---|"
+for case in $cases; do
+	for implementation in $(implementations $case); do
 		row=""
-		[ $implementation = oxirush-security ] && row=$(operation $case) && ratio=""
-		echo "| $row | $(name $implementation $case) | $1 | $5 | $6 | $2 | $3 | $memory | $ratio |"
+		[ $implementation = oxirush-security ] && row=$(operation $case)
+		awk -F'|' -v wanted="$case" -v implementation="$implementation" -v row="$row" -v name="$(name $implementation $case)" '
+			function median(list, count,    sorted, i, j, t) {
+				for (i = 1; i <= count; i++) sorted[i] = list[i]
+				for (i = 2; i <= count; i++)
+					for (j = i; j > 1 && sorted[j - 1] + 0 > sorted[j] + 0; j--) {
+						t = sorted[j]; sorted[j] = sorted[j - 1]; sorted[j - 1] = t
+					}
+				return count % 2 ? sorted[(count + 1) / 2] : (sorted[count / 2] + sorted[count / 2 + 1]) / 2
+			}
+			$1 != wanted { next }
+			$2 == "oxirush-security" { ours[++o] = $3; if (o == 1 || $3 < ourlow) ourlow = $3; if (o == 1 || $3 > ourhigh) ourhigh = $3 }
+			$2 == implementation {
+				n++; ns[n] = $3; allocations[n] = $4; octets[n] = $5; peak[n] = $6; cycles[n] = $7; instructions[n] = $8
+				if (n == 1 || $3 < low) low = $3
+				if (n == 1 || $3 > high) high = $3
+			}
+			END {
+				m = median(ns, n)
+				ratio = ""
+				if (implementation != "oxirush-security")
+					ratio = (low > ourhigh || high < ourlow) ? sprintf("%.2f", m / median(ours, o)) : "spreads overlap"
+				format = m < 1000 ? "%.1f" : "%.0f"
+				printf "| %s | %s | " format " | " format " to " format " | %s | %s | %s | %s | %.1f MiB | %s |\n", row, name, m, low, high,
+					cycles[1] == "-" ? "-" : sprintf("%.0f", median(cycles, n)),
+					instructions[1] == "-" ? "-" : sprintf("%.0f", median(instructions, n)),
+					median(allocations, n), median(octets, n), median(peak, n) / 1024, ratio
+			}' "$rows"
 	done
 done
 echo
