@@ -21,6 +21,8 @@ All notable changes to `oxirush-security` are recorded here.
   a UE answers to a challenge, with a USIM that keeps one SQNMS: MAC-A, then
   the separation bit of the AMF, then SQN above SQNMS, or the AUTS of SQNMS
   (TS 33.102 §6.3.3).
+- `eap_aka_prime::KAut::mac`: the value of AT_MAC, HMAC-SHA-256-128 of K_aut
+  (RFC 9048 §3.4.2).
 
 ### Removed
 

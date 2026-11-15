@@ -75,6 +75,20 @@ key! {
     Emsk, 64
 }
 
+impl KAut {
+    /// The value of the AT_MAC of `packet` (RFC 9048 §3.4.2, RFC 4187
+    /// §10.15): the first 128 bits of HMAC-SHA-256 keyed with K_aut over
+    /// the EAP packet whose AT_MAC value is 16 zeros. A sender writes it
+    /// there; a receiver zeros the value that it received, and compares it
+    /// with this one by [`constant_time_eq`](crate::constant_time_eq).
+    pub fn mac(&self, packet: &[u8]) -> [u8; 16] {
+        wipe::derivation(|| {
+            let full = Zeroizing::new(crate::common::sha256::hmac_sha256(self.as_octets(), packet));
+            *full.first_chunk().expect("32 octets")
+        })
+    }
+}
+
 /// FC of the derivation of CK' and IK' (TS 33.402 Annex A.2).
 const FC: u8 = 0x20;
 
@@ -319,5 +333,19 @@ mod tests {
             derive_ck_ik_prime(&ck, &ik, &name, &autn),
             Err(SecurityError::InputTooLong { .. })
         ));
+    }
+
+    /// AT_MAC is the first 128 bits of HMAC-SHA-256 of K_aut over the
+    /// packet whose AT_MAC value is zeros; the value here is Python's
+    /// `hmac` of that packet.
+    #[test]
+    fn at_mac_is_hmac_sha_256_128_of_k_aut() {
+        let k_aut = KAut::new(&core::array::from_fn(|at| at as u8));
+        let mut packet = [0; 28];
+        packet[..12].copy_from_slice(&[1, 7, 0, 28, 50, 1, 0, 0, 11, 5, 0, 0]);
+        assert_eq!(
+            k_aut.mac(&packet)[..],
+            octets("b3d12d5e331e90465f729a07ffc24dbb")
+        );
     }
 }
