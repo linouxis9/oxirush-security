@@ -5,8 +5,8 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 The security functions of 5GS and EPS in Rust, per 3GPP TS 35.206,
-TS 33.102, TS 33.501 and TS 33.401: MILENAGE, key derivation, NAS integrity
-and ciphering, and SUCI concealment.
+TS 33.102, TS 33.501 and TS 33.401: MILENAGE, 5G AKA and EAP-AKA', key
+derivation, NAS integrity and ciphering, and SUCI concealment.
 
 ```rust
 use oxirush_security::identity::Algorithm;
@@ -157,7 +157,7 @@ and the EMSK, whose first 256 bits are KAUSF (RFC 9048, its Appendix D here).
 
 ```rust
 use oxirush_security::eap_aka_prime::{Keys, derive_ck_ik_prime};
-use oxirush_security::{Autn, Ck, Ik};
+use oxirush_security::{Autn, Ck, Ik, constant_time_eq};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ck = Ck::from_slice(&hex::decode("5349fbe098649f948f5d2e973a81c00f")?)?;
@@ -173,6 +173,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         hex::encode(keys.kausf().as_octets()),
         "f861703cd775590e16c7679ea3874ada866311de290764d760cf76df647ea01c",
     );
+
+    // The server: an EAP-Request/AKA'-Challenge with its AT_MAC alone. The
+    // MAC is computed over the packet with a zero AT_MAC value, then written there
+    let mut packet = [0; 28];
+    packet[..12].copy_from_slice(&[1, 7, 0, 28, 50, 1, 0, 0, 11, 5, 0, 0]);
+    let mac = keys.k_aut().mac(&packet);
+    assert_eq!(hex::encode(mac), "b97e71d83feb98764385f6fb57fed122");
+    packet[12..].copy_from_slice(&mac);
+
+    // The peer: it zeros the value that it received, and compares
+    let received: [u8; 16] = packet[12..].try_into()?;
+    packet[12..].fill(0);
+    assert!(constant_time_eq(&keys.k_aut().mac(&packet), &received));
     Ok(())
 }
 ```
@@ -645,8 +658,9 @@ octets where it was, so make a key where it stays and pass references.
 
 ## Limits
 
-- AKA: it has MILENAGE, not TUAK. Whether a SQN is fresh, and whether an
-  AMF has the separation bit, are the caller's to decide.
+- AKA: it has MILENAGE, not TUAK. `answer_challenge` is a USIM that keeps
+  one SQNMS; a UE with the array of SQNs of TS 33.102 Annex C judges the
+  result of `check_autn` itself.
 - State: it stores no key and keeps no NAS COUNT or SQN. The caller passes
   them, and `NasCount` gives the next one and that of a received message.
 - NAS messages: it protects octets.

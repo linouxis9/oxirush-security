@@ -6,29 +6,28 @@ All notable changes to `oxirush-security` are recorded here.
 
 ### Added
 
-- `eap_aka_prime`: the keys of EAP-AKA' (RFC 9048), CK' and IK' of the
-  network name, then K_encr, K_aut, K_re, the MSK and the EMSK of PRF', and
-  KAUSF of the EMSK (TS 33.501 Annex F), tested with the vectors of RFC 9048
-  Appendix D.
-- `kdf::derive_algorithm_key`: the key of an algorithm of TS 33.501 Annex
-  A.8 and TS 33.401 Annex A.7 from the FC, the algorithm type distinguisher
-  and the algorithm identity as numbers, for an identity that names no
-  algorithm.
-- `milenage::Sqn::from_seq_ind`, `Sqn::seq` and `Sqn::ind`: SQN = SEQ || IND
-  of TS 33.102 Annex C.1.1.1, with the number of bits of IND that the home
-  network chose.
-- `milenage::Milenage::answer_challenge` and `milenage::ChallengeAnswer`: what
-  a UE answers to a challenge, with a USIM that keeps one SQNMS: MAC-A, then
-  the separation bit of the AMF, then SQN above SQNMS, or the AUTS of SQNMS
-  (TS 33.102 §6.3.3).
+- `eap_aka_prime`: the keys of EAP-AKA' (RFC 9048). `derive_ck_ik_prime`
+  binds CK and IK to the network name, `Keys::derive` gives K_encr, K_aut,
+  K_re, the MSK and the EMSK, and `Keys::kausf` takes KAUSF from the EMSK
+  (TS 33.501 Annex F). Tested with the four cases of RFC 9048 Appendix D.
 - `eap_aka_prime::KAut::mac`: the value of AT_MAC, HMAC-SHA-256-128 of K_aut
   (RFC 9048 §3.4.2).
+- `milenage::Milenage::answer_challenge` and `milenage::ChallengeAnswer`: the
+  answer of a UE whose USIM keeps one SQNMS. It checks MAC-A, then the
+  separation bit of the AMF, then that SQN is above SQNMS, and gives RES or
+  the AUTS of SQNMS (TS 33.102 §6.3.3).
+- `milenage::Sqn::from_seq_ind`, `Sqn::seq` and `Sqn::ind`: SQN = SEQ || IND
+  (TS 33.102 Annex C.1.1.1), with the number of IND bits that the home
+  network chose.
+- `kdf::derive_algorithm_key`: the key of an algorithm (TS 33.501 Annex A.8,
+  TS 33.401 Annex A.7) from the FC, the algorithm type distinguisher and the
+  algorithm identity as numbers, for an identity that names no algorithm.
 
 ### Removed
 
-- `readme/`, the package that compared what each block of the README and of the
-  front page of the documentation printed with the text under it: the blocks check
-  what they give with `assert_eq!`, and run as documentation tests.
+- `readme/`, the repository's package that compared the output of each
+  README block with the text under it. The blocks check their results with
+  `assert_eq!` and run as documentation tests.
 
 ## 0.4.0 - 2026-11-07
 

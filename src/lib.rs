@@ -15,9 +15,9 @@
    limitations under the License.
 */
 
-//! The security functions of 5GS and EPS: MILENAGE, key derivation, NAS
-//! integrity and ciphering, and SUCI concealment, per 3GPP TS 35.206,
-//! TS 33.102, TS 33.501 and TS 33.401.
+//! The security functions of 5GS and EPS: MILENAGE, 5G AKA and EAP-AKA',
+//! key derivation, NAS integrity and ciphering, and SUCI concealment, per
+//! 3GPP TS 35.206, TS 33.102, TS 33.501 and TS 33.401.
 //!
 //! ```rust
 //! use oxirush_security::identity::Algorithm;
@@ -68,8 +68,9 @@
 //!
 //! | Task | Items |
 //! |------|-------|
-//! | Run 5G AKA, from MILENAGE to KAMF | [`milenage::Milenage::authentication_vector`], [`milenage::Milenage::check_autn`], [`milenage::Milenage::answer_challenge`], [`nas_5gs::derive_kausf`], [`nas_5gs::derive_kseaf`], [`nas_5gs::derive_kamf`], [`nas_5gs::XresStar::accepts`] |
-//! | Re-synchronise a USIM | [`milenage::Milenage::auts`], [`milenage::Milenage::verify_auts`] |
+//! | Run 5G AKA, from MILENAGE to KAMF | [`milenage::Milenage::authentication_vector`], [`milenage::Milenage::check_autn`], [`nas_5gs::derive_kausf`], [`nas_5gs::derive_kseaf`], [`nas_5gs::derive_kamf`], [`nas_5gs::XresStar::accepts`] |
+//! | Derive the keys of EAP-AKA' | [`eap_aka_prime::derive_ck_ik_prime`], [`eap_aka_prime::Keys`], [`eap_aka_prime::KAut::mac`] |
+//! | Re-synchronise a USIM | [`milenage::Milenage::answer_challenge`], [`milenage::Milenage::auts`], [`milenage::Milenage::verify_auts`], [`milenage::Sqn::from_seq_ind`] |
 //! | Make the vectors of many subscribers in one call, with the `batch` feature | [`batch::authentication_vectors`], [`batch::check_autn`] |
 //! | Protect and check a NAS message | [`nas_5gs::derive_knas_enc`], [`nas_5gs::derive_knas_int`], [`nas_5gs::nas_cipher`], [`nas_5gs::nas_mac`], [`NasCount::estimate`], [`constant_time_eq`] |
 //! | The same in EPS | [`nas_eps::derive_kasme`], [`nas_eps::nas_cipher`], [`nas_eps::nas_mac`], [`nas_eps::service_request_short_mac`] |
@@ -87,9 +88,10 @@
 //! | The crate root | What 5GS and EPS share: the algorithms, their inputs, the keyed contexts, CK, IK, RAND and AUTN, the PLMN and TBCD |
 //! | [`nas_5gs`] | TS 33.501: the keys and their derivations, NAS integrity and ciphering, the SUPI, the SUCI and the 5G-GUTI |
 //! | [`nas_eps`] | TS 33.401: the keys and their derivations, NAS integrity and ciphering, the short MAC of a SERVICE REQUEST, HASHMME |
-//! | [`milenage`] | TS 35.206 and TS 33.102: MILENAGE, its keys and values, the authentication vector of a home network, the check of AUTN in a USIM and the AUTS of a re-synchronisation |
+//! | [`milenage`] | TS 35.206 and TS 33.102: MILENAGE, its keys and values, the authentication vector of a home network, the check of AUTN in a USIM, the answer of a USIM and the AUTS of a re-synchronisation |
+//! | [`eap_aka_prime`] | RFC 9048: CK' and IK', the keys of EAP-AKA', KAUSF of its EMSK, and the value of AT_MAC |
 //! | [`batch`] | With the feature `batch`: many messages, or the MILENAGE of many subscribers, in one call |
-//! | [`kdf`] | The KDF of TS 33.220, for a derivation that the crate does not have |
+//! | [`kdf`] | The KDF of TS 33.220 and the key of an algorithm by its numbers, for a derivation that the crate does not have |
 //!
 //! An item has one path. The two systems have keys and functions of the
 //! same name, [`nas_5gs::KNasInt`] and [`nas_eps::KNasInt`],
@@ -110,8 +112,9 @@
 //! | Several messages at once, with the `batch` feature | [`batch::cipher`], [`batch::mac`] on a [`batch::CipherJob`] or a [`batch::MacJob`] for each message | The same | 3GPP |
 //! | Keystream generators | [`Snow3G`], [`Zuc`] | TS 35.216, TS 35.222 | 3GPP |
 //! | MILENAGE | `milenage::Milenage`: f1, f1\*, f2 to f5, f5\*; `milenage::Opc::from_op` | TS 35.206 §4.1 | 3GPP, other implementations |
-//! | Authentication | `authentication_vector`, `check_autn`, `auts`, `verify_auts` of `milenage::Milenage`, and their batches | TS 33.102 §6.3.2, §6.3.3 and §6.3.5 | other implementations |
+//! | Authentication | `authentication_vector`, `check_autn`, `answer_challenge`, `auts`, `verify_auts` of `milenage::Milenage`, and their batches; SQN = SEQ \|\| IND (`milenage::Sqn::from_seq_ind`) | TS 33.102 §6.3.2, §6.3.3, §6.3.5 and Annex C.1.1.1 | other implementations |
 //! | 5G AKA | `derive_kausf`, `compute_res_star`, `compute_xres_star`, `compute_hres_star`, `compute_hxres_star`, `derive_kseaf`, `derive_kamf`, `derive_knas_enc`, `derive_knas_int`, `derive_kgnb`, `derive_nh` | TS 33.501 Annex A.2 and A.4 to A.10 | other implementations |
+//! | EAP-AKA' | `eap_aka_prime::derive_ck_ik_prime`, `eap_aka_prime::Keys` (K_encr, K_aut, K_re, MSK, EMSK and KAUSF), `eap_aka_prime::KAut::mac` | RFC 9048 §3.3 and §3.4.2, TS 33.501 Annex F | RFC |
 //! | Other 5GS derivations | KAMF', KN3IWF, KNG-RAN\*, KSN, the RRC and UP keys, the SoR and UPU MACs, the TNAP usage keys, KIAB | TS 33.501 Annex A | calculated |
 //! | EPS derivations | KASME, KNASint and KNASenc, KeNB, NH, KeNB\*, the AS keys, the NAS token, the CK'/IK' mapping, SRVCC, S-KeNB, S-KgNB, LWIP-PSK, S-KWT, K_n | TS 33.401 Annex A | calculated |
 //! | HASHMME | `nas_eps::compute_hash_mme` | TS 33.401 Annex I.2 | other implementations |
@@ -293,8 +296,8 @@
 //! | Kind | What is tested against it |
 //! |------|---------------------------|
 //! | **3GPP** test data | 128-EEA1/2/3 and 128-EIA1/2/3 on the TS 33.401 Annex C, TS 35.217, TS 35.218 and TS 35.223 sets, including non-byte-aligned EEA1, EEA2, EEA3, EIA1, EIA2 and EIA3 inputs; the SNOW 3G and ZUC keystreams; SUCI on every TS 33.501 Annex C.4 data set; MILENAGE on the six sets of TS 35.207 with their intermediate values and on the twenty of TS 35.208, of which set 2 repeats set 1, and its AES on the twenty Rijndael sets of TS 35.208 and the round keys of TS 35.207. |
-//! | **RFC and FIPS** test data | HMAC-SHA-256, which is this crate's over the SHA-256 of `sha2`, on test cases 1, 2, 3, 6 and 7 of RFC 4231; SHA-256 on the examples of FIPS 180-4; the subkeys of AES-CMAC on the example of RFC 4493; the key expansion and the cipher of AES on its instructions on the examples of FIPS 197. |
-//! | Values of **other implementations** | The 5G AKA chain from the TS 35.208 test set 1 MILENAGE outputs through KAUSF, XRES\*, HXRES\*, KSEAF, KAMF, the NAS keys, KgNB and NH, which `tests/five_g_aka_chain.py` derives with the HMAC-SHA-256 of Python's standard library over the inputs that TS 33.501 Annex A lays out; the keys of a change between 5GS and EPS from that KAMF, KASME' of idle mobility and of a handover (Annex A.14), KeNB at the COUNT 2^32 - 1 and the NH chain of TS 33.401 Annex A.3 and A.4, KAMF' of idle mobility and of a handover (Annex A.15), the temporary KgNB at 2^32 - 1 and its NH, which `tests/interworking_keys.py` derives in the same way over S strings written octet by octet; HASHMME on ATTACH REQUESTs and the values a network returned for them; OPc, the authentication vector, the check of its AUTN, the AUTS and its reading, RES\* and the refusal of an AUTN or an AUTS with a bit changed, against the `milenage` crate 0.1.6, Open5GS 2.8.0 and free5GC (its util 1.3.2) on a million random subscribers, with `differential/` in the repository. |
+//! | **RFC and FIPS** test data | The keys of EAP-AKA' on the four cases of RFC 9048 Appendix D; HMAC-SHA-256, which is this crate's over the SHA-256 of `sha2`, on test cases 1, 2, 3, 6 and 7 of RFC 4231; SHA-256 on the examples of FIPS 180-4; the subkeys of AES-CMAC on the example of RFC 4493; the key expansion and the cipher of AES on its instructions on the examples of FIPS 197. |
+//! | Values of **other implementations** | The 5G AKA chain from the TS 35.208 test set 1 MILENAGE outputs through KAUSF, XRES\*, HXRES\*, KSEAF, KAMF, the NAS keys, KgNB and NH, which `tests/five_g_aka_chain.py` derives with the HMAC-SHA-256 of Python's standard library over the inputs that TS 33.501 Annex A lays out; the keys of a change between 5GS and EPS from that KAMF, KASME' of idle mobility and of a handover (Annex A.14), KeNB at the COUNT 2^32 - 1 and the NH chain of TS 33.401 Annex A.3 and A.4, KAMF' of idle mobility and of a handover (Annex A.15), the temporary KgNB at 2^32 - 1 and its NH, which `tests/interworking_keys.py` derives in the same way over S strings written octet by octet; HASHMME on ATTACH REQUESTs and the values a network returned for them; OPc, the authentication vector, the check of its AUTN, the AUTS and its reading, RES\* and the refusal of an AUTN or an AUTS with a bit changed, against the `milenage` crate 0.1.6, Open5GS 2.8.0 and free5GC (its util 1.3.2) on a million random subscribers, with `differential/` in the repository; the AT_MAC of an EAP-AKA' packet, against the `hmac` of Python's standard library. |
 //! | Values **calculated** in the tests | The other 5GS KDFs, the other EPS KDFs, and the NAS container, short and re-establishment MACs are compared with HMAC-SHA-256 or the MAC over the parameter layout as the test writes it. The identity encodings and the algorithm selection are compared with what the test writes too. MILENAGE with the constants of an operator, which no test data has, is compared with the framework of TS 35.206 §4.1 written bit by bit over the AES of the `aes` crate. These tests keep a layout from changing unnoticed; they are not independent vectors. |
 //!
 //! The two forms of SNOW 3G and ZUC, on vector instructions and in scalar
@@ -338,7 +341,7 @@
 //! |---------|-------|
 //! | Audit | The crate has not had a security audit. Its timing has been read in the source and in one compiled build, not measured. |
 //! | State | It stores no keys, and it keeps neither the NAS COUNT, nor replay state, nor a SQN: those belong to the caller. |
-//! | AKA | It has MILENAGE and not TUAK (TS 35.231). Whether a SQN is fresh and whether an AMF has the separation bit are the caller's to decide. |
+//! | AKA | It has MILENAGE and not TUAK (TS 35.231). [`milenage::Milenage::answer_challenge`] is a USIM that keeps one SQNMS; a UE that keeps the array of SQNs of TS 33.102 Annex C judges the result of `check_autn` itself. |
 //! | NAS messages | It protects octets. It does not encode a NAS message or its security header. |
 //! | Re-establishment MAC | The 28-bit reading of the target Cell-ID is this crate's: no test data or other implementation exists to check it against. |
 //!
@@ -353,6 +356,7 @@
 //! | AUTN, AUTS | The authentication token that a network sends with RAND: SQN ⊕ AK, the AMF and MAC-A; and what a USIM answers when the SQN is out of range: SQNMS ⊕ AK\* and MAC-S |
 //! | KAUSF, KSEAF, KAMF | The keys of the 5GS hierarchy, each derived from the one before: of the AUSF in the home network, of the SEAF in the serving network, of the AMF |
 //! | KNASenc, KNASint | The keys that cipher and authenticate NAS messages, derived from KAMF in 5GS and from KASME in EPS |
+//! | EAP-AKA' | The other method of primary authentication in 5GS: AKA in EAP, with the name of the access network bound into CK' and IK' (RFC 9048) |
 //! | KASME | The key of EPS that CK and IK give, at the place of KAMF |
 //! | KgNB, KeNB, NH | The key of a base station, and the Next Hop key that replaces it at a handover |
 //! | ABBA | Anti-Bidding down Between Architectures: a parameter of the KAMF derivation, `0x0000` so far |
@@ -370,7 +374,7 @@
 //!
 //! # Features
 //!
-//! `std`, `suci` and `nai` are on by default, and `idna` is not.
+//! `std` is on by default.
 //!
 //! | Feature | Adds | Needs |
 //! |---------|------|-------|
