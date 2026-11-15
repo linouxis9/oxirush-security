@@ -23,7 +23,7 @@ use super::keys::{
 };
 use crate::SecurityError;
 use crate::common::input::{AccessKeyCount, NasCount};
-use crate::common::kdf::{checked_parameter, derive, derive_algorithm_key, kdf};
+use crate::common::kdf::{algorithm_key, checked_parameter, derive, kdf};
 use crate::common::keys::{Autn, Ck, Ik};
 use crate::common::wipe;
 use crate::nas_5gs::KGnb;
@@ -155,7 +155,7 @@ pub fn derive_kenb_star(
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x01).
 pub fn derive_knas_enc(kasme: &KAsme, algorithm: Algorithm) -> KNasEnc {
     wipe::derivation(|| {
-        let key = derive_algorithm_key(kasme.as_octets(), FC_ALGORITHM_KEY, 0x01, algorithm.into());
+        let key = algorithm_key(kasme.as_octets(), FC_ALGORITHM_KEY, 0x01, algorithm.into());
         KNasEnc::new(&key)
     })
 }
@@ -164,7 +164,7 @@ pub fn derive_knas_enc(kasme: &KAsme, algorithm: Algorithm) -> KNasEnc {
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x02).
 pub fn derive_knas_int(kasme: &KAsme, algorithm: Algorithm) -> KNasInt {
     wipe::derivation(|| {
-        let key = derive_algorithm_key(kasme.as_octets(), FC_ALGORITHM_KEY, 0x02, algorithm.into());
+        let key = algorithm_key(kasme.as_octets(), FC_ALGORITHM_KEY, 0x02, algorithm.into());
         KNasInt::new(&key)
     })
 }
@@ -178,7 +178,7 @@ pub fn derive_knas_int(kasme: &KAsme, algorithm: Algorithm) -> KNasInt {
 /// three beside it take.
 pub fn derive_krrc_enc(kenb: &KEnb, algorithm: Algorithm) -> KRrcEnc {
     wipe::derivation(|| {
-        let key = derive_algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x03, algorithm.into());
+        let key = algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x03, algorithm.into());
         KRrcEnc::new(&key)
     })
 }
@@ -187,7 +187,7 @@ pub fn derive_krrc_enc(kenb: &KEnb, algorithm: Algorithm) -> KRrcEnc {
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x04).
 pub fn derive_krrc_int(kenb: &KEnb, algorithm: Algorithm) -> KRrcInt {
     wipe::derivation(|| {
-        let key = derive_algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x04, algorithm.into());
+        let key = algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x04, algorithm.into());
         KRrcInt::new(&key)
     })
 }
@@ -196,7 +196,7 @@ pub fn derive_krrc_int(kenb: &KEnb, algorithm: Algorithm) -> KRrcInt {
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x05).
 pub fn derive_kup_enc(kenb: &KEnb, algorithm: Algorithm) -> KUpEnc {
     wipe::derivation(|| {
-        let key = derive_algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x05, algorithm.into());
+        let key = algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x05, algorithm.into());
         KUpEnc::new(&key)
     })
 }
@@ -205,7 +205,7 @@ pub fn derive_kup_enc(kenb: &KEnb, algorithm: Algorithm) -> KUpEnc {
 /// (TS 33.401 Annex A.7, algorithm type distinguisher 0x06).
 pub fn derive_kup_int(kenb: &KEnb, algorithm: Algorithm) -> KUpInt {
     wipe::derivation(|| {
-        let key = derive_algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x06, algorithm.into());
+        let key = algorithm_key(kenb.as_octets(), FC_ALGORITHM_KEY, 0x06, algorithm.into());
         KUpInt::new(&key)
     })
 }

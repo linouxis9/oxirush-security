@@ -89,11 +89,43 @@ pub(crate) fn derive(key: &[u8], fc: u8, params: &[&[u8]]) -> [u8; 32] {
 /// Annex A.8 and TS 33.401 Annex A.7 share: the algorithm type
 /// distinguisher, then the algorithm identity. The key is the 128 least
 /// significant bits of the 256 derived.
-pub(crate) fn derive_algorithm_key(key: &[u8; 32], fc: u8, algo_type: u8, algo_id: u8) -> [u8; 16] {
+pub(crate) fn algorithm_key(key: &[u8; 32], fc: u8, algo_type: u8, algo_id: u8) -> [u8; 16] {
     let mut full = derive(key, fc, &[&[algo_type], &[algo_id]]);
     let algorithm_key = low_128(&full);
     zeroize::Zeroize::zeroize(&mut full);
     algorithm_key
+}
+
+/// The key of an algorithm that `key` gives (TS 33.501 Annex A.8 and A.9,
+/// TS 33.401 Annex A.7): the KDF of the FC `fc`, 0x69 of KAMF, KgNB or KSN
+/// and 0x15 of KASME or KeNB, of the algorithm type distinguisher
+/// `algorithm_type` (0x01 for NAS ciphering to 0x06 for UP integrity), then
+/// of the identity `algorithm`. The key is the 128 least significant bits of
+/// the 256 derived, wiped when the value is dropped.
+///
+/// The two numbers are taken as they are, for a key that the typed
+/// derivations, such as [`nas_5gs::derive_knas_int`](crate::nas_5gs::derive_knas_int),
+/// do not give: that of an identity that names no algorithm among them.
+///
+/// ```
+/// use oxirush_security::kdf::derive_algorithm_key;
+/// use oxirush_security::identity::Algorithm;
+/// use oxirush_security::nas_5gs::{KAmf, derive_knas_int};
+///
+/// let k_amf = "9d63b519775a92ca861ca6a50d848fa8ebf160ea7b73735a85b33737e73c55b4";
+/// let k_amf: [u8; 32] = hex::decode(k_amf).unwrap().try_into().unwrap();
+/// // KNASint of 128-NIA2: the type distinguisher 0x02, the identity 2
+/// let key = derive_algorithm_key(&k_amf, 0x69, 0x02, 2);
+/// assert_eq!(hex::encode(*key), "28ddb5356880149b9fee22f2367522a4");
+/// assert_eq!(*key, *derive_knas_int(&KAmf::new(&k_amf), Algorithm::Aes).as_octets());
+/// ```
+pub fn derive_algorithm_key(
+    key: &[u8; 32],
+    fc: u8,
+    algorithm_type: u8,
+    algorithm: u8,
+) -> Zeroizing<[u8; 16]> {
+    wipe::derivation(|| Zeroizing::new(algorithm_key(key, fc, algorithm_type, algorithm)))
 }
 
 /// The 128 least significant bits of the 256 of a KDF output, which is
@@ -144,6 +176,29 @@ mod tests {
             let s = build_s(fc, params).unwrap();
             assert_eq!(derive(&key, fc, params), *kdf(&key, &s), "FC {fc:#x}");
         }
+    }
+
+    /// The key of an algorithm is that of the derivation of its system,
+    /// and a number that names no algorithm gives one too.
+    #[test]
+    fn an_algorithm_key_is_that_of_its_system() {
+        use crate::identity::Algorithm;
+        let root = [0x5c; 32];
+        let kamf = crate::nas_5gs::KAmf::new(&root);
+        let kasme = crate::nas_eps::KAsme::new(&root);
+        assert_eq!(
+            *derive_algorithm_key(&root, 0x69, 0x02, 2),
+            *crate::nas_5gs::derive_knas_int(&kamf, Algorithm::Aes).as_octets()
+        );
+        assert_eq!(
+            *derive_algorithm_key(&root, 0x15, 0x01, 3),
+            *crate::nas_eps::derive_knas_enc(&kasme, Algorithm::Zuc).as_octets()
+        );
+        let s = build_s(0x69, &[&[0x01], &[0x0f]]).unwrap();
+        assert_eq!(
+            *derive_algorithm_key(&root, 0x69, 0x01, 0x0f),
+            *extract_128(&kdf(&root, &s))
+        );
     }
 
     #[test]

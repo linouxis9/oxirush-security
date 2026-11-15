@@ -483,7 +483,7 @@ pub mod kdf {
     #[cfg(feature = "alloc")]
     #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
     pub use crate::common::kdf::build_s;
-    pub use crate::common::kdf::{extract_128, kdf};
+    pub use crate::common::kdf::{derive_algorithm_key, extract_128, kdf};
 }
 
 // The crate root has what 5GS and EPS share, and nothing that one of them

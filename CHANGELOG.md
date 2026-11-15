@@ -10,6 +10,10 @@ All notable changes to `oxirush-security` are recorded here.
   network name, then K_encr, K_aut, K_re, the MSK and the EMSK of PRF', and
   KAUSF of the EMSK (TS 33.501 Annex F), tested with the vectors of RFC 9048
   Appendix D.
+- `kdf::derive_algorithm_key`: the key of an algorithm of TS 33.501 Annex
+  A.8 and TS 33.401 Annex A.7 from the FC, the algorithm type distinguisher
+  and the algorithm identity as numbers, for an identity that names no
+  algorithm.
 
 ### Removed
 
