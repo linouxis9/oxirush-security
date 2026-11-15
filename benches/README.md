@@ -53,34 +53,10 @@ RUSTFLAGS="--cfg oxirush_security_hooks" FORM=scalar cargo bench --bench algorit
 | 128-EIA2, 128-NIA2 (AES-CMAC) | 0.34 µs | 2.6 µs | 0.52 µs | 3.2 µs | 0.40 µs | 3.6 µs |
 | 128-EIA3, 128-NIA3 (ZUC) | 0.97 µs | 6.6 µs | 2.9 µs | 24.7 µs | 2.0 µs | 70.2 µs |
 
-On the vector instructions SNOW 3G and ZUC are 1.2 to 1.8 times as fast as
-in 0.2.0 for ciphering, and 2.0 to 17 times for the MACs. 0.2.0 read its
-S-boxes from tables, at indices taken from the state of the generator. No
-memory access depends on a secret here, in either form, and the scalar
-code pays for it: the S-box SQ of SNOW 3G, which it reads whole, is most
-of its time. Its MACs are faster than those of 0.2.0 on a long message,
-1.9 times for 128-EIA1 and 2.8 times for 128-EIA3, because their
-multiplications are carry-less products. On the carry-less
-multiplication instruction, 128-EIA1 evaluates its polynomial four blocks
-at a time, with the powers of P, and 128-EIA3 takes four groups of 32 bits
-at a time.
-
-A SNOW 3G that reads its S-boxes at indices taken from its state can be
-faster on a short message. The S-box SQ is the difference: this crate reads
-it through sixteen shuffles and four choices for each three clocks, so that
-no address depends on the state, and a message of 64 octets is 49 clocks,
-33 of them its initialization. [Against other
-implementations](#against-other-implementations) compares 1,500 octets with
-Open5GS's.
-
-AES is the crate's own key expansion and rounds on the AES instruction:
-eight counter blocks at a time for 128-EEA2, and a block after the other
-for 128-EIA2. Without the instructions of the first two columns AES is the
-`aes` crate, whose time is in the scalar columns: on this processor that
-crate finds the AES instruction itself, and its bitsliced code, which a
-processor without the instruction runs, was not measured. The counter mode
-gives `aes` eight counter blocks one after the other there, and not
-together.
+SNOW 3G and ZUC read their S-boxes through shuffles, and the scalar code
+reads SQ whole, so that no memory access depends on a secret: that is most
+of the time of the scalar columns. The documentation of the crate has how
+each algorithm is computed ("Timing").
 
 A key derivation, one HMAC-SHA-256, takes 1.7 µs on this processor, which
 has no SHA instructions, and 1.6 µs in 0.2.0, whose HMAC did not wipe its
@@ -203,12 +179,6 @@ of 128-EIA3 stay one message after the other. 128-EIA2 gains 1.7 to
 encrypted eight at a time for one message already. Its batch saves the
 clearing, which follows the batch and not each message: 1.6 to 1.9 times
 as fast on 64 octets, 1.1 times on 1,500.
-
-Not built, and not measured: sixteen generators in an AVX-512 vector, with
-the S-box SQ of SNOW 3G read by permutations of 64 octets where AVX-512
-VBMI is; the S-box S1 of ZUC as GFNI instructions, in place of the AES
-instruction and the shuffles around it; and AES on VAES, two or four blocks
-to an instruction.
 
 ## MILENAGE
 

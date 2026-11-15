@@ -4,9 +4,9 @@
 [![Documentation](https://docs.rs/oxirush-security/badge.svg)](https://docs.rs/oxirush-security)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-The security functions of 5GS and EPS in Rust, per 3GPP TS 35.206,
-TS 33.102, TS 33.501 and TS 33.401: MILENAGE, 5G AKA and EAP-AKA', key
-derivation, NAS integrity and ciphering, and SUCI concealment.
+MILENAGE, 5G AKA and EAP-AKA', key derivation, NAS integrity and ciphering,
+and SUCI concealment for 5GS and EPS, in Rust (3GPP TS 35.206, TS 33.102,
+TS 33.501 and TS 33.401).
 
 ```rust
 use oxirush_security::identity::Algorithm;
@@ -39,12 +39,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Each example shows what it gives with `assert_eq!`, and runs as a test of the crate.
-
-The keys that the examples print are values of 3GPP test sets, or derived
-from them, to compare with the specifications. `{:?}` of a key prints only
-its name, as `KAmf(..)`.
-
 ## Installation
 
 ```toml
@@ -55,35 +49,97 @@ hex = "0.4" # for the examples of this page
 
 | Feature | Adds | Needs |
 |---------|------|-------|
-| none | The algorithms and their contexts, MILENAGE, the key derivations, NAS integrity and ciphering, the choice of the algorithms | `core` alone, no allocator |
-| `batch` | Many messages, or the MILENAGE of many subscribers, in one call: `batch::cipher`, `batch::mac`, `batch::authentication_vectors`, `batch::check_autn` | |
-| `alloc` | What returns a `Vec` or a `String`: `kdf::build_s`, `Supi::into_owned` | An allocator |
-| `std` | On AArch64 outside Linux, Android and Apple systems, the choice of the vector code at run time | The standard library |
-| `suci` | The SUCI of an IMSI and of a SUPI that is a NAI (RFC 7542), in either form: the null scheme, Profile A (X25519) and Profile B (secp256r1) | `alloc`, and a source of random numbers that `getrandom` has for the target |
-| `idna` | The realm and the username of a NAI are checked as internationalized names too | `suci`, and the Unicode tables of `idna` and `unicode-normalization` |
+| none | The algorithms, MILENAGE, the key derivations, NAS integrity and ciphering | Nothing: `no_std`, no allocator |
+| `std` (default) | Run-time CPU detection on AArch64 targets other than Linux, Android and Apple | The standard library |
+| `alloc` | The functions that return a `Vec` or a `String` | An allocator |
+| `batch` | Many messages, or many subscribers' MILENAGE, in one call | |
+| `suci` | SUCI concealment and deconcealment: null scheme, Profile A and Profile B | `alloc`, and a `getrandom` source |
+| `idna` | NAI realms and usernames checked as internationalized names | `suci` |
 
-The identities are oxirush-utils' types, in `oxirush_security::identity`:
-`Plmn`, `Supi`, `Guti5g`, ….
+The identities (`Plmn`, `Supi`, `Guti5g`, …) are those of oxirush-utils, in
+`oxirush_security::identity`. The minimum supported Rust version is 1.88.
 
-`std` is on by default. Without `std` the crate is
-`no_std`, and it still runs the vector and AES instructions where the
-processor has them. On a target without an operating system, the build
-enables them (`-C target-feature=+ssse3,+sse4.1,+aes,+pclmulqdq`, or
-`+neon,+aes`). `oxirush_security::implementation()` says which code runs for
-each algorithm: log it when the program starts.
+## Protect and check a NAS message
 
-```toml
-# no_std, without an allocator
-oxirush-security = { version = "0.5", default-features = false }
+This is the receiving side of the first example: it checks the MAC before
+it deciphers.
+
+```rust
+use oxirush_security::identity::Algorithm;
+use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, nas_cipher, nas_mac};
+use oxirush_security::{Direction, NasCount, constant_time_eq};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let k_nas_enc = KNasEnc::from_slice(&hex::decode("f47ae570afde775373d1b313d2176f54")?)?;
+    let k_nas_int = KNasInt::from_slice(&hex::decode("28ddb5356880149b9fee22f2367522a4")?)?;
+    let (nea2, nia2) = (Algorithm::Aes, Algorithm::Aes);
+
+    // What came after the security header: the MAC, the sequence number and
+    // the ciphered message
+    let (received_mac, sequence_number) = (0x83e4_d009_u32, 0);
+    let mut message = [0xb5, 0x7d, 0xd5];
+
+    // The receiver keeps the lowest uplink NAS COUNT that it still accepts,
+    // zero in a new security context, and estimates the NAS COUNT of the
+    // message from its sequence number
+    let lowest = NasCount::ZERO;
+    let count = lowest.estimate(sequence_number)?;
+    let (access, uplink) = (NasConnection::ThreeGpp, Direction::Uplink);
+
+    let protected = [&[sequence_number][..], &message].concat();
+    let mac = nas_mac(&k_nas_int, count, access, uplink, &protected, nia2);
+    // Compare in constant time
+    let right = constant_time_eq(&mac.to_be_bytes(), &received_mac.to_be_bytes());
+    assert!(right);
+
+    // The MAC is right: the message is deciphered, and its NAS COUNT is not
+    // accepted again
+    nas_cipher(&k_nas_enc, count, access, uplink, &mut message, nea2);
+    let lowest = count.next()?;
+    assert_eq!((message, lowest.get()), ([0x7e, 0x00, 0x43], 1));
+    Ok(())
+}
 ```
 
-The minimum supported Rust version is 1.88. Cargo's resolver 3, the
-default of edition 2024, keeps each dependency at a version that 1.88
-builds. Under resolver 2, `aes` 0.9.3 needs 1.89, and a project keeps 0.9.2:
+In EPS the functions are in `nas_eps`, and take no NAS connection: the
+BEARER of EPS NAS is zero.
 
-```sh
-cargo update -p aes --precise 0.9.2
+```rust
+use oxirush_security::identity::Algorithm;
+use oxirush_security::nas_eps::{
+    derive_kasme, derive_knas_enc, derive_knas_int, nas_cipher, nas_mac,
+    service_request_short_mac,
+};
+use oxirush_security::{Autn, Ck, Direction, Ik, NasCount};
+use oxirush_security::identity::Plmn;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // KASME from CK, IK, the serving network and the AUTN, then the NAS keys
+    let (ck, ik, autn) = (Ck::new(&[0x11; 16]), Ik::new(&[0x22; 16]), Autn::new(&[0; 16]));
+    let kasme = derive_kasme(&ck, &ik, Plmn::new("208", "93")?, &autn);
+    let (eea2, eia2) = (Algorithm::Aes, Algorithm::Aes);
+    let (knas_enc, knas_int) = (derive_knas_enc(&kasme, eea2), derive_knas_int(&kasme, eia2));
+
+    // An uplink EMM STATUS with cause #3 and NAS COUNT 0
+    let (count, uplink) = (NasCount::ZERO, Direction::Uplink);
+    let mut message = [0x07, 0x60, 0x03];
+    nas_cipher(&knas_enc, count, uplink, &mut message, eea2);
+    let protected = [&[count.sequence_number()][..], &message].concat();
+    let mac = nas_mac(&knas_int, count, uplink, &protected, eia2);
+    assert_eq!((hex::encode(message), mac), ("b02c47".to_string(), 0x190a_f1e7));
+
+    // The short MAC of a SERVICE REQUEST with NAS COUNT 1: its first octet,
+    // then KSI 0 and sequence number 1 in its second
+    let next = count.next()?;
+    let short_mac = service_request_short_mac(&knas_int, next, uplink, 0xc7, 0x01, eia2)?;
+    assert_eq!(short_mac, 0x7e95);
+    Ok(())
+}
 ```
+
+[oxirush-nas](https://github.com/linouxis9/oxirush-nas) writes the security
+header of a protected message, and its security context calls these
+functions.
 
 ## Run 5G AKA, from MILENAGE to KAMF
 
@@ -192,9 +248,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Re-synchronise a USIM
 
-A USIM that finds the SQN of a challenge out of range answers with an
-AUTS of its own SQN, SQNMS. The home network reads SQNMS back from it, and
-its next SQN = SEQ || IND takes the SEQ after that of SQNMS.
+When a challenge's SQN is out of range, the USIM answers with an AUTS that
+carries its own highest SQN (SQNMS). The home network checks the AUTS, reads
+SQNMS, and starts again from the next SEQ.
 
 ```rust
 use oxirush_security::milenage::{Amf, Auts, ChallengeAnswer, K, Milenage, Opc, Sqn};
@@ -203,11 +259,10 @@ use oxirush_security::Rand;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscriber = Milenage::new(&K::new(&[0x46; 16]), &Opc::new(&[0xcd; 16]));
     let rand = Rand::new(&[0x23; 16]);
-    let vector = subscriber.authentication_vector(&rand, &Sqn::try_from(32)?, &Amf::new(&[0x80, 0]));
+    let (sqn, amf) = (Sqn::try_from(32)?, Amf::new(&[0x80, 0]));
+    let vector = subscriber.authentication_vector(&rand, &sqn, &amf);
 
-    // UE: its SQNMS is 64, ahead of the 32 of the AUTN, which is no longer
-    // fresh. `check_autn` leaves that to the UE's policy (TS 33.102 Annex C);
-    // `answer_challenge` is that of a USIM that keeps one SQNMS
+    // UE: its SQNMS is 64, so the SQN 32 of the AUTN is not fresh
     let sqn_ms = Sqn::try_from(64)?;
     let answer = subscriber.answer_challenge(&rand, vector.autn(), &sqn_ms);
     let ChallengeAnswer::SynchFailure { auts, .. } = answer else {
@@ -215,9 +270,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     assert_eq!(hex::encode(auts.as_octets()), "5ef40417ef4cb9ac9e76640b820d");
 
-    // Home network: the AUTS answers the RAND of the challenge, which the
-    // serving network gives with it. Its MAC-S is checked, and SQNMS read;
-    // with 5 bits of IND, the next SQN is that of the SEQ after its own
+    // Home network: check the AUTS against the RAND of the challenge, read
+    // SQNMS, and take the next SEQ (with 5 bits of IND)
     let read = subscriber.verify_auts(&rand, &auts)?;
     assert_eq!(read.get(), 64);
     let next = Sqn::from_seq_ind(read.seq(5) + 1, 0, 5)?;
@@ -232,193 +286,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Make the vectors of many subscribers in one call
-
-With the `batch` feature, a job is one subscriber with the inputs of its
-call. On the AES instructions, a batch works on eight subscribers side by
-side.
-
-```rust
-use oxirush_security::Rand;
-use oxirush_security::batch::{self, AutnJob, VectorJob};
-use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // A thousand subscribers, each with its K, its RAND and its next SQN
-    let subscribers: Vec<Milenage> = (0..1000u16)
-        .map(|n| {
-            let mut k = [0x46; 16];
-            k[..2].copy_from_slice(&n.to_be_bytes());
-            Milenage::new(&K::new(&k), &Opc::new(&[0xcd; 16]))
-        })
-        .collect();
-    let rands: Vec<Rand> = (0..1000u16).map(|n| Rand::new(&[n as u8; 16])).collect();
-    let sqns = (0..1000u64).map(|n| Sqn::try_from(32 + n)).collect::<Result<Vec<_>, _>>()?;
-    let amf = Amf::new(&[0x80, 0x00]);
-
-    // Home network: the vectors, each in its job
-    let mut jobs: Vec<_> = (0..1000)
-        .map(|n| VectorJob::new(&subscribers[n], &rands[n], &sqns[n], &amf))
-        .collect();
-    batch::authentication_vectors(&mut jobs);
-    let vectors: Vec<_> = jobs.into_iter().filter_map(VectorJob::into_vector).collect();
-    assert_eq!(hex::encode(vectors[999].autn().as_octets()), "a8ea63cde1078000cad3a5b1943c2ec3");
-
-    // The UEs: the check of each AUTN
-    let mut jobs: Vec<_> = (0..1000)
-        .map(|n| AutnJob::new(&subscribers[n], &rands[n], vectors[n].autn()))
-        .collect();
-    batch::check_autn(&mut jobs);
-    let accepted = jobs.iter().filter(|job| matches!(job.response(), Some(Ok(_)))).count();
-    assert_eq!(accepted, 1000);
-    Ok(())
-}
-```
-
-## Protect and check a NAS message
-
-This is the receiving side of the first example: it checks the MAC before
-it deciphers.
-
-```rust
-use oxirush_security::identity::Algorithm;
-use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection, nas_cipher, nas_mac};
-use oxirush_security::{Direction, NasCount, constant_time_eq};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let k_nas_enc = KNasEnc::from_slice(&hex::decode("f47ae570afde775373d1b313d2176f54")?)?;
-    let k_nas_int = KNasInt::from_slice(&hex::decode("28ddb5356880149b9fee22f2367522a4")?)?;
-    let (nea2, nia2) = (Algorithm::Aes, Algorithm::Aes);
-
-    // What came after the security header: the MAC, the sequence number and
-    // the ciphered message
-    let (received_mac, sequence_number) = (0x83e4_d009_u32, 0);
-    let mut message = [0xb5, 0x7d, 0xd5];
-
-    // The receiver keeps the lowest uplink NAS COUNT that it still accepts,
-    // zero in a new security context, and estimates the NAS COUNT of the
-    // message from its sequence number
-    let lowest = NasCount::ZERO;
-    let count = lowest.estimate(sequence_number)?;
-    let (access, uplink) = (NasConnection::ThreeGpp, Direction::Uplink);
-
-    let protected = [&[sequence_number][..], &message].concat();
-    let mac = nas_mac(&k_nas_int, count, access, uplink, &protected, nia2);
-    // In a time that does not tell how much of a forged MAC is right
-    let right = constant_time_eq(&mac.to_be_bytes(), &received_mac.to_be_bytes());
-    assert!(right);
-
-    // The MAC is right: the message is deciphered, and its NAS COUNT is not
-    // accepted again
-    nas_cipher(&k_nas_enc, count, access, uplink, &mut message, nea2);
-    let lowest = count.next()?;
-    assert_eq!((message, lowest.get()), ([0x7e, 0x00, 0x43], 1));
-    Ok(())
-}
-```
-
-In EPS the functions are in `nas_eps`, and take no NAS connection: the
-BEARER of EPS NAS is zero.
-
-```rust
-use oxirush_security::identity::Algorithm;
-use oxirush_security::nas_eps::{
-    derive_kasme, derive_knas_enc, derive_knas_int, nas_cipher, nas_mac,
-    service_request_short_mac,
-};
-use oxirush_security::{Autn, Ck, Direction, Ik, NasCount};
-use oxirush_security::identity::Plmn;
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // KASME from CK, IK, the serving network and the AUTN, then the NAS keys
-    let (ck, ik, autn) = (Ck::new(&[0x11; 16]), Ik::new(&[0x22; 16]), Autn::new(&[0; 16]));
-    let kasme = derive_kasme(&ck, &ik, Plmn::new("208", "93")?, &autn);
-    let (eea2, eia2) = (Algorithm::Aes, Algorithm::Aes);
-    let (knas_enc, knas_int) = (derive_knas_enc(&kasme, eea2), derive_knas_int(&kasme, eia2));
-
-    // An uplink EMM STATUS with cause #3 and NAS COUNT 0
-    let (count, uplink) = (NasCount::ZERO, Direction::Uplink);
-    let mut message = [0x07, 0x60, 0x03];
-    nas_cipher(&knas_enc, count, uplink, &mut message, eea2);
-    let protected = [&[count.sequence_number()][..], &message].concat();
-    let mac = nas_mac(&knas_int, count, uplink, &protected, eia2);
-    assert_eq!((hex::encode(message), mac), ("b02c47".to_string(), 0x190a_f1e7));
-
-    // The short MAC of a SERVICE REQUEST with NAS COUNT 1: its first octet,
-    // then KSI 0 and sequence number 1 in its second
-    let next = count.next()?;
-    let short_mac = service_request_short_mac(&knas_int, next, uplink, 0xc7, 0x01, eia2)?;
-    assert_eq!(short_mac, 0x7e95);
-    Ok(())
-}
-```
-
-[oxirush-nas](https://github.com/linouxis9/oxirush-nas) writes the security
-header of a protected message, and its security context calls these
-functions.
-
-## Protect the messages of many UEs in one call
-
-With the `batch` feature, a job is one message with its key, its NAS COUNT
-and its algorithm. A batch gives each job what `nas_cipher` or `nas_mac`
-would give it, and runs the keystream generators and the MAC chains of
-several jobs side by side.
-
-```rust
-use oxirush_security::identity::Algorithm;
-use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection};
-use oxirush_security::batch::{self, CipherJob, MacJob};
-use oxirush_security::{Direction, NasCount};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Three UEs: the NAS keys, the downlink NAS COUNT and the algorithms of each
-    let k_nas_enc = [[0x11; 16], [0x22; 16], [0x33; 16]].each_ref().map(KNasEnc::new);
-    let k_nas_int = [[0x44; 16], [0x55; 16], [0x66; 16]].each_ref().map(KNasInt::new);
-    let counts = [NasCount::new(7)?, NasCount::new(0)?, NasCount::new(41)?];
-    let nea = [Algorithm::Aes, Algorithm::Snow3g, Algorithm::Aes];
-    let nia = [Algorithm::Aes, Algorithm::Snow3g, Algorithm::Aes];
-    let (access, downlink) = (NasConnection::ThreeGpp, Direction::Downlink);
-
-    // The sequence number and the message of each
-    let mut messages = [
-        vec![7, 0x7e, 0x00, 0x54, 0x43, 0x90],
-        vec![0, 0x7e, 0x00, 0x5d, 0x02],
-        vec![41, 0x7e, 0x00, 0x68, 0x01, 0x00, 0x2e],
-    ];
-
-    let mut jobs: Vec<_> = (messages.iter_mut().enumerate())
-        .map(|(ue, message)| {
-            let (key, count) = (&k_nas_enc[ue], counts[ue].get());
-            CipherJob::new(key, count, access.into(), downlink, &mut message[1..], nea[ue])
-        })
-        .collect();
-    batch::cipher(&mut jobs);
-
-    // The MAC is over the sequence number and the ciphered message
-    let mut jobs: Vec<_> = (messages.iter().enumerate())
-        .map(|(ue, message)| {
-            let (key, count) = (&k_nas_int[ue], counts[ue].get());
-            MacJob::new(key, count, access.into(), downlink, message, nia[ue])
-        })
-        .collect();
-    batch::mac(&mut jobs);
-    let macs: Vec<_> = jobs.iter().map(|job| job.mac()).collect();
-    assert_eq!(macs, [Some(0xafc5_3a82), Some(0x6a11_a04f), Some(0xc48d_481a)]);
-    assert_eq!(hex::encode(&messages[0]), "076b4a2c14c2");
-    assert_eq!(hex::encode(&messages[1]), "00e17ff3e0");
-    assert_eq!(hex::encode(&messages[2]), "295c7b75e6ac69");
-    Ok(())
-}
-```
-
-A job takes the 32 bits of a NAS COUNT and the BEARER of a NAS connection,
-or any 32-bit COUNT and BEARER for a message that is not a NAS message.
-
 ## Keep the keys of a UE between its messages
 
-A context holds a key with its algorithm, and what the algorithm computes
-from the key alone: the round keys of AES and the subkeys of CMAC. It
-serves both directions, and its `job` goes into a batch.
+A context keeps a key, its algorithm and what can be precomputed from it
+(AES round keys, CMAC subkeys). One context serves both directions, and
+`job()` makes a batch job from it.
 
 ```rust
 use oxirush_security::identity::Algorithm;
@@ -551,18 +423,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(format!("{:?}", received.protection_scheme()), "ProtectionScheme(1: profile A)");
     assert_eq!(key_id, 27);
     let supi = deconceal(&received, Some(&private))?;
-    assert_eq!((supi.to_string(), supi.identity()), ("imsi-274012001002086".to_string(), "274012001002086"));
+    assert_eq!(supi.to_string(), "imsi-274012001002086");
+    assert_eq!(supi.identity(), "274012001002086");
 
     // The SUCI of Annex C.4.3.1, and what a SIDF without the key is told
     let mut identity = vec![0x01, 0x72, 0x24, 0x10, 0xf0, 0xff, 0x01, 27];
-    identity.extend(hex::decode(
-        "b2e92f836055a255837debf850b528997ce0201cb82adfe4be1f587d07d8457dcb02352410cddd9e730ef3fa87",
-    )?);
+    let output = "b2e92f836055a255837debf850b528997ce0201cb82adfe4be1f587d07d84\
+                  57dcb02352410cddd9e730ef3fa87";
+    identity.extend(hex::decode(output)?);
     let annex = Suci::from_nas_octets(&identity)?;
-    assert_eq!(
-        annex.to_string(),
-        "suci-0-274-012-0-1-27-b2e92f836055a255837debf850b528997ce0201cb82adfe4be1f587d07d8457dcb02352410cddd9e730ef3fa87",
-    );
+    assert_eq!(annex.to_string(), format!("suci-0-274-012-0-1-27-{output}"));
     assert_eq!(deconceal(&annex, Some(&private))?.to_string(), "imsi-274012001002086");
     assert_eq!(format!("{:?}", deconceal(&annex, None)), "Err(MissingKey)");
 
@@ -595,7 +465,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (count, bearer, downlink) = (0x398a_59b4_u32, Bearer::new(0x15)?, Direction::Downlink);
     let context = CipheringContext::new(&k, Algorithm::Aes);
     context.cipher_bits(count, bearer, downlink, &mut data, 253)?;
-    assert_eq!(hex::encode(&data), "e9fed8a63d155304d71df20bf3e82214b20ed7dad2f233dc3c22d7bdeeed8e78");
+    let ciphered = "e9fed8a63d155304d71df20bf3e82214b20ed7dad2f233dc3c22d7bdeeed8e78";
+    assert_eq!(hex::encode(&data), ciphered);
 
     // 128-EIA2 test set 1 of Annex C.2.1: 58 bits
     let k = KNasInt::from_slice(&hex::decode("2bd6459f82c5b300952c49104881ff48")?)?;
@@ -637,12 +508,112 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## What an operation leaves
+## Make the vectors of many subscribers in one call
 
-Keys, contexts and generators are wiped when they are dropped. RES, RES\*,
-XRES, XRES\*, HRES\* and HXRES\* are keys too: whoever has one can answer
-the challenge. Identities, and RAND, AUTN, SQN and AUTS, which travel in
-clear, are printed whole.
+With the `batch` feature, a job is one subscriber with the inputs of its
+call. On the AES instructions, a batch works on eight subscribers side by
+side.
+
+```rust
+use oxirush_security::Rand;
+use oxirush_security::batch::{self, AutnJob, VectorJob};
+use oxirush_security::milenage::{Amf, K, Milenage, Opc, Sqn};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // A thousand subscribers, each with its K, its RAND and its next SQN
+    let subscribers: Vec<Milenage> = (0..1000u16)
+        .map(|n| {
+            let mut k = [0x46; 16];
+            k[..2].copy_from_slice(&n.to_be_bytes());
+            Milenage::new(&K::new(&k), &Opc::new(&[0xcd; 16]))
+        })
+        .collect();
+    let rands: Vec<Rand> = (0..1000u16).map(|n| Rand::new(&[n as u8; 16])).collect();
+    let sqns = (0..1000u64).map(|n| Sqn::try_from(32 + n)).collect::<Result<Vec<_>, _>>()?;
+    let amf = Amf::new(&[0x80, 0x00]);
+
+    // Home network: the vectors, each in its job
+    let mut jobs: Vec<_> = (0..1000)
+        .map(|n| VectorJob::new(&subscribers[n], &rands[n], &sqns[n], &amf))
+        .collect();
+    batch::authentication_vectors(&mut jobs);
+    let vectors: Vec<_> = jobs.into_iter().filter_map(VectorJob::into_vector).collect();
+    assert_eq!(hex::encode(vectors[999].autn().as_octets()), "a8ea63cde1078000cad3a5b1943c2ec3");
+
+    // The UEs: the check of each AUTN
+    let mut jobs: Vec<_> = (0..1000)
+        .map(|n| AutnJob::new(&subscribers[n], &rands[n], vectors[n].autn()))
+        .collect();
+    batch::check_autn(&mut jobs);
+    let accepted = jobs.iter().filter(|job| matches!(job.response(), Some(Ok(_)))).count();
+    assert_eq!(accepted, 1000);
+    Ok(())
+}
+```
+
+## Protect the messages of many UEs in one call
+
+With the `batch` feature, a job is one message with its key, its NAS COUNT
+and its algorithm. A batch gives each job what `nas_cipher` or `nas_mac`
+would give it, and runs the keystream generators and the MAC chains of
+several jobs side by side.
+
+```rust
+use oxirush_security::identity::Algorithm;
+use oxirush_security::nas_5gs::{KNasEnc, KNasInt, NasConnection};
+use oxirush_security::batch::{self, CipherJob, MacJob};
+use oxirush_security::{Direction, NasCount};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Three UEs: the NAS keys, the downlink NAS COUNT and the algorithms of each
+    let k_nas_enc = [[0x11; 16], [0x22; 16], [0x33; 16]].each_ref().map(KNasEnc::new);
+    let k_nas_int = [[0x44; 16], [0x55; 16], [0x66; 16]].each_ref().map(KNasInt::new);
+    let counts = [NasCount::new(7)?, NasCount::new(0)?, NasCount::new(41)?];
+    let nea = [Algorithm::Aes, Algorithm::Snow3g, Algorithm::Aes];
+    let nia = [Algorithm::Aes, Algorithm::Snow3g, Algorithm::Aes];
+    let (access, downlink) = (NasConnection::ThreeGpp, Direction::Downlink);
+
+    // The sequence number and the message of each
+    let mut messages = [
+        vec![7, 0x7e, 0x00, 0x54, 0x43, 0x90],
+        vec![0, 0x7e, 0x00, 0x5d, 0x02],
+        vec![41, 0x7e, 0x00, 0x68, 0x01, 0x00, 0x2e],
+    ];
+
+    let mut jobs: Vec<_> = (messages.iter_mut().enumerate())
+        .map(|(ue, message)| {
+            let (key, count) = (&k_nas_enc[ue], counts[ue].get());
+            CipherJob::new(key, count, access.into(), downlink, &mut message[1..], nea[ue])
+        })
+        .collect();
+    batch::cipher(&mut jobs);
+
+    // The MAC is over the sequence number and the ciphered message
+    let mut jobs: Vec<_> = (messages.iter().enumerate())
+        .map(|(ue, message)| {
+            let (key, count) = (&k_nas_int[ue], counts[ue].get());
+            MacJob::new(key, count, access.into(), downlink, message, nia[ue])
+        })
+        .collect();
+    batch::mac(&mut jobs);
+    let macs: Vec<_> = jobs.iter().map(|job| job.mac()).collect();
+    assert_eq!(macs, [Some(0xafc5_3a82), Some(0x6a11_a04f), Some(0xc48d_481a)]);
+    assert_eq!(hex::encode(&messages[0]), "076b4a2c14c2");
+    assert_eq!(hex::encode(&messages[1]), "00e17ff3e0");
+    assert_eq!(hex::encode(&messages[2]), "295c7b75e6ac69");
+    Ok(())
+}
+```
+
+A job also takes any 32-bit COUNT and BEARER, for data that is not NAS.
+
+## Wipe keys after use
+
+Keys, contexts and generators are wiped when they are dropped, and `{:?}`
+of a key prints only its name, as `KAmf(..)`. RES, RES\*, XRES, XRES\*,
+HRES\* and HXRES\* are keys too: whoever has one can answer the challenge.
+Identities, and RAND, AUTN, SQN and AUTS, which travel in clear, are printed
+whole.
 
 When an operation that uses a key returns, the crate also zeroes the stack
 that it used and, on x86-64 and AArch64, the registers. A batch pays for it
@@ -662,54 +633,51 @@ where it stays and pass references.
   [oxirush-nas](https://github.com/linouxis9/oxirush-nas) encodes the
   messages and their security header.
 - It has had no security audit.
+- On a target without an operating system, the vector and AES code runs only
+  where the build enables those instructions; `implementation()` says which
+  code runs.
+- Under Cargo's resolver 2, `aes` 0.9.3 needs Rust 1.89: keep 0.9.2 with
+  `cargo update -p aes --precise 0.9.2`.
 
 ## Performance
 
-| Operation | Time | Other implementations, time over this crate's |
-|---|---|---|
-| MILENAGE, an authentication vector | 294 ns | milenage 0.3.1 4.4x, Open5GS 2.5x, free5GC 4.5x |
-| 128-NEA2 (AES-CTR), 1,500 octets | 660 ns | Open5GS 11x, free5GC 1.9x |
-| 128-NIA2 (AES-CMAC), 1,500 octets | 2.6 µs | Open5GS 2.6x, free5GC 1.6x |
-| 128-NIA1 (SNOW 3G), 1,500 octets | 876 ns | Open5GS 1,200x, free5GC 1,100x |
-| 128-NEA1 (SNOW 3G), 1,500 octets, alone and one of sixteen in a batch | 5.3 µs, 1.8 µs | |
-| SUCI concealment, Profile A | 100 µs | |
+| Operation | This crate | Closest Rust crate | Open5GS v2.8.0 | free5GC |
+|---|---|---|---|---|
+| MILENAGE, an authentication vector | 294 ns | milenage 0.1.6: 2.0× slower | 2.5× slower | 4.5× slower |
+| 128-NEA1 (SNOW 3G), 1,500 octets | 5.4 µs | cryptography-rs 0.8.0: 1.2× slower | 1.1× faster | 200× slower |
+| 128-NEA2 (AES-CTR), 1,500 octets | 660 ns | aes 0.8.4 and ctr: about the same | 11× slower | 1.9× slower |
+| 128-NEA3 (ZUC), 1,500 octets | 6.1 µs | zuc 0.4.1: 1.1× faster | 2.2× slower | 3.6× slower |
+| 128-NIA1 (SNOW 3G), 1,500 octets | 876 ns | | 1,200× slower | 1,100× slower |
+| 128-NIA2 (AES-CMAC), 1,500 octets | 2.6 µs | aes 0.8.4 and cmac: 1.03× faster | 2.6× slower | 1.6× slower |
+| 128-NIA3 (ZUC), 1,500 octets | 6.5 µs | zuc 0.4.1: 1.7× slower | 9.6× slower | 9.2× slower |
 
-Medians of ten rounds on one core of an Intel Xeon E5-2680 v4 (a KVM guest,
-Linux 7.0, Rust 1.100.0), at 39b3491 on 2026-11-15; a ratio is given only
-where the ten times of the two implementations do not overlap.
-[`benches/README.md`](benches/README.md) has every figure, the other
-implementations, the method and the commands.
+Medians of ten rounds in turns on one core of an Intel Xeon E5-2680 v4 (a
+KVM guest, Linux 7.0, Rust 1.100.0), at 39b3491 on 2026-11-15; "about the
+same" where the ten times of the two overlap. In a batch of sixteen,
+128-NEA1 takes 1.8 µs a message, and SUCI concealment takes 100 µs with
+Profile A. [`benches/README.md`](benches/README.md) has every figure, the
+method and the commands.
 
 ## Tests and fuzzing
 
 ```sh
 cargo test --all-features
-python3 -I tests/five_g_aka_chain.py
-python3 -I tests/interworking_keys.py
-cargo +nightly fuzz run algorithms -- -max_total_time=60
 ```
 
-The algorithms, MILENAGE and SUCI are tested on the 3GPP test data. TS 33.501
-has none for its key derivations, so two Python programs derive them a
-second time: the 5G AKA chain, and the keys of a change between 5GS and EPS
-over four handovers back and forth. In the repository,
-[`differential/`](https://github.com/linouxis9/oxirush-security/tree/master/differential)
-compares MILENAGE with the `milenage` crate, Open5GS and free5GC on a million
-random subscribers, and
-[`leftovers/`](https://github.com/linouxis9/oxirush-security/tree/master/leftovers)
-searches the memory for keys after each operation. CI compares the vector
-code with the scalar code on x86-64, AArch64 and an emulated AArch64, and
-fuzzes the six targets of `fuzz/`. `examples/` has five programs, such as
-`cargo run --example suci_conceal --features suci`.
-
-[The documentation](https://docs.rs/oxirush-security) has the terms, each
+Each example of this page checks what it gives with `assert_eq!`, and runs
+as a documentation test. The algorithms, MILENAGE and SUCI are tested on the
+3GPP test data. TS 33.501 has none for its key derivations, so two Python
+programs in `tests/` derive them a second time: the 5G AKA chain, and the
+keys of a change between 5GS and EPS over four handovers back and forth.
+MILENAGE is compared with the `milenage` crate, Open5GS and free5GC on a
+million random subscribers, and the memory is searched for keys after each
+operation. [The documentation](https://docs.rs/oxirush-security) has each
 function with its clause and its test values, and how the code was checked
 for a time that does not depend on a secret.
 
-A pull request comes with a test for what it changes. Sign off your commits
-(`git commit -s`): by contributing you agree to the [Developer Certificate
-of Origin](https://developercertificate.org/). [SECURITY.md](SECURITY.md)
-says how to report a vulnerability.
+[CONTRIBUTING.md](CONTRIBUTING.md) has the other test programs, the fuzz
+targets, and how to contribute. [SECURITY.md](SECURITY.md) says how to
+report a vulnerability.
 
 ## The OxiRush family
 
