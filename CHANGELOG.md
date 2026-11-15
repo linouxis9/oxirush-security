@@ -2,7 +2,12 @@
 
 All notable changes to `oxirush-security` are recorded here.
 
-## Unreleased
+## 0.5.0 - unreleased
+
+### Changed
+
+- Built on oxirush-utils 0.3: `identity`, which the crate re-exports, is that of
+  oxirush-utils 0.3.0.
 
 ### Added
 

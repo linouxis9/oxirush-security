@@ -49,7 +49,7 @@ its name, as `KAmf(..)`.
 
 ```toml
 [dependencies]
-oxirush-security = { version = "0.4", features = ["suci"] }
+oxirush-security = { version = "0.5", features = ["suci"] }
 hex = "0.4" # for the examples of this page
 ```
 
@@ -74,7 +74,7 @@ each algorithm: log it when the program starts.
 
 ```toml
 # no_std, without an allocator
-oxirush-security = { version = "0.4", default-features = false }
+oxirush-security = { version = "0.5", default-features = false }
 ```
 
 The minimum supported Rust version is 1.88. Cargo's resolver 3, the

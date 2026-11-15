@@ -1,6 +1,6 @@
 [package]
 name = "oxirush-security"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "5GS and EPS security in Rust: MILENAGE, 5G AKA and EAP-AKA', key derivation, NIA/NEA and EIA/EEA (SNOW 3G, AES, ZUC) and SUCI concealment, per 3GPP TS 33.501, TS 33.401 and TS 35.206. Keys wiped, no_std."
 license = "Apache-2.0"
@@ -62,7 +62,7 @@ getrandom = { version = "0.4", optional = true }
 # The identities: PLMN, 5G-GUTI, 5G-S-TMSI, SUPI, the two forms of a SUCI and
 # the grammar of a NAI, with no feature of its own (`alloc` and `nai` above
 # turn on those that they need). It adds no crate to the tree.
-oxirush-utils = { version = "0.2.0", default-features = false }
+oxirush-utils = { version = "0.3.0", default-features = false }
 
 # The instructions of the processor, asked without the standard library:
 # CPUID on x86-64, the system on AArch64. `aes` has it in the tree already.
@@ -99,3 +99,7 @@ required-features = ["suci"]
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+# oxirush-utils 0.3.0, until its release.
+[patch.crates-io]
+oxirush-utils = { git = "https://github.com/linouxis9/oxirush-utils", rev = "922f5b4c2a33f05d1992632faa5efe605315d61e" }
