@@ -652,8 +652,9 @@ where it stays and pass references.
 | 128-NIA3 (ZUC), 1,500 octets | 6.5 µs | zuc 0.4.1: 1.7× slower | 9.6× slower | 9.2× slower |
 
 Medians of ten rounds in turns on one core of an Intel Xeon E5-2680 v4 (a
-KVM guest, Linux 7.0, Rust 1.100.0), at 39b3491 on 2026-11-15; "about the
-same" where the ten times of the two overlap. In a batch of sixteen,
+KVM guest, Linux 7.0, Rust 1.100.0), at 39b3491 on 2026-11-15. A cell of
+another implementation says how much slower or faster it is than this crate,
+and "about the same" where the ten times of the two overlap. In a batch of sixteen,
 128-NEA1 takes 1.8 µs a message, and SUCI concealment takes 100 µs with
 Profile A. [`benches/README.md`](benches/README.md) has every figure, the
 method and the commands.
