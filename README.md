@@ -206,10 +206,10 @@ the IK and the AUTN of a vector for EPS AKA.
 
 ## Derive the keys of EAP-AKA'
 
-The other method of the primary authentication of 5GS (TS 33.501 §6.1.3.1):
-CK' and IK' bind the vector to the network name of the challenge's
-AT_KDF_INPUT, and PRF' of them and of the SUPI gives K_aut, the key of AT_MAC,
-and the EMSK, whose first 256 bits are KAUSF (RFC 9048, its Appendix D here).
+EAP-AKA' is the other primary authentication of 5GS (TS 33.501 §6.1.3.1).
+CK' and IK' bind the vector to the network name. PRF' over them and the
+identity gives K_aut, which keys AT_MAC, and the EMSK, whose first 256 bits
+are KAUSF. The values are those of RFC 9048 Appendix D.
 
 ```rust
 use oxirush_security::eap_aka_prime::{Keys, derive_ck_ik_prime};
@@ -641,23 +641,25 @@ where it stays and pass references.
 
 ## Performance
 
-| Operation | This crate | Closest Rust crate | Open5GS v2.8.0 | free5GC |
+| Operation | This crate | Closest Rust crate | Open5GS v2.8.0 | free5GC (util v1.3.2, nas v1.2.3) |
 |---|---|---|---|---|
 | MILENAGE, an authentication vector | 294 ns | milenage 0.1.6: 2.0× slower | 2.5× slower | 4.5× slower |
-| 128-NEA1 (SNOW 3G), 1,500 octets | 5.4 µs | cryptography-rs 0.8.0: 1.2× slower | 1.1× faster | 200× slower |
+| 128-NEA1 (SNOW 3G), 1,500 octets | 5.4 µs | cryptography-rs 0.8.0: 1.2× slower | about the same | 200× slower |
 | 128-NEA2 (AES-CTR), 1,500 octets | 660 ns | aes 0.8.4 and ctr: about the same | 11× slower | 1.9× slower |
-| 128-NEA3 (ZUC), 1,500 octets | 6.1 µs | zuc 0.4.1: 1.1× faster | 2.2× slower | 3.6× slower |
-| 128-NIA1 (SNOW 3G), 1,500 octets | 876 ns | | 1,200× slower | 1,100× slower |
-| 128-NIA2 (AES-CMAC), 1,500 octets | 2.6 µs | aes 0.8.4 and cmac: 1.03× faster | 2.6× slower | 1.6× slower |
+| 128-NEA3 (ZUC), 1,500 octets | 6.1 µs | zuc 0.4.1: about the same | 2.2× slower | 3.6× slower |
+| 128-NIA1 (SNOW 3G), 1,500 octets | 876 ns | none | 1,200× slower | 1,100× slower |
+| 128-NIA2 (AES-CMAC), 1,500 octets | 2.6 µs | aes 0.8.4 and cmac: about the same | 2.6× slower | 1.6× slower |
 | 128-NIA3 (ZUC), 1,500 octets | 6.5 µs | zuc 0.4.1: 1.7× slower | 9.6× slower | 9.2× slower |
 
 Medians of ten rounds in turns on one core of an Intel Xeon E5-2680 v4 (a
 KVM guest, Linux 7.0, Rust 1.100.0), at 39b3491 on 2026-11-15. A cell of
-another implementation says how much slower or faster it is than this crate,
-and "about the same" where the ten times of the two overlap. In a batch of sixteen,
-128-NEA1 takes 1.8 µs a message, and SUCI concealment takes 100 µs with
-Profile A. [`benches/README.md`](benches/README.md) has every figure, the
+another implementation says how much slower or faster it is than this crate:
+"about the same" when the two medians are within 10 % or their ten times
+overlap. [`benches/README.md`](benches/README.md) has every figure, the
 method and the commands.
+
+In a batch of sixteen, 128-NEA1 takes 1.8 µs a message. SUCI concealment
+takes 100 µs with Profile A.
 
 ## Tests and fuzzing
 
