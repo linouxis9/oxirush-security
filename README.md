@@ -180,10 +180,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Re-synchronise a USIM
 
 A USIM that finds the SQN of a challenge out of range answers with an
-AUTS of its own SQN, SQNMS. The home network reads SQNMS back from it.
+AUTS of its own SQN, SQNMS. The home network reads SQNMS back from it, and
+its next SQN = SEQ || IND takes the SEQ after that of SQNMS.
 
 ```rust
-use oxirush_security::milenage::{Amf, Auts, K, Milenage, Opc, Sqn};
+use oxirush_security::milenage::{Amf, Auts, ChallengeAnswer, K, Milenage, Opc, Sqn};
 use oxirush_security::Rand;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -192,17 +193,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vector = subscriber.authentication_vector(&rand, &Sqn::try_from(32)?, &Amf::new(&[0x80, 0]));
 
     // UE: its SQNMS is 64, ahead of the 32 of the AUTN, which is no longer
-    // fresh. Whether a SQN is fresh is the UE's policy (TS 33.102 Annex C)
-    let response = subscriber.check_autn(&rand, vector.autn())?;
+    // fresh. `check_autn` leaves that to the UE's policy (TS 33.102 Annex C);
+    // `answer_challenge` is that of a USIM that keeps one SQNMS
     let sqn_ms = Sqn::try_from(64)?;
-    assert!(response.sqn().get() < sqn_ms.get());
-    let auts = subscriber.auts(&rand, &sqn_ms);
+    let answer = subscriber.answer_challenge(&rand, vector.autn(), &sqn_ms);
+    let ChallengeAnswer::SynchFailure { auts, .. } = answer else {
+        panic!("{answer:?}");
+    };
     assert_eq!(hex::encode(auts.as_octets()), "5ef40417ef4cb9ac9e76640b820d");
 
     // Home network: the AUTS answers the RAND of the challenge, which the
-    // serving network gives with it. Its MAC-S is checked, and SQNMS read
+    // serving network gives with it. Its MAC-S is checked, and SQNMS read;
+    // with 5 bits of IND, the next SQN is that of the SEQ after its own
     let read = subscriber.verify_auts(&rand, &auts)?;
     assert_eq!(read.get(), 64);
+    let next = Sqn::from_seq_ind(read.seq(5) + 1, 0, 5)?;
+    assert_eq!(next.get(), 96);
 
     // An AUTS with one bit changed, or for another RAND, is refused
     let mut changed = *auts.as_octets();

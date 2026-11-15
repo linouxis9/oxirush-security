@@ -68,7 +68,7 @@
 //!
 //! | Task | Items |
 //! |------|-------|
-//! | Run 5G AKA, from MILENAGE to KAMF | [`milenage::Milenage::authentication_vector`], [`milenage::Milenage::check_autn`], [`nas_5gs::derive_kausf`], [`nas_5gs::derive_kseaf`], [`nas_5gs::derive_kamf`], [`nas_5gs::XresStar::accepts`] |
+//! | Run 5G AKA, from MILENAGE to KAMF | [`milenage::Milenage::authentication_vector`], [`milenage::Milenage::check_autn`], [`milenage::Milenage::answer_challenge`], [`nas_5gs::derive_kausf`], [`nas_5gs::derive_kseaf`], [`nas_5gs::derive_kamf`], [`nas_5gs::XresStar::accepts`] |
 //! | Re-synchronise a USIM | [`milenage::Milenage::auts`], [`milenage::Milenage::verify_auts`] |
 //! | Make the vectors of many subscribers in one call, with the `batch` feature | [`batch::authentication_vectors`], [`batch::check_autn`] |
 //! | Protect and check a NAS message | [`nas_5gs::derive_knas_enc`], [`nas_5gs::derive_knas_int`], [`nas_5gs::nas_cipher`], [`nas_5gs::nas_mac`], [`NasCount::estimate`], [`constant_time_eq`] |

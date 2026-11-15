@@ -139,6 +139,34 @@ impl UsimResponse {
     }
 }
 
+/// What a UE answers to a challenge (TS 33.102 §6.3.3), as
+/// [`Milenage::answer_challenge`] judges it: the AUTHENTICATION RESPONSE,
+/// or the cause of an AUTHENTICATION FAILURE (TS 24.501 §5.4.1.3.6,
+/// TS 24.301 §5.4.2.6).
+///
+/// `{:?}` prints what [`UsimResponse`] and [`Auts`] print, and nothing of
+/// RES, CK and IK.
+#[derive(Clone, Debug)]
+pub enum ChallengeAnswer {
+    /// MAC-A verifies, the AMF has the separation bit and SQN is fresh: the
+    /// UE answers with RES, or RES\* in 5GS, and takes SQN as its SQNMS.
+    Accepted(UsimResponse),
+    /// MAC-A is not that of the network: the cause "MAC failure" (#20).
+    MacFailure,
+    /// The separation bit of the AMF is clear: the cause "non-5G
+    /// authentication unacceptable" in 5GS and "non-EPS authentication
+    /// unacceptable" in EPS (#26; TS 33.501 §6.1.3.2, TS 33.401 §6.1.1).
+    NotSeparated,
+    /// SQN is not fresh: the cause "synch failure" (#21), with the AUTS of
+    /// SQNMS.
+    SynchFailure {
+        /// The SQN of the AUTN.
+        sqn: Sqn,
+        /// The AUTS that the UE sends.
+        auts: Auts,
+    },
+}
+
 /// `octets` ⊕ the high 48 bits of `block`: a SQN that an AK of f5 or of
 /// f5\* conceals, or reveals.
 fn xor_48(octets: &[u8; 6], block: u128) -> [u8; 6] {
@@ -258,6 +286,56 @@ impl Milenage {
     /// ```
     pub fn verify_auts(&self, rand: &Rand, auts: &Auts) -> Result<Sqn, SecurityError> {
         self.run(rand, |temp| sqn_ms_of(temp, auts))
+    }
+
+    /// What a UE answers to the challenge `rand`, `autn`, whose USIM has
+    /// taken `sqn_ms` as its highest SQN: [`check_autn`](Self::check_autn)
+    /// verifies MAC-A, then the ME checks the separation bit of the AMF
+    /// (TS 33.501 §6.1.3.2, TS 33.401 §6.1.1), then the USIM takes SQN as
+    /// fresh when it is above `sqn_ms`, and answers with the AUTS of
+    /// `sqn_ms` when it is not (TS 33.102 §6.3.3).
+    ///
+    /// This is the USIM that keeps one SQNMS, without the array of IND and
+    /// without a limit on how far ahead SQN may be (TS 33.102 Annex C.2): it
+    /// takes no AUTN twice. A UE that keeps the array, or another policy,
+    /// judges the [`UsimResponse`] of `check_autn` itself.
+    ///
+    /// ```
+    /// use oxirush_security::milenage::{Amf, ChallengeAnswer, K, Milenage, Opc, Sqn};
+    /// use oxirush_security::Rand;
+    ///
+    /// let subscriber = Milenage::new(&K::new(&[0x46; 16]), &Opc::new(&[0xcd; 16]));
+    /// let rand = Rand::new(&[0x23; 16]);
+    /// let (sqn, amf) = (Sqn::try_from(0x41).unwrap(), Amf::new(&[0x80, 0x00]));
+    /// let vector = subscriber.authentication_vector(&rand, &sqn, &amf);
+    ///
+    /// // A USIM at SQN 0x40 accepts the vector of SQN 0x41
+    /// let sqn_ms = Sqn::try_from(0x40).unwrap();
+    /// let answer = subscriber.answer_challenge(&rand, vector.autn(), &sqn_ms);
+    /// assert!(matches!(answer, ChallengeAnswer::Accepted(response) if response.sqn() == &sqn));
+    ///
+    /// // A USIM that took SQN 0x41 asks for a re-synchronisation
+    /// match subscriber.answer_challenge(&rand, vector.autn(), &sqn) {
+    ///     ChallengeAnswer::SynchFailure { auts, .. } => {
+    ///         assert_eq!(subscriber.verify_auts(&rand, &auts).unwrap(), sqn);
+    ///     }
+    ///     other => panic!("{other:?}"),
+    /// }
+    /// ```
+    pub fn answer_challenge(&self, rand: &Rand, autn: &Autn, sqn_ms: &Sqn) -> ChallengeAnswer {
+        let Ok(response) = self.check_autn(rand, autn) else {
+            return ChallengeAnswer::MacFailure;
+        };
+        if !response.amf().separation_bit() {
+            return ChallengeAnswer::NotSeparated;
+        }
+        if response.sqn().get() <= sqn_ms.get() {
+            return ChallengeAnswer::SynchFailure {
+                sqn: response.sqn().clone(),
+                auts: self.auts(rand, sqn_ms),
+            };
+        }
+        ChallengeAnswer::Accepted(response)
     }
 }
 

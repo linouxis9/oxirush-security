@@ -17,6 +17,10 @@ All notable changes to `oxirush-security` are recorded here.
 - `milenage::Sqn::from_seq_ind`, `Sqn::seq` and `Sqn::ind`: SQN = SEQ || IND
   of TS 33.102 Annex C.1.1.1, with the number of bits of IND that the home
   network chose.
+- `milenage::Milenage::answer_challenge` and `milenage::ChallengeAnswer`: what
+  a UE answers to a challenge, with a USIM that keeps one SQNMS: MAC-A, then
+  the separation bit of the AMF, then SQN above SQNMS, or the AUTS of SQNMS
+  (TS 33.102 §6.3.3).
 
 ### Removed
 

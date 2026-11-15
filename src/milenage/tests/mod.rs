@@ -374,6 +374,56 @@ fn an_auts_gives_its_sqn_ms_back_and_one_bit_changed_is_refused() {
     });
 }
 
+/// A UE answers a challenge by MAC-A first, then the separation bit of the
+/// AMF, then a SQN above SQNMS; a SQN that is not is answered with the
+/// AUTS of SQNMS.
+#[test]
+fn a_challenge_is_answered_by_its_mac_its_separation_bit_and_its_sqn() {
+    let mut next = random(0x6a09_e667_f3bc_c908);
+    let (subscriber, rand, ..) = drawn(&mut next);
+    let autn = |sqn: u64, amf: [u8; 2]| {
+        let sqn = Sqn::try_from(sqn).unwrap();
+        (subscriber.authentication_vector(&rand, &sqn, &Amf::new(&amf)))
+            .autn()
+            .clone()
+    };
+    let sqn_ms = Sqn::try_from(0x40).unwrap();
+    let answer = |autn: &Autn| subscriber.answer_challenge(&rand, autn, &sqn_ms);
+    match answer(&autn(0x41, [0x80, 0x00])) {
+        ChallengeAnswer::Accepted(response) => {
+            assert_eq!(response.sqn().get(), 0x41);
+            assert_eq!(response.res(), &subscriber.f2(&rand));
+        }
+        other => panic!("{other:?}"),
+    }
+    for sqn in [0x40, 0x3f, 0] {
+        match answer(&autn(sqn, [0xff, 0xff])) {
+            ChallengeAnswer::SynchFailure {
+                sqn: received,
+                auts,
+            } => {
+                assert_eq!(received.get(), sqn);
+                assert_eq!(auts, subscriber.auts(&rand, &sqn_ms));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    for sqn in [0x41, 0x40] {
+        let answered = answer(&autn(sqn, [0x7f, 0xff]));
+        assert!(
+            matches!(answered, ChallengeAnswer::NotSeparated),
+            "{answered:?}"
+        );
+    }
+    let mut forged = *autn(0x40, [0x00, 0x00]).as_octets();
+    forged[15] ^= 1;
+    let answered = answer(&Autn::new(&forged));
+    assert!(
+        matches!(answered, ChallengeAnswer::MacFailure),
+        "{answered:?}"
+    );
+}
+
 /// RES\* and XRES\* of test set 1 of TS 35.208, whose RES, CK and IK the
 /// 5G AKA chain of the crate takes (`tests/five_g_aka_chain.py`).
 #[test]

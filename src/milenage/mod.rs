@@ -65,14 +65,17 @@
 //! | [`check_autn`](Milenage::check_autn) | In the USIM: SQN from AUTN, MAC-A checked, then RES, CK and IK | TS 33.102 §6.3.3 |
 //! | [`auts`](Milenage::auts) | In the USIM: AUTS = SQNMS ⊕ AK\* \|\| MAC-S, with an AMF of zeros | TS 33.102 §6.3.3 |
 //! | [`verify_auts`](Milenage::verify_auts) | In the home network: SQNMS from AUTS, MAC-S checked | TS 33.102 §6.3.5 |
+//! | [`answer_challenge`](Milenage::answer_challenge) | In the UE: MAC-A, the separation bit, then SQN above SQNMS, or the AUTS of SQNMS | TS 33.102 §6.3.3, TS 33.501 §6.1.3.2 |
 //! | [`AuthenticationVector::xres_star`], [`UsimResponse::res_star`] | XRES\* and RES\* of 5GS, from the outputs of MILENAGE | TS 33.501 Annex A.4 |
 //!
 //! A MAC is compared in a time that does not depend on where it differs.
-//! What the crate does not decide is the policy of the caller: whether a
-//! SQN is fresh (TS 33.102 §6.3.3 and Annex C), and whether the AMF has
-//! the separation bit that EPS and 5GS ask for (TS 33.401 §6.1.1,
+//! [`Milenage::check_autn`] leaves the policy to the caller: whether a SQN
+//! is fresh (TS 33.102 §6.3.3 and Annex C), and whether the AMF has the
+//! separation bit that EPS and 5GS ask for (TS 33.401 §6.1.1,
 //! TS 33.501 §6.1.3.2). [`UsimResponse`] gives both, and a UE whose SQN is
 //! out of range answers with [`Milenage::auts`].
+//! [`Milenage::answer_challenge`] judges both for a USIM that keeps one
+//! SQNMS, and gives the UE's answer.
 //!
 //! K, OP, OPc, AK, AK\* and XRES are keys, wiped when they are dropped
 //! and printed without their octets; SQN, AMF, MAC-A, MAC-S, RES and AUTS
@@ -107,7 +110,7 @@ mod kernel;
 mod tests;
 mod values;
 
-pub use aka::{AuthenticationVector, UsimResponse};
+pub use aka::{AuthenticationVector, ChallengeAnswer, UsimResponse};
 pub use kernel::Constants;
 pub use values::{Ak, AkStar, Amf, Auts, K, MacA, MacS, Op, Opc, Res, Sqn, Xres};
 
